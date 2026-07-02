@@ -1,39 +1,182 @@
 #include "dialog.h"
 
-// 게임의 계산기 UI(0x482xxx)는 게임 프레임 루프에 물려 돌아가는 대형 화면 클래스라
-// Rest 훅(동기 호출) 안에서 안전하게 재사용하기 어렵다. 대신 자체 메시지 루프를 가지는
-// Win32 모달 다이얼로그를 리소스 없이 in-memory 템플릿으로 만들어 띄운다.
+// 여관 숙박일수 입력 계산기 — 게임 분위기에 맞춘 고풍스러운(갈색 엠보싱/serif) 오너드로우
+// 모달 다이얼로그. 리소스 없이 in-memory 템플릿 + WM_DRAWITEM 커스텀 페인팅.
+//
+//   [           0 ]   (표시창, 우측정렬 serif italic)
+//   7   8   9   AC
+//   4   5   6   DEL
+//   1   2   3   MAX
+//   0   00  000 MIN
+//   [   ENTER   ] CANCEL
+//
+// 게임 내장 계산기(0x482xxx)는 프레임 루프에 물린 대형 화면 클래스라 동기 훅에서 재사용이
+// 어려워, 같은 룩앤필을 자체 모달로 근사 재현한다.
 
-#define IDC_EDIT 100
+#define IDC_DISPLAY 100
+#define ID_DIGIT0   200   // 200+digit
+#define ID_AC       220
+#define ID_MAX      221
+#define ID_MIN      222
+#define ID_00       224
+#define ID_000      225
+#define ID_DEL      226
+// ENTER=IDOK(1), CANCEL/닫기=IDCANCEL(2)
+
+#define DAY_MIN 1
+#define DAY_MAX 127
+
+static int   g_val = 0;
+static BOOL  g_fresh = TRUE;
+static HFONT g_btnFont = NULL;
+static HFONT g_dispFont = NULL;
+
+// --- 팔레트 (세피아/브론즈) ---
+#define COL_BG        RGB(150,130,105)
+#define COL_FACE_TOP  RGB(216,201,176)
+#define COL_FACE_BOT  RGB(158,138,113)
+#define COL_FACE_TOP_P RGB(150,130,105)
+#define COL_FACE_BOT_P RGB(120,100, 80)
+#define COL_LIGHT     RGB(238,228,208)
+#define COL_DARK      RGB( 90, 75, 60)
+#define COL_TEXT      RGB( 55, 40, 25)
+#define COL_DISP_BG   RGB(206,194,171)
+
+static int ClampDays(int v) { if (v < DAY_MIN) v = DAY_MIN; if (v > DAY_MAX) v = DAY_MAX; return v; }
+
+static void VGradient(HDC dc, RECT r, COLORREF top, COLORREF bot)
+{
+    int h = r.bottom - r.top;
+    int i;
+    if (h <= 0) return;
+    for (i = 0; i < h; i++)
+    {
+        int rr = GetRValue(top) + (GetRValue(bot) - GetRValue(top)) * i / h;
+        int gg = GetGValue(top) + (GetGValue(bot) - GetGValue(top)) * i / h;
+        int bb = GetBValue(top) + (GetBValue(bot) - GetBValue(top)) * i / h;
+        RECT line; HBRUSH br = CreateSolidBrush(RGB(rr, gg, bb));
+        line.left = r.left; line.right = r.right; line.top = r.top + i; line.bottom = r.top + i + 1;
+        FillRect(dc, &line, br); DeleteObject(br);
+    }
+}
+
+static void Bevel(HDC dc, RECT r, BOOL sunken)
+{
+    COLORREF lt = sunken ? COL_DARK : COL_LIGHT;
+    COLORREF dk = sunken ? COL_LIGHT : COL_DARK;
+    HPEN pl = CreatePen(PS_SOLID, 1, lt), pd = CreatePen(PS_SOLID, 1, dk);
+    HPEN old = (HPEN)SelectObject(dc, pl);
+    MoveToEx(dc, r.left, r.bottom - 1, NULL);
+    LineTo(dc, r.left, r.top); LineTo(dc, r.right - 1, r.top);
+    SelectObject(dc, pd);
+    LineTo(dc, r.right - 1, r.bottom - 1); LineTo(dc, r.left, r.bottom - 1);
+    SelectObject(dc, old); DeleteObject(pl); DeleteObject(pd);
+}
+
+static void DrawButton(LPDRAWITEMSTRUCT di)
+{
+    HDC dc = di->hDC; RECT r = di->rcItem, face, m, o;
+    BOOL pressed = (di->itemState & ODS_SELECTED) != 0;
+    WCHAR t[24]; HFONT of; HBRUSH br; int th, oh;
+    // 패딩 배경(갈색) + 진한 갈색 외곽 테두리 (액자 느낌)
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &r, br);  DeleteObject(br);
+    br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &r, br); DeleteObject(br);
+    // 엠보싱 면 — 테두리 안쪽으로 패딩만큼 들여서
+    face = r; InflateRect(&face, -3, -3);
+    VGradient(dc, face, pressed ? COL_FACE_TOP_P : COL_FACE_TOP, pressed ? COL_FACE_BOT_P : COL_FACE_BOT);
+    Bevel(dc, face, pressed);
+    // 텍스트 (멀티라인 세로 중앙정렬 — "CAN\nCEL" 대응)
+    GetWindowTextW(di->hwndItem, t, 24);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_btnFont);
+    m = face; m.top = 0; m.bottom = 0;
+    th = DrawTextW(dc, t, -1, &m, DT_CENTER | DT_CALCRECT);
+    o = face; oh = o.bottom - o.top; o.top += (oh - th) / 2;
+    if (pressed) { o.left++; o.top++; }
+    DrawTextW(dc, t, -1, &o, DT_CENTER);
+    SelectObject(dc, of);
+}
+
+static void DrawDisplay(LPDRAWITEMSTRUCT di)
+{
+    HDC dc = di->hDC; RECT r = di->rcItem, tr;
+    WCHAR t[16]; HFONT of; HBRUSH br;
+    br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &r, br); DeleteObject(br);
+    Bevel(dc, r, TRUE);
+    wsprintfW(t, L"%d", g_val);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_dispFont);
+    tr = r; tr.right -= 10;
+    DrawTextW(dc, t, -1, &tr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+}
 
 static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg)
     {
     case WM_INITDIALOG:
-        // lParam = 기본 일수. 미리 채우고 전체 선택.
-        SetDlgItemInt(hDlg, IDC_EDIT, (UINT)(int)lp, FALSE);
-        SendDlgItemMessageW(hDlg, IDC_EDIT, EM_SETSEL, 0, (LPARAM)-1);
-        SetFocus(GetDlgItem(hDlg, IDC_EDIT));
-        return FALSE; // 우리가 포커스를 지정했으므로 FALSE
+        g_val = (int)lp; g_fresh = TRUE;
+        g_btnFont  = CreateFontW(-12, 0, 0, 0, FW_BOLD, TRUE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, 0, 0, 0, 0, L"Times New Roman");
+        g_dispFont = CreateFontW(-24, 0, 0, 0, FW_BOLD, TRUE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, 0, 0, 0, 0, L"Times New Roman");
+        return TRUE;
+
+    case WM_ERASEBKGND:
+    {
+        HDC dc = (HDC)wp; RECT rc, r2; HBRUSH br;
+        GetClientRect(hDlg, &rc);
+        br = CreateSolidBrush(COL_BG); FillRect(dc, &rc, br); DeleteObject(br);
+        // 갈색 테두리: 바깥쪽 진한 갈색 1px + 이중 베벨(입체감) → 두툼한 갈색 프레임
+        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
+        r2 = rc; InflateRect(&r2, -1, -1); Bevel(dc, r2, FALSE);
+        InflateRect(&r2, -1, -1); Bevel(dc, r2, FALSE);
+        return TRUE;
+    }
+
+    case WM_DRAWITEM:
+    {
+        LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT)lp;
+        if (di->CtlType == ODT_BUTTON) DrawButton(di);
+        else if (di->CtlType == ODT_STATIC) DrawDisplay(di);
+        return TRUE;
+    }
 
     case WM_COMMAND:
-        switch (LOWORD(wp))
+    {
+        int id = LOWORD(wp);
+        if (id >= ID_DIGIT0 && id <= ID_DIGIT0 + 9)
         {
-        case IDOK:
+            int d = id - ID_DIGIT0;
+            if (g_fresh) { g_val = d; g_fresh = FALSE; }
+            else         { g_val = g_val * 10 + d; }
+            if (g_val > DAY_MAX) g_val = DAY_MAX;
+        }
+        else switch (id)
         {
-            BOOL ok = FALSE;
-            int v = (int)GetDlgItemInt(hDlg, IDC_EDIT, &ok, FALSE);
-            if (!ok || v < 1) v = 1;
-            if (v > 127) v = 127;
-            EndDialog(hDlg, v);
-            return TRUE;
+        case ID_00:  if (g_fresh) { g_val = 0; g_fresh = FALSE; } else g_val *= 100;  if (g_val > DAY_MAX) g_val = DAY_MAX; break;
+        case ID_000: if (g_fresh) { g_val = 0; g_fresh = FALSE; } else g_val *= 1000; if (g_val > DAY_MAX) g_val = DAY_MAX; break;
+        case ID_DEL: g_val /= 10; g_fresh = FALSE; break;
+        case ID_AC:  g_val = 0;       g_fresh = TRUE; break;
+        case ID_MAX: g_val = DAY_MAX; g_fresh = TRUE; break;
+        case ID_MIN: g_val = DAY_MIN; g_fresh = TRUE; break;
+        case IDOK:     EndDialog(hDlg, ClampDays(g_val)); return TRUE;
+        case IDCANCEL: EndDialog(hDlg, 0);                return TRUE;
+        default: return FALSE;
         }
-        case IDCANCEL:
-            EndDialog(hDlg, 0); // 취소 -> 0 (호출측이 defaultDays 로 처리)
-            return TRUE;
-        }
-        break;
+        InvalidateRect(GetDlgItem(hDlg, IDC_DISPLAY), NULL, FALSE); // 표시창만 갱신
+        return TRUE;
+    }
+
+    case WM_CLOSE:
+        EndDialog(hDlg, 0);
+        return TRUE;
+
+    case WM_DESTROY:
+        if (g_btnFont)  { DeleteObject(g_btnFont);  g_btnFont = NULL; }
+        if (g_dispFont) { DeleteObject(g_dispFont); g_dispFont = NULL; }
+        return FALSE;
     }
     return FALSE;
 }
@@ -44,63 +187,77 @@ static void PutDW(BYTE** p, DWORD d) { *(DWORD*)(*p) = d; *p += 4; }
 static void PutStr(BYTE** p, const WCHAR* s) { while (*s) PutW(p, (WORD)*s++); PutW(p, 0); }
 static void AlignDW(BYTE** p, BYTE* base) { while (((SIZE_T)(*p - base)) & 3) *(*p)++ = 0; }
 
+static void AddCtl(BYTE** p, BYTE* base, DWORD style, int x, int y, int cx, int cy,
+                   WORD id, WORD atom, const WCHAR* text)
+{
+    AlignDW(p, base);
+    PutDW(p, WS_CHILD | WS_VISIBLE | style);
+    PutDW(p, 0);
+    PutW(p, (WORD)x); PutW(p, (WORD)y); PutW(p, (WORD)cx); PutW(p, (WORD)cy);
+    PutW(p, id);
+    PutW(p, 0xFFFF); PutW(p, atom);
+    PutStr(p, text);
+    PutW(p, 0);
+}
+static void AddBtn(BYTE** p, BYTE* base, int x, int y, int cx, int cy, WORD id, const WCHAR* t)
+{
+    AddCtl(p, base, WS_TABSTOP | BS_OWNERDRAW, x, y, cx, cy, id, 0x0080, t);
+}
+
 int HotelKR_AskDays(int defaultDays)
 {
-    BYTE buf[1024];
+    BYTE buf[2048];
     BYTE* base = buf;
     BYTE* p = buf;
+    const int GX[4] = { 6, 34, 62, 90 };
+    const int BW = 26, BH = 18;
+    int r1 = 38, r2 = 60, r3 = 82, r4 = 104, r5 = 126;
 
-    // DLGTEMPLATE 헤더
-    PutDW(&p, WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_SETFONT | DS_CENTER);
-    PutDW(&p, 0);                 // exStyle
-    PutW(&p, 4);                  // cdit = 컨트롤 4개
-    PutW(&p, 0); PutW(&p, 0);     // x, y
-    PutW(&p, 190); PutW(&p, 74);  // cx, cy (dialog units)
-    PutW(&p, 0);                  // menu 없음
-    PutW(&p, 0);                  // 기본 다이얼로그 클래스
-    PutStr(&p, L"숙박 일수 입력");// 제목
-    PutW(&p, 9);                  // 폰트 크기 (DS_SETFONT)
-    PutStr(&p, L"맑은 고딕");     // 폰트
+    // DLGTEMPLATE 헤더 (시스템 프레임 없음 — 갈색 테두리는 WM_ERASEBKGND에서 직접, 화면 중앙)
+    PutDW(&p, WS_POPUP | DS_CENTER | DS_SETFONT);
+    PutDW(&p, 0);
+    PutW(&p, 19);                 // 컨트롤 19개 (표시창1 + 버튼18)
+    PutW(&p, 0); PutW(&p, 0);
+    PutW(&p, 122); PutW(&p, 152); // cx, cy
+    PutW(&p, 0); PutW(&p, 0);     // menu, class 기본
+    PutStr(&p, L"숙박일수");
+    PutW(&p, 9);
+    PutStr(&p, L"맑은 고딕");
 
-    // 1) STATIC 라벨
-    AlignDW(&p, base);
-    PutDW(&p, WS_CHILD | WS_VISIBLE | SS_LEFT); PutDW(&p, 0);
-    PutW(&p, 12); PutW(&p, 8); PutW(&p, 166); PutW(&p, 12); PutW(&p, (WORD)-1);
-    PutW(&p, 0xFFFF); PutW(&p, 0x0082); // STATIC
-    PutStr(&p, L"며칠 숙박하시겠습니까? (1-127)");
-    PutW(&p, 0);
+    // 표시창 (오너드로우 STATIC)
+    AddCtl(&p, base, SS_OWNERDRAW, 6, 6, 110, 26, IDC_DISPLAY, 0x0082, L"");
 
-    // 2) EDIT (숫자 전용)
-    AlignDW(&p, base);
-    PutDW(&p, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL); PutDW(&p, 0);
-    PutW(&p, 12); PutW(&p, 24); PutW(&p, 166); PutW(&p, 14); PutW(&p, IDC_EDIT);
-    PutW(&p, 0xFFFF); PutW(&p, 0x0081); // EDIT
-    PutStr(&p, L"");
-    PutW(&p, 0);
-
-    // 3) 확인 (기본 버튼)
-    AlignDW(&p, base);
-    PutDW(&p, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON); PutDW(&p, 0);
-    PutW(&p, 40); PutW(&p, 50); PutW(&p, 50); PutW(&p, 16); PutW(&p, IDOK);
-    PutW(&p, 0xFFFF); PutW(&p, 0x0080); // BUTTON
-    PutStr(&p, L"확인");
-    PutW(&p, 0);
-
-    // 4) 취소
-    AlignDW(&p, base);
-    PutDW(&p, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON); PutDW(&p, 0);
-    PutW(&p, 100); PutW(&p, 50); PutW(&p, 50); PutW(&p, 16); PutW(&p, IDCANCEL);
-    PutW(&p, 0xFFFF); PutW(&p, 0x0080);
-    PutStr(&p, L"취소");
-    PutW(&p, 0);
+    // Row1: 7 8 9 AC
+    AddBtn(&p, base, GX[0], r1, BW, BH, ID_DIGIT0 + 7, L"7");
+    AddBtn(&p, base, GX[1], r1, BW, BH, ID_DIGIT0 + 8, L"8");
+    AddBtn(&p, base, GX[2], r1, BW, BH, ID_DIGIT0 + 9, L"9");
+    AddBtn(&p, base, GX[3], r1, BW, BH, ID_AC, L"AC");
+    // Row2: 4 5 6 DEL
+    AddBtn(&p, base, GX[0], r2, BW, BH, ID_DIGIT0 + 4, L"4");
+    AddBtn(&p, base, GX[1], r2, BW, BH, ID_DIGIT0 + 5, L"5");
+    AddBtn(&p, base, GX[2], r2, BW, BH, ID_DIGIT0 + 6, L"6");
+    AddBtn(&p, base, GX[3], r2, BW, BH, ID_DEL, L"DEL");
+    // Row3: 1 2 3 MAX
+    AddBtn(&p, base, GX[0], r3, BW, BH, ID_DIGIT0 + 1, L"1");
+    AddBtn(&p, base, GX[1], r3, BW, BH, ID_DIGIT0 + 2, L"2");
+    AddBtn(&p, base, GX[2], r3, BW, BH, ID_DIGIT0 + 3, L"3");
+    AddBtn(&p, base, GX[3], r3, BW, BH, ID_MAX, L"MAX");
+    // Row4: 0 00 000 MIN
+    AddBtn(&p, base, GX[0], r4, BW, BH, ID_DIGIT0 + 0, L"0");
+    AddBtn(&p, base, GX[1], r4, BW, BH, ID_00, L"00");
+    AddBtn(&p, base, GX[2], r4, BW, BH, ID_000, L"000");
+    AddBtn(&p, base, GX[3], r4, BW, BH, ID_MIN, L"MIN");
+    // Row5: ENTER(1~3열) CANCEL(4열)
+    AddCtl(&p, base, WS_TABSTOP | BS_OWNERDRAW | BS_DEFPUSHBUTTON,
+           GX[0], r5, (GX[2] + BW) - GX[0], 20, IDOK, 0x0080, L"ENTER");
+    AddBtn(&p, base, GX[3], r5, BW, 20, IDCANCEL, L"CAN\nCEL");
 
     {
         HWND parent = GetActiveWindow();
-        INT_PTR r = DialogBoxIndirectParamW(GetModuleHandleW(NULL),
-                                            (LPCDLGTEMPLATEW)buf, parent, DlgProc,
-                                            (LPARAM)defaultDays);
-        if (r <= 0)
-            return defaultDays; // 취소/실패 -> 원래 일수 유지
-        return (int)r;
+        INT_PTR rr = DialogBoxIndirectParamW(GetModuleHandleW(NULL),
+                                             (LPCDLGTEMPLATEW)buf, parent, DlgProc,
+                                             (LPARAM)defaultDays);
+        if (rr <= 0) return defaultDays;
+        return (int)rr;
     }
 }
