@@ -31,3 +31,4 @@ target_include_directories(minhook PUBLIC
 
 add_subdirectory(CollectionUtilKR)
 add_subdirectory(HotelUtilKR)
+add_subdirectory(TradeUtilKR)
