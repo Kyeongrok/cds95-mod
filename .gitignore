@@ -7,3 +7,9 @@
 # Plugin dev build output
 /plugins-src/build/
 /plugins-src/out/
+
+# Third-party build dependency (cloned locally per plugins-src/README.md; CI release uses prebuilt binaries)
+/plugins-src/third_party/
+
+# JetBrains IDE
+/.idea/

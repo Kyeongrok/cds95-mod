@@ -29,6 +29,13 @@
 
 한국어판에서 문제가 발생하는 플러그인은 `CDS95Util` 폴더에서 해당 `.plugin` 파일을 제거하면 나머지 기능은 그대로 사용할 수 있습니다.
 
+### HotelUtilKR (한국어판 전용 재구현)
+
+`HotelUtilKR.plugin`은 한국어판 `cds_95.exe`를 직접 리버싱해 새로 작성한 플러그인입니다.
+여관 "숙박"이 기본 30일 지나가는 것을, 원하는 일수만큼 숙박하도록 MinHook으로 가로챕니다.
+현재 v0.1.0은 **후킹 파이프라인 검증 단계(고정 일수)**이며, 이후 숙박일수 직접 입력(계산기 UI)을
+붙일 예정입니다. 원본 일본판 `HotelUtil.plugin`과는 별개 파일입니다.
+
 ## 개발 가이드 (플러그인 직접 개발·수정)
 
 이 저장소에는 배포된 `.plugin` 바이너리의 원본 소스가 없습니다. 한국어판 호환성 문제를
@@ -66,6 +73,20 @@ MinHook 기반으로 새 DLL을 처음부터 작성하는 방식이며, 기존 `
 
 실제 후킹 주소를 한국어판 기준으로 찾는 리버싱 절차(Cheat Engine + Ghidra)는
 [plugins-src/README.md](plugins-src/README.md)에 단계별로 정리되어 있습니다.
+
+### 릴리즈 / 버전 관리
+
+버전의 단일 출처는 저장소 루트의 [`VERSION`](VERSION) 파일입니다. 릴리즈 절차:
+
+1. `VERSION` 파일을 새 버전으로 수정합니다 (예: `0.1.0`).
+2. 배포할 `.plugin` 바이너리를 빌드해 `CDS95Util/`에 갱신합니다
+   (`.github/workflows/release.yml`이 `CDS95Util/` 폴더를 그대로 패키징합니다).
+3. `VERSION`과 같은 값으로 태그를 만들어 push하면 릴리즈 워크플로가 zip을 만들어
+   [Releases](../../releases)에 올립니다.
+   ```
+   git tag "v$(cat VERSION)"
+   git push origin "v$(cat VERSION)"
+   ```
 
 ## 재배포·개조·전재 조건 및 사용 라이브러리
 

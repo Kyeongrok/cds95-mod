@@ -31,7 +31,7 @@ $MinHookDir = Join-Path $PluginsSrc "third_party\minhook"
 
 # 여기서 빌드할 플러그인 타깃과 결과물 파일명을 나열합니다.
 # 새 플러그인을 plugins-src에 추가하면 이 목록에도 추가하세요.
-$PluginTargets = @("CollectionUtilKR")
+$PluginTargets = @("CollectionUtilKR", "HotelUtilKR")
 
 function Write-Step($msg) {
     Write-Host "==> $msg" -ForegroundColor Cyan
