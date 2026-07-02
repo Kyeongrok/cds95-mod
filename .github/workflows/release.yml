@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build distribution package
+        run: |
+          mkdir -p dist/CDS95Util
+          cp CDS95Util/DDrawWrapper.plugin dist/ddraw.dll
+          cp CDS95Util/* dist/CDS95Util/
+          cd dist
+          zip -r "../CDS95Util-${GITHUB_REF_NAME}.zip" .
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: CDS95Util-${{ github.ref_name }}.zip
+          generate_release_notes: true
