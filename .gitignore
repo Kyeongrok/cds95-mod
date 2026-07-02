@@ -1,5 +1,9 @@
 # Local test install (actual game exe/save data, not part of this mod's source)
 /cds95runfile/
+/cds95runfilejp/
+
+# Browser automation snapshots/cache
+/.playwright-mcp/
 
 # Plugin dev build output
 /plugins-src/build/
