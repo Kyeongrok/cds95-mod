@@ -1,2 +1,6 @@
 # Local test install (actual game exe/save data, not part of this mod's source)
 /cds95runfile/
+
+# Plugin dev build output
+/plugins-src/build/
+/plugins-src/out/
