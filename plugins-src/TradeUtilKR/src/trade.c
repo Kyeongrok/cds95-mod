@@ -12,6 +12,35 @@
 #define WC_SISE       L"TradeUtilKR_Sise"
 #define CITY_COUNT    (int)(sizeof(kCities)/sizeof(kCities[0]))
 
+// 게임 라이브 메모리: 도시별 시세 배열 (2026-07-03 배열 시그니처 스캔으로 확정).
+//   시세 = u16 @ (SISE_BASE + 도시ID * CITY_STRIDE),  도시0=리스본.
+//   226/226 슬롯이 90~105 범위, 현재도시(리스본)=100 으로 검증. 도시 구조체 크기=92바이트.
+// 플러그인은 cds_95.exe 프로세스 내부에서 실행되므로 절대주소를 직접 역참조한다.
+#define SISE_BASE     0x005863B4u
+#define CITY_STRIDE   92
+
+// 시세 필드(SISE_BASE) 기준 +8 바이트 = 도시 플래그 비트필드 (2026-07-03 패턴 스캔으로 특정).
+//   bit4 = 조합(guild) 보유 여부 — 알려진 6도시 패턴과 유일 일치로 확정.
+//   나머지 비트(0~3,5~7)는 방문/발견/건설 등 후보(의미 미확정).
+#define FLAGS_OFF     8
+#define GUILD_BIT     4
+
+// 도시 i 의 라이브 시세를 읽는다. 주소가 매핑 안 돼 있으면 -1 반환(방어).
+static int ReadSise(int i)
+{
+    const unsigned short* p = (const unsigned short*)(SISE_BASE + (unsigned)i * CITY_STRIDE);
+    if (IsBadReadPtr(p, sizeof(*p))) return -1;
+    return (int)*p;
+}
+
+// 도시 i 의 플래그 바이트에서 지정 비트를 읽는다. 매핑 안 돼 있으면 -1.
+static int ReadFlagBit(int i, int bit)
+{
+    const unsigned char* p = (const unsigned char*)(SISE_BASE + (unsigned)i * CITY_STRIDE + FLAGS_OFF);
+    if (IsBadReadPtr(p, 1)) return -1;
+    return (int)((*p >> bit) & 1);
+}
+
 static HINSTANCE g_hinst = NULL;
 static HWND    g_hwnd = NULL;      // 게임 메인 창
 static HWND    g_subHwnd = NULL;
@@ -42,13 +71,18 @@ static void PopulateList(HWND lv)
     {
         LVITEMW it; wchar_t num[8];
         wsprintfW(num, L"%d", i);
+        int sise, guild; wchar_t sbuf[8];
         it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0; it.pszText = num;
         SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
         SetText(lv, i, 1, kCities[i].name);
         SetText(lv, i, 2, kCities[i].sphere);
-        SetText(lv, i, 3, kCities[i].lib   ? L"○" : L"×");
-        SetText(lv, i, 4, kCities[i].ship  ? L"○" : L"×");
-        SetText(lv, i, 5, kCities[i].guild ? L"○" : L"×");
+        sise = ReadSise(i);
+        if (sise < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", sise);
+        SetText(lv, i, 3, sbuf);
+        SetText(lv, i, 4, kCities[i].lib   ? L"○" : L"×");
+        SetText(lv, i, 5, kCities[i].ship  ? L"○" : L"×");
+        guild = ReadFlagBit(i, GUILD_BIT);   // 조합: 라이브 플래그 비트(정적 데이터는 부정확)
+        SetText(lv, i, 6, guild == 1 ? L"○" : (guild == 0 ? L"×" : L"-"));
     }
 }
 
@@ -65,9 +99,10 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         AddCol(g_list, 0, L"번호", 44);
         AddCol(g_list, 1, L"도시명", 130);
         AddCol(g_list, 2, L"문화권", 90);
-        AddCol(g_list, 3, L"도서관", 56);
-        AddCol(g_list, 4, L"조선소", 56);
-        AddCol(g_list, 5, L"조합", 50);
+        AddCol(g_list, 3, L"시세", 56);
+        AddCol(g_list, 4, L"도서관", 56);
+        AddCol(g_list, 5, L"조선소", 56);
+        AddCol(g_list, 6, L"조합", 50);
         PopulateList(g_list);
         return 0;
     case WM_SIZE:
