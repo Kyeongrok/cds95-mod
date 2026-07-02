@@ -25,7 +25,7 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp)
             BOOL ok = FALSE;
             int v = (int)GetDlgItemInt(hDlg, IDC_EDIT, &ok, FALSE);
             if (!ok || v < 1) v = 1;
-            if (v > 999) v = 999;
+            if (v > 127) v = 127;
             EndDialog(hDlg, v);
             return TRUE;
         }
@@ -67,7 +67,7 @@ int HotelKR_AskDays(int defaultDays)
     PutDW(&p, WS_CHILD | WS_VISIBLE | SS_LEFT); PutDW(&p, 0);
     PutW(&p, 12); PutW(&p, 8); PutW(&p, 166); PutW(&p, 12); PutW(&p, (WORD)-1);
     PutW(&p, 0xFFFF); PutW(&p, 0x0082); // STATIC
-    PutStr(&p, L"며칠 숙박하시겠습니까? (1-999)");
+    PutStr(&p, L"며칠 숙박하시겠습니까? (1-127)");
     PutW(&p, 0);
 
     // 2) EDIT (숫자 전용)
