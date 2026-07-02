@@ -1,5 +1,6 @@
 #include "trade.h"
 #include <commctrl.h>
+#include <windowsx.h>
 #include "cities_data.h"
 
 // TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
@@ -47,8 +48,103 @@ static HWND    g_subHwnd = NULL;
 static WNDPROC g_origProc = NULL;
 static HWND    g_siseWnd = NULL;   // 시세 일람 창
 static HWND    g_list = NULL;
+static HWND    g_hdr = NULL;       // 리스트뷰 헤더(오너드로우용 서브클래스)
+static WNDPROC g_origHdr = NULL;
+static HFONT   g_titleFont = NULL;
+static HFONT   g_hdrFont = NULL;
+static HFONT   g_listFont = NULL;
 
-// ---------------- 시세 일람 창 ----------------
+// ---------------- 시세 일람 창 (여관 다이얼로그와 같은 세피아/브론즈 오너드로우) ----------------
+
+// 창 레이아웃
+#define WIN_W    540
+#define WIN_H    560
+#define FRAME    3        // 갈색 외곽 프레임 두께
+#define TITLE_H  26       // 커스텀 타이틀바 높이
+
+// 팔레트 (dialog.c 와 동일 계열)
+#define COL_BG        RGB(150,130,105)
+#define COL_FACE_TOP  RGB(216,201,176)
+#define COL_FACE_BOT  RGB(158,138,113)
+#define COL_LIGHT     RGB(238,228,208)
+#define COL_DARK      RGB( 90, 75, 60)
+#define COL_TEXT      RGB( 55, 40, 25)
+#define COL_ROW_A     RGB(206,194,171)   // 짝수 행
+#define COL_ROW_B     RGB(224,214,193)   // 홀수 행
+#define COL_SEL_BG    RGB(150,120, 85)   // 선택 행 배경
+#define COL_SEL_TX    RGB(250,244,228)   // 선택 행 글자
+
+static void VGradient(HDC dc, RECT r, COLORREF top, COLORREF bot)
+{
+    int h = r.bottom - r.top, i;
+    if (h <= 0) return;
+    for (i = 0; i < h; i++)
+    {
+        int rr = GetRValue(top) + (GetRValue(bot) - GetRValue(top)) * i / h;
+        int gg = GetGValue(top) + (GetGValue(bot) - GetGValue(top)) * i / h;
+        int bb = GetBValue(top) + (GetBValue(bot) - GetBValue(top)) * i / h;
+        RECT line; HBRUSH br = CreateSolidBrush(RGB(rr, gg, bb));
+        line.left = r.left; line.right = r.right; line.top = r.top + i; line.bottom = r.top + i + 1;
+        FillRect(dc, &line, br); DeleteObject(br);
+    }
+}
+
+static void Bevel(HDC dc, RECT r, BOOL sunken)
+{
+    COLORREF lt = sunken ? COL_DARK : COL_LIGHT;
+    COLORREF dk = sunken ? COL_LIGHT : COL_DARK;
+    HPEN pl = CreatePen(PS_SOLID, 1, lt), pd = CreatePen(PS_SOLID, 1, dk);
+    HPEN old = (HPEN)SelectObject(dc, pl);
+    MoveToEx(dc, r.left, r.bottom - 1, NULL);
+    LineTo(dc, r.left, r.top); LineTo(dc, r.right - 1, r.top);
+    SelectObject(dc, pd);
+    LineTo(dc, r.right - 1, r.bottom - 1); LineTo(dc, r.left, r.bottom - 1);
+    SelectObject(dc, old); DeleteObject(pl); DeleteObject(pd);
+}
+
+// 닫기 버튼 사각형 (타이틀바 우측)
+static RECT CloseRect(RECT client)
+{
+    RECT cb; int cbw = 22, cbh = 18;
+    cb.right = client.right - FRAME - 4;
+    cb.left  = cb.right - cbw;
+    cb.top   = FRAME + (TITLE_H - cbh) / 2;
+    cb.bottom = cb.top + cbh;
+    return cb;
+}
+
+// 컬럼 제목 — AddCol 과 동일. 헤더는 이 배열에서 직접 그린다(Header_GetItem 의 ANSI 확장
+// 인코딩 깨짐을 피하기 위해 컨트롤에서 텍스트를 되읽지 않는다).
+static const wchar_t* kCols[7] = {
+    L"번호", L"도시명", L"문화권", L"시세", L"도서관", L"조선소", L"조합"
+};
+
+// 헤더 오너드로우 서브클래스 — 세피아 그라데이션 + serif 제목
+static LRESULT CALLBACK HdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    if (m == WM_ERASEBKGND) return 1;
+    if (m == WM_PAINT)
+    {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        int n = (int)SendMessageW(h, HDM_GETITEMCOUNT, 0, 0), i;
+        HFONT of = (HFONT)SelectObject(dc, g_hdrFont);
+        SetBkMode(dc, TRANSPARENT);
+        for (i = 0; i < n; i++)
+        {
+            RECT rc, tr;
+            if (!SendMessageW(h, HDM_GETITEMRECT, (WPARAM)i, (LPARAM)&rc)) continue;
+            VGradient(dc, rc, COL_FACE_TOP, COL_FACE_BOT);
+            Bevel(dc, rc, FALSE);
+            tr = rc; tr.left += 6;
+            SetTextColor(dc, COL_TEXT);
+            if (i < 7) DrawTextW(dc, kCols[i], -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+        SelectObject(dc, of);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    return CallWindowProcW(g_origHdr, h, m, wp, lp);
+}
 
 static void AddCol(HWND lv, int i, const wchar_t* t, int w)
 {
@@ -86,16 +182,51 @@ static void PopulateList(HWND lv)
     }
 }
 
+static void PaintFrame(HWND h)
+{
+    PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+    RECT rc, tb, cb, cf, tr; HBRUSH br; HFONT of;
+    GetClientRect(h, &rc);
+    // 바탕 + 갈색 외곽 프레임
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &rc, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
+    // 타이틀바 (세피아 그라데이션 + 베벨)
+    tb.left = FRAME; tb.top = FRAME; tb.right = rc.right - FRAME; tb.bottom = FRAME + TITLE_H;
+    VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, tb, FALSE);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_titleFont);
+    tr = tb; tr.left += 8;
+    DrawTextW(dc, L"시세 일람", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    // 닫기 버튼 (액자형 베벨 + ×)
+    cb = CloseRect(rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &cb, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &cb, br); DeleteObject(br);
+    cf = cb; InflateRect(&cf, -2, -2); VGradient(dc, cf, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, cf, FALSE);
+    DrawTextW(dc, L"×", -1, &cb, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+    EndPaint(h, &ps);
+}
+
 static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m)
     {
     case WM_CREATE:
+        g_titleFont = CreateFontW(-16, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+        g_hdrFont   = CreateFontW(-13, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+        g_listFont  = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
         g_list = CreateWindowExW(0, L"SysListView32", L"",
-                                 WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
-                                 0, 0, 0, 0, h, (HMENU)1, g_hinst, NULL);
-        SendMessageW(g_list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-                     LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+                                 WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_NOSORTHEADER,
+                                 FRAME, FRAME + TITLE_H,
+                                 WIN_W - 2 * FRAME, WIN_H - 2 * FRAME - TITLE_H,
+                                 h, (HMENU)1, g_hinst, NULL);
+        SendMessageW(g_list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
+        SendMessageW(g_list, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_list, LVM_SETBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        SendMessageW(g_list, LVM_SETTEXTBKCOLOR, 0, (LPARAM)COL_ROW_A);
         AddCol(g_list, 0, L"번호", 44);
         AddCol(g_list, 1, L"도시명", 130);
         AddCol(g_list, 2, L"문화권", 90);
@@ -104,15 +235,71 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         AddCol(g_list, 5, L"조선소", 56);
         AddCol(g_list, 6, L"조합", 50);
         PopulateList(g_list);
+        // 헤더 오너드로우 서브클래스
+        g_hdr = (HWND)SendMessageW(g_list, LVM_GETHEADER, 0, 0);
+        if (g_hdr)
+        {
+            SendMessageW(g_hdr, WM_SETFONT, (WPARAM)g_hdrFont, TRUE);
+            g_origHdr = (WNDPROC)SetWindowLongPtrW(g_hdr, GWLP_WNDPROC, (LONG_PTR)HdrProc);
+        }
         return 0;
-    case WM_SIZE:
-        if (g_list) MoveWindow(g_list, 0, 0, LOWORD(lp), HIWORD(lp), TRUE);
+
+    case WM_ERASEBKGND:
+        return 1;  // 깜빡임 방지 — WM_PAINT 에서 전부 그림
+
+    case WM_PAINT:
+        PaintFrame(h);
         return 0;
+
+    case WM_NOTIFY:
+    {
+        LPNMHDR nh = (LPNMHDR)lp;
+        if (nh->idFrom == 1 && nh->code == NM_CUSTOMDRAW)
+        {
+            LPNMLVCUSTOMDRAW cd = (LPNMLVCUSTOMDRAW)lp;
+            switch (cd->nmcd.dwDrawStage)
+            {
+            case CDDS_PREPAINT:
+                return CDRF_NOTIFYITEMDRAW;
+            case CDDS_ITEMPREPAINT:
+            {
+                int i = (int)cd->nmcd.dwItemSpec;
+                BOOL sel = (ListView_GetItemState(g_list, i, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+                if (sel) { cd->clrText = COL_SEL_TX; cd->clrTextBk = COL_SEL_BG; }
+                else     { cd->clrText = COL_TEXT;   cd->clrTextBk = (i & 1) ? COL_ROW_B : COL_ROW_A; }
+                SelectObject(cd->nmcd.hdc, g_listFont);
+                return CDRF_NEWFONT;
+            }
+            }
+            return CDRF_DODEFAULT;
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt; RECT rc, cb;
+        pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
+        GetClientRect(h, &rc); cb = CloseRect(rc);
+        if (PtInRect(&cb, pt)) { DestroyWindow(h); return 0; }
+        if (pt.y < FRAME + TITLE_H)   // 타이틀바 드래그로 창 이동
+        {
+            ReleaseCapture();
+            SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        }
+        return 0;
+    }
+
     case WM_CLOSE:
         DestroyWindow(h);
         return 0;
+
     case WM_DESTROY:
-        g_siseWnd = NULL; g_list = NULL;
+        if (g_hdr && g_origHdr) { SetWindowLongPtrW(g_hdr, GWLP_WNDPROC, (LONG_PTR)g_origHdr); }
+        if (g_titleFont) { DeleteObject(g_titleFont); g_titleFont = NULL; }
+        if (g_hdrFont)   { DeleteObject(g_hdrFont);   g_hdrFont = NULL; }
+        if (g_listFont)  { DeleteObject(g_listFont);  g_listFont = NULL; }
+        g_hdr = NULL; g_origHdr = NULL; g_siseWnd = NULL; g_list = NULL;
         return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
@@ -121,6 +308,8 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 static void ShowSiseWindow(HWND owner)
 {
     static BOOL reg = FALSE;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    RECT orc;
     if (g_siseWnd) { SetForegroundWindow(g_siseWnd); return; }
     if (!reg)
     {
@@ -130,12 +319,20 @@ static void ShowSiseWindow(HWND owner)
         wc.hInstance = g_hinst;
         wc.lpszClassName = WC_SISE;
         wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.hbrBackground = NULL;
         RegisterClassW(&wc);
         reg = TRUE;
     }
+    // fb9: 게임 창 중앙에 뜨도록 위치 계산
+    if (owner && GetWindowRect(owner, &orc))
+    {
+        x = orc.left + ((orc.right - orc.left) - WIN_W) / 2;
+        y = orc.top  + ((orc.bottom - orc.top) - WIN_H) / 2;
+        if (x < 0) x = 0; if (y < 0) y = 0;
+    }
+    // WS_POPUP: 시스템 프레임 없음(갈색 테두리·타이틀바는 직접 그림)
     g_siseWnd = CreateWindowExW(0, WC_SISE, L"시세 일람",
-                                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 512, 480,
+                                WS_POPUP, x, y, WIN_W, WIN_H,
                                 owner, NULL, g_hinst, NULL);
     if (g_siseWnd) { ShowWindow(g_siseWnd, SW_SHOW); UpdateWindow(g_siseWnd); }
 }
