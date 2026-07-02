@@ -29,6 +29,43 @@
 
 한국어판에서 문제가 발생하는 플러그인은 `CDS95Util` 폴더에서 해당 `.plugin` 파일을 제거하면 나머지 기능은 그대로 사용할 수 있습니다.
 
+## 개발 가이드 (플러그인 직접 개발·수정)
+
+이 저장소에는 배포된 `.plugin` 바이너리의 원본 소스가 없습니다. 한국어판 호환성 문제를
+직접 고치거나 새 플러그인을 만들고 싶다면 `plugins-src/` 폴더의 스캐폴드로 시작하세요.
+MinHook 기반으로 새 DLL을 처음부터 작성하는 방식이며, 기존 `.plugin`을 역어셈블하는 것이
+아닙니다.
+
+### 빌드 방법
+
+1. MinHook 소스를 서브모듈로 추가합니다.
+   ```
+   git submodule add https://github.com/TsudaKageyu/minhook.git plugins-src/third_party/minhook
+   git submodule update --init
+   ```
+2. CMake로 **32비트(x86)** 빌드합니다. CDS95.exe가 32비트 프로세스이므로 반드시
+   `-A Win32`를 지정해야 합니다.
+   ```
+   cmake -S plugins-src -B plugins-src/build -A Win32
+   cmake --build plugins-src/build --config Release
+   ```
+3. 결과물: `plugins-src/build/CollectionUtilKR/Release/CollectionUtilKR.plugin`
+
+### 테스트 방법
+
+1. 실제 게임 실행 파일은 저장소에 포함되어 있지 않고 `cds95runfile/`(`.gitignore` 처리됨)에
+   로컬로만 존재합니다. `CDS95.exe`, `ddraw.dll`(= `DDrawWrapper.plugin` 복사본),
+   `CDS95Util/` 폴더가 그 안에 준비되어 있어야 합니다.
+2. 빌드한 `.plugin` 파일을 `cds95runfile/CDS95Util/`에 복사합니다.
+3. `cds95runfile/CDS95.EXE`를 실행하고, Sysinternals **DebugView**로
+   `OutputDebugString` 로그를 확인해 DLL이 정상 로드/후킹되었는지 확인합니다.
+4. 크래시가 나면 방금 넣은 `.plugin`만 폴더에서 빼고 재현되는지 확인해 원인을 격리합니다.
+   (다른 플러그인과 마찬가지로, 문제가 있는 `.plugin` 파일 하나만 제거해도 나머지는 정상
+   동작합니다.)
+
+실제 후킹 주소를 한국어판 기준으로 찾는 리버싱 절차(Cheat Engine + Ghidra)는
+[plugins-src/README.md](plugins-src/README.md)에 단계별로 정리되어 있습니다.
+
 ## 재배포·개조·전재 조건 및 사용 라이브러리
 
 라이선스 및 외부 라이브러리(MinHook, Zip Utils) 관련 내용은 [0.ReadMe.md](0.ReadMe.md)를 참고하세요.
