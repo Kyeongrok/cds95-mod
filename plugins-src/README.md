@@ -37,7 +37,7 @@
 ## 지금 상태로 빌드하면 어떻게 동작하나요?
 
 `hooks.c`의 후킹 대상 주소가 전부 `NULL`(TODO)이므로, 이 상태로 빌드해서 넣어도
-**아무 것도 후킹하지 않고 조용히 넘어갑니다.** DebugView(Sysinternals)로 보면
+**아무 것도 후킹하지 않고 조용히 넘어갑니다.** [DebugView](DebugView.md)로 보면
 `[CollectionUtilKR] hook target not found for this version, skipping.` 로그가 찍힙니다.
 
 즉 1단계 목표는 "DLL이 정상적으로 로드되고 게임이 죽지 않는지" 확인하는 것이고,

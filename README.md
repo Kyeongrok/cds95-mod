@@ -57,8 +57,9 @@ MinHook 기반으로 새 DLL을 처음부터 작성하는 방식이며, 기존 `
    로컬로만 존재합니다. `CDS95.exe`, `ddraw.dll`(= `DDrawWrapper.plugin` 복사본),
    `CDS95Util/` 폴더가 그 안에 준비되어 있어야 합니다.
 2. 빌드한 `.plugin` 파일을 `cds95runfile/CDS95Util/`에 복사합니다.
-3. `cds95runfile/CDS95.EXE`를 실행하고, Sysinternals **DebugView**로
-   `OutputDebugString` 로그를 확인해 DLL이 정상 로드/후킹되었는지 확인합니다.
+3. `cds95runfile/CDS95.EXE`를 실행하고, **DebugView**로 `OutputDebugString` 로그를
+   확인해 DLL이 정상 로드/후킹되었는지 확인합니다. 다운로드 링크와 사용법은
+   [plugins-src/DebugView.md](plugins-src/DebugView.md) 참고.
 4. 크래시가 나면 방금 넣은 `.plugin`만 폴더에서 빼고 재현되는지 확인해 원인을 격리합니다.
    (다른 플러그인과 마찬가지로, 문제가 있는 `.plugin` 파일 하나만 제거해도 나머지는 정상
    동작합니다.)
