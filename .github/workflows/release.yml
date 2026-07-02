@@ -9,21 +9,25 @@ permissions:
   contents: write
 
 jobs:
-  package:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build distribution package
-        run: |
-          mkdir -p dist/CDS95Util
-          cp CDS95Util/DDrawWrapper.plugin dist/ddraw.dll
-          cp CDS95Util/* dist/CDS95Util/
-          cd dist
-          zip -r "../CDS95Util-${GITHUB_REF_NAME}.zip" .
-
-      - name: Create release
+      - name: Create release (HotelUtilKR only)
         uses: softprops/action-gh-release@v2
         with:
-          files: CDS95Util-${{ github.ref_name }}.zip
+          files: CDS95Util/HotelUtilKR.plugin
           generate_release_notes: true
+          body: |
+            ## HotelUtilKR ${{ github.ref_name }}
+
+            대항해시대3 한국어판 전용 플러그인. 여관 "숙박"을 누르면 숙박 일수를
+            직접 입력받아, 입력한 만큼만 숙박합니다(숙박비도 일수에 비례). 취소하면 원래대로 30일.
+
+            ### 설치
+            `HotelUtilKR.plugin` 파일을 게임 폴더의 `CDS95Util\` 안에 넣으세요.
+            (ddraw.dll = DDrawWrapper 기반 CDS95Util 환경이 이미 설치돼 있어야 합니다.)
+
+            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`만 포함됩니다.
+            > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
