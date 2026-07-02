@@ -1,4 +1,5 @@
 #include "hooks.h"
+#include "dialog.h"
 #include <MinHook.h>
 #include <intrin.h>   // _ReturnAddress
 #include <string.h>   // memcmp
@@ -24,9 +25,6 @@
 #define RVA_HOTEL_RET   0x0007FCA1u   // 여관의 call Rest 다음 명령 = 리턴주소 필터 (0x47FCA1)
 #define RVA_HOTEL_PUSH  0x0007FC9Au   // 여관: push 0x1E(30) 리터럴 위치 (시그니처 검증용)
 
-// 스켈레톤: 여관 숙박을 항상 이 일수로. (검증용 — 나중에 계산기 입력값으로 대체)
-#define SKELETON_DAYS   7
-
 // Rest 는 __thiscall(ecx=this) + 스택 2인자(days, mode), ret 8.
 // MSVC 자유함수엔 __thiscall 을 못 쓰므로 __fastcall(ecx, edx, ...)로 모델링한다.
 // edx 는 더미: 원본은 진입 시 edx 를 쓰지 않는다(첫 명령이 mov eax,[esp+8]).
@@ -40,8 +38,9 @@ static int __fastcall DetourRest(void* thisptr, void* edx, int days, int mode)
     // 이 Rest 호출이 "여관 숙박" 경로에서 온 것인지 리턴주소로 판별.
     if ((uintptr_t)_ReturnAddress() == g_hotelRet)
     {
-        OutputDebugStringW(L"[HotelUtilKR] hotel stay intercepted -> overriding days.");
-        days = SKELETON_DAYS;   // TODO: 계산기 UI 입력값(N)으로 교체
+        // 모달 입력창을 띄워 숙박 일수를 받는다. 취소하면 기본값(원래 30일) 유지.
+        OutputDebugStringW(L"[HotelUtilKR] hotel stay intercepted -> asking days.");
+        days = HotelKR_AskDays(days);
     }
     return g_origRest(thisptr, edx, days, mode);
 }
