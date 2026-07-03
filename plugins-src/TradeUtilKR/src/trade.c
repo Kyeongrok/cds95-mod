@@ -2,6 +2,7 @@
 #include <commctrl.h>
 #include <windowsx.h>
 #include "cities_data.h"
+#include "item_names.h"
 
 // TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
 // 게임 메뉴바에 항목을 추가하고(서브클래싱으로 클릭 가로챔), 클릭 시 전 도시 목록을 표시한다.
@@ -20,26 +21,69 @@
 #define SISE_BASE     0x005863B4u
 #define CITY_STRIDE   92
 
-// 시세 필드(SISE_BASE) 기준 +8 바이트 = 도시 플래그 비트필드 (2026-07-03 패턴 스캔으로 특정).
-//   bit4 = 조합(guild) 보유 여부 — 알려진 6도시 패턴과 유일 일치로 확정.
-//   나머지 비트(0~3,5~7)는 방문/발견/건설 등 후보(의미 미확정).
+// 도시 구조체(stride 92) 내 필드 오프셋 — SISE_BASE(=시세) 기준. ce/CDS_95.CT 라벨로 확정(2026-07-03).
+//   규모(0~7)    : -4   (i32)
+//   시세         :  0   (i32; 값이 작아 u16 로도 읽힘)
+//   플래그 비트필드: +8   (byte) — bit4=조합(guild). 나머지 비트는 방문/발견/건설 후보(미확정).
+//   시장 아이템1~8: +20~+48 (i32 ×8) — 값 = item_names.h 인덱스, 빈 슬롯은 -1(로드시)/0.
+#define SCALE_OFF     (-4)
 #define FLAGS_OFF     8
 #define GUILD_BIT     4
+#define MKT_ITEM_OFF  20
+#define MKT_ITEM_MAX  8
 
-// 도시 i 의 라이브 시세를 읽는다. 주소가 매핑 안 돼 있으면 -1 반환(방어).
-static int ReadSise(int i)
+// 도시 i 필드 주소 (프로세스 내부이므로 절대주소 직접 사용)
+static unsigned CityField(int i, int off)
 {
-    const unsigned short* p = (const unsigned short*)(SISE_BASE + (unsigned)i * CITY_STRIDE);
-    if (IsBadReadPtr(p, sizeof(*p))) return -1;
-    return (int)*p;
+    return SISE_BASE + (unsigned)i * CITY_STRIDE + (unsigned)off;
 }
 
-// 도시 i 의 플래그 바이트에서 지정 비트를 읽는다. 매핑 안 돼 있으면 -1.
+// i32 안전 읽기. 매핑 안 돼 있으면 FALSE.
+static BOOL ReadI32(unsigned addr, int* out)
+{
+    const int* p = (const int*)addr;
+    if (IsBadReadPtr(p, sizeof(*p))) return FALSE;
+    *out = *p; return TRUE;
+}
+
+// 도시 i 의 라이브 시세. 매핑 안 돼 있으면 -1.
+static int ReadSise(int i)
+{
+    int v; return ReadI32(CityField(i, 0), &v) ? v : -1;
+}
+
+// 도시 i 의 규모(0~7). 매핑 안 돼 있으면 -1.
+static int ReadScale(int i)
+{
+    int v; return ReadI32(CityField(i, SCALE_OFF), &v) ? v : -1;
+}
+
+// 도시 i 의 플래그 비트. 매핑 안 돼 있으면 -1.
 static int ReadFlagBit(int i, int bit)
 {
-    const unsigned char* p = (const unsigned char*)(SISE_BASE + (unsigned)i * CITY_STRIDE + FLAGS_OFF);
+    const unsigned char* p = (const unsigned char*)CityField(i, FLAGS_OFF);
     if (IsBadReadPtr(p, 1)) return -1;
     return (int)((*p >> bit) & 1);
+}
+
+// 도시 i 의 시장 아이템(유효한 것)들을 "이름, 이름 …" 으로 buf 에 채운다.
+// 유효 판정: 0 < id < 286 (빈 슬롯 -1/0, 잠수폭탄(id0) 은 시장품이 아니므로 제외). 반환=유효 개수.
+static int BuildMarketItems(int i, wchar_t* buf, int cap)
+{
+    int slot, cnt = 0; (void)cap;
+    buf[0] = 0;
+    for (slot = 0; slot < MKT_ITEM_MAX; slot++)
+    {
+        int v;
+        if (!ReadI32(CityField(i, MKT_ITEM_OFF + slot * 4), &v)) continue;
+        if (v > 0 && v < (int)(sizeof(kItemNames) / sizeof(kItemNames[0])))
+        {
+            if (cnt) lstrcatW(buf, L", ");
+            lstrcatW(buf, kItemNames[v]);
+            cnt++;
+        }
+    }
+    return cnt;
 }
 
 static HINSTANCE g_hinst = NULL;
@@ -56,8 +100,8 @@ static HFONT   g_listFont = NULL;
 
 // ---------------- 시세 일람 창 (여관 다이얼로그와 같은 세피아/브론즈 오너드로우) ----------------
 
-// 창 레이아웃
-#define WIN_W    540
+// 창 레이아웃 (컬럼 총폭보다 좁으면 리스트뷰가 가로 스크롤)
+#define WIN_W    620
 #define WIN_H    560
 #define FRAME    3        // 갈색 외곽 프레임 두께
 #define TITLE_H  26       // 커스텀 타이틀바 높이
@@ -115,9 +159,11 @@ static RECT CloseRect(RECT client)
 
 // 컬럼 제목 — AddCol 과 동일. 헤더는 이 배열에서 직접 그린다(Header_GetItem 의 ANSI 확장
 // 인코딩 깨짐을 피하기 위해 컨트롤에서 텍스트를 되읽지 않는다).
-static const wchar_t* kCols[7] = {
-    L"번호", L"도시명", L"문화권", L"시세", L"도서관", L"조선소", L"조합"
+#define COL_COUNT 10
+static const wchar_t* kCols[COL_COUNT] = {
+    L"번호", L"도시명", L"문화권", L"규모", L"시세", L"시장", L"도서관", L"조선소", L"조합", L"시장아이템"
 };
+static const int kColW[COL_COUNT] = { 40, 104, 78, 40, 46, 40, 52, 52, 44, 240 };
 
 // 헤더 오너드로우 서브클래스 — 세피아 그라데이션 + serif 제목
 static LRESULT CALLBACK HdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
@@ -137,7 +183,7 @@ static LRESULT CALLBACK HdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             Bevel(dc, rc, FALSE);
             tr = rc; tr.left += 6;
             SetTextColor(dc, COL_TEXT);
-            if (i < 7) DrawTextW(dc, kCols[i], -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            if (i < COL_COUNT) DrawTextW(dc, kCols[i], -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
         SelectObject(dc, of);
         EndPaint(h, &ps);
@@ -165,20 +211,26 @@ static void PopulateList(HWND lv)
     int i;
     for (i = 0; i < CITY_COUNT; i++)
     {
-        LVITEMW it; wchar_t num[8];
+        LVITEMW it; wchar_t num[8], sbuf[12], mkt[256];
+        int sise, scale, guild, nItem;
         wsprintfW(num, L"%d", i);
-        int sise, guild; wchar_t sbuf[8];
         it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0; it.pszText = num;
         SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
         SetText(lv, i, 1, kCities[i].name);
         SetText(lv, i, 2, kCities[i].sphere);
+        scale = ReadScale(i);
+        if (scale < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", scale);
+        SetText(lv, i, 3, sbuf);
         sise = ReadSise(i);
         if (sise < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", sise);
-        SetText(lv, i, 3, sbuf);
-        SetText(lv, i, 4, kCities[i].lib   ? L"○" : L"×");
-        SetText(lv, i, 5, kCities[i].ship  ? L"○" : L"×");
+        SetText(lv, i, 4, sbuf);
+        nItem = BuildMarketItems(i, mkt, 256);       // 시장아이템 목록 + 유무 판정
+        SetText(lv, i, 5, nItem > 0 ? L"○" : L"×");  // 시장 유무
+        SetText(lv, i, 6, kCities[i].lib   ? L"○" : L"×");
+        SetText(lv, i, 7, kCities[i].ship  ? L"○" : L"×");
         guild = ReadFlagBit(i, GUILD_BIT);   // 조합: 라이브 플래그 비트(정적 데이터는 부정확)
-        SetText(lv, i, 6, guild == 1 ? L"○" : (guild == 0 ? L"×" : L"-"));
+        SetText(lv, i, 8, guild == 1 ? L"○" : (guild == 0 ? L"×" : L"-"));
+        SetText(lv, i, 9, mkt);              // 시장아이템 이름 나열
     }
 }
 
@@ -227,13 +279,10 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         SendMessageW(g_list, WM_SETFONT, (WPARAM)g_listFont, TRUE);
         SendMessageW(g_list, LVM_SETBKCOLOR, 0, (LPARAM)COL_ROW_A);
         SendMessageW(g_list, LVM_SETTEXTBKCOLOR, 0, (LPARAM)COL_ROW_A);
-        AddCol(g_list, 0, L"번호", 44);
-        AddCol(g_list, 1, L"도시명", 130);
-        AddCol(g_list, 2, L"문화권", 90);
-        AddCol(g_list, 3, L"시세", 56);
-        AddCol(g_list, 4, L"도서관", 56);
-        AddCol(g_list, 5, L"조선소", 56);
-        AddCol(g_list, 6, L"조합", 50);
+        {
+            int c;
+            for (c = 0; c < COL_COUNT; c++) AddCol(g_list, c, kCols[c], kColW[c]);
+        }
         PopulateList(g_list);
         // 헤더 오너드로우 서브클래스
         g_hdr = (HWND)SendMessageW(g_list, LVM_GETHEADER, 0, 0);
@@ -395,9 +444,9 @@ static DWORD WINAPI MonitorThread(LPVOID param)
             {
                 if (!HasOurMenu(bar))
                 {
-                    HMENU pop = CreatePopupMenu();
-                    AppendMenuW(pop, MF_STRING, ID_TRADE_SISE, L"시세 일람");
-                    AppendMenuW(bar, MF_POPUP, (UINT_PTR)pop, L"교역");
+                    // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
+                    // (최상위 메뉴바의 MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다)
+                    AppendMenuW(bar, MF_STRING, ID_TRADE_SISE, L"교역");
                     DrawMenuBar(g_hwnd);
                     OutputDebugStringW(L"[TradeUtilKR] 교역 menu (re)installed.");
                 }
