@@ -425,25 +425,48 @@ static void ShowSiseWindow(HWND owner)
     if (g_siseWnd) { ShowWindow(g_siseWnd, SW_SHOW); UpdateWindow(g_siseWnd); }
 }
 
-// ---------------- 교역품 관리 창 (fb21) ----------------
-// 각 도시의 특산품(교역품)을 교역품명/가격/재고/도시/문화권/규모/교역소 로 나열. 컬럼 클릭 정렬.
+// ---------------- 교역품 관리 창 (fb21/fb27, approach B) ----------------
+// 현재 정박한 도시의 실시간 판매목록을 메모리에서 스캔해 교역품명/공급량/원산지 로 표시.
+//   판매목록 엔트리 = 16바이트 { 품목id(u32), 공급량(u32), 원산지도시id(u32), x(u32; 도시내 동일) }
+//   (fb27 CE 트레이스로 확정: 빌더 0x480E80 이 이 목록을 만든다)
 #define WC_GOODS  L"TradeUtilKR_Goods"
-#define GWIN_W    560
-#define GWIN_H    560
-#define SPEC_KIND_OFF   4     // 특산품 종류(item id)   struct+0x10 = SISE_BASE+4
-#define SPEC_PRICE_OFF  8     // 특산품 단가(x1.5)       struct+0x14 = SISE_BASE+8
-#define SPEC_STOCK_OFF  0xC   // 특산품 재고            struct+0x18 = SISE_BASE+0xC
+#define GWIN_W    492
+#define GWIN_H    540
+#define NGOODS    (int)(sizeof(kTradeGoods)/sizeof(kTradeGoods[0]))
 
-#define GCOL_COUNT 7
-static const wchar_t* kGCols[GCOL_COUNT] = { L"교역품", L"가격", L"재고", L"도시", L"문화권", L"규모", L"교역소" };
-static const int      kGColW[GCOL_COUNT] = { 120, 60, 56, 110, 80, 44, 52 };
+// 문화권 교역품 테이블 (EXE .rdata 정적, VA 0x004DF0E0). 문화권당 i32×5, -1 종료.
+// (fb28: 이 표 + 도시명 = 각 교역소가 파는 공통 교역품. + 도시 특산품)
+#define CULT_TABLE  0x004DF0E0u
+#define CULT_OFF    0x4C           // 도시 구조체의 문화권 인덱스 = SISE_BASE+0x4C (struct+0x58)
+static const wchar_t* kSpheres[11] = {
+    L"이베리아", L"북유럽", L"지중해", L"아메리카", L"중근동", L"인도",
+    L"중국", L"중앙아시아", L"동남아시아", L"일본", L"아프리카"
+};
 
-typedef struct { int city, kind, price, stock; } GoodsRow;
-static GoodsRow g_goods[256];
+#define GCOL_COUNT 4
+static const wchar_t* kGCols[GCOL_COUNT] = { L"교역품", L"도시", L"문화권", L"구분" };
+static const int      kGColW[GCOL_COUNT] = { 120, 110, 90, 56 };
+
+typedef struct { int city, kind, isSpec; } GoodsRow;
+static GoodsRow g_goods[1200];
 static int      g_goodsCount = 0;
-static int      g_gSortCol = 0, g_gSortAsc = 1;
+static int      g_gSortCol = 0, g_gSortAsc = 1;   // 기본 교역품순
 static HWND     g_goodsWnd = NULL, g_goodsList = NULL, g_goodsHdr = NULL;
 static WNDPROC  g_goodsOrigHdr = NULL;
+
+static int CityCulture(int i)      // 도시 문화권 인덱스(0~10), 실패 -1
+{
+    int v; return ReadI32(CityField(i, CULT_OFF), &v) && v >= 0 && v < 11 ? v : -1;
+}
+static int CultGood(int culture, int n)   // 문화권 공통 교역품 n번째(0~4), 없으면 -1
+{
+    const int* p = (const int*)(CULT_TABLE + (unsigned)culture * 20 + (unsigned)n * 4);
+    int v;
+    if (culture < 0 || culture >= 11 || n < 0 || n >= 5) return -1;
+    if (IsBadReadPtr(p, sizeof(*p))) return -1;
+    v = *p;
+    return (v >= 0 && v < NGOODS) ? v : -1;
+}
 
 static int __cdecl GoodsCmp(const void* a, const void* b)
 {
@@ -451,51 +474,55 @@ static int __cdecl GoodsCmp(const void* a, const void* b)
     int r = 0;
     switch (g_gSortCol) {
     case 0: r = lstrcmpW(kTradeGoods[x->kind], kTradeGoods[y->kind]); break;
-    case 1: r = x->price - y->price; break;
-    case 2: r = x->stock - y->stock; break;
-    case 3: r = lstrcmpW(kCities[x->city].name, kCities[y->city].name); break;
-    case 4: r = lstrcmpW(kCities[x->city].sphere, kCities[y->city].sphere); break;
-    case 5: r = ReadScale(x->city) - ReadScale(y->city); break;
-    case 6: r = ReadBuildingBit(x->city, BIT_TRADE) - ReadBuildingBit(y->city, BIT_TRADE); break;
+    case 1: r = lstrcmpW(kCities[x->city].name, kCities[y->city].name); break;
+    case 2: r = CityCulture(x->city) - CityCulture(y->city); break;
+    case 3: r = x->isSpec - y->isSpec; break;
     }
-    if (r == 0) r = x->city - y->city;
+    if (r == 0) r = lstrcmpW(kCities[x->city].name, kCities[y->city].name);
     return g_gSortAsc ? r : -r;
 }
 
+// 전 교역소 도시가 파는 교역품 = 문화권 공통품 + 자기 특산품. (연결 내륙 특산품은 별도 과제)
 static void BuildGoods(void)
 {
-    int i;
+    int i, n;
     g_goodsCount = 0;
-    for (i = 0; i < CITY_COUNT && g_goodsCount < 256; i++) {
-        int kind, price = 0, stock = 0;
-        if (!ReadI32(CityField(i, SPEC_KIND_OFF), &kind)) continue;
-        if (kind < 0 || kind >= (int)(sizeof(kTradeGoods)/sizeof(kTradeGoods[0]))) continue;
-        ReadI32(CityField(i, SPEC_PRICE_OFF), &price);
-        ReadI32(CityField(i, SPEC_STOCK_OFF), &stock);
-        g_goods[g_goodsCount].city = i;
-        g_goods[g_goodsCount].kind = kind;
-        g_goods[g_goodsCount].price = price & 0xFFFF;
-        g_goods[g_goodsCount].stock = stock & 0xFFFF;
-        g_goodsCount++;
+    for (i = 0; i < CITY_COUNT; i++) {
+        int cult, spec, added[8], na = 0, k, dup;
+        if (ReadBuildingBit(i, BIT_TRADE) != 1) continue;   // 교역소 있는 도시만
+        cult = CityCulture(i);
+        for (n = 0; n < 5; n++) {
+            int g = CultGood(cult, n);
+            if (g < 0) break;
+            if (g_goodsCount >= 1200) break;
+            g_goods[g_goodsCount].city = i; g_goods[g_goodsCount].kind = g; g_goods[g_goodsCount].isSpec = 0;
+            g_goodsCount++;
+            if (na < 8) added[na++] = g;
+        }
+        if (ReadI32(CityField(i, 4), &spec) && spec >= 0 && spec < NGOODS) {  // 특산품 종류
+            for (dup = 0, k = 0; k < na; k++) if (added[k] == spec) { dup = 1; break; }
+            if (!dup && g_goodsCount < 1200) {
+                g_goods[g_goodsCount].city = i; g_goods[g_goodsCount].kind = spec; g_goods[g_goodsCount].isSpec = 1;
+                g_goodsCount++;
+            }
+        }
     }
     qsort(g_goods, g_goodsCount, sizeof(GoodsRow), GoodsCmp);
 }
 
 static void PopulateGoods(HWND lv)
 {
-    int i; wchar_t buf[16];
+    int i;
     SendMessageW(lv, LVM_DELETEALLITEMS, 0, 0);
     for (i = 0; i < g_goodsCount; i++) {
         GoodsRow* g = &g_goods[i];
+        int cult = CityCulture(g->city);
         LVITEMW it; it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0;
         it.pszText = (LPWSTR)kTradeGoods[g->kind];
         SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
-        wsprintfW(buf, L"%d", g->price); SetText(lv, i, 1, buf);
-        wsprintfW(buf, L"%d", g->stock); SetText(lv, i, 2, buf);
-        SetText(lv, i, 3, kCities[g->city].name);
-        SetText(lv, i, 4, kCities[g->city].sphere);
-        wsprintfW(buf, L"%d", ReadScale(g->city)); SetText(lv, i, 5, buf);
-        SetText(lv, i, 6, BitMark(ReadBuildingBit(g->city, BIT_TRADE)));
+        SetText(lv, i, 1, kCities[g->city].name);
+        SetText(lv, i, 2, (cult >= 0 && cult < 11) ? kSpheres[cult] : L"?");
+        SetText(lv, i, 3, g->isSpec ? L"특산" : L"공통");
     }
 }
 
@@ -644,7 +671,7 @@ static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     {
         WORD id = LOWORD(wp);
         if (id == ID_TRADE_SISE)  { ShowSiseWindow(h); return 0; }
-        /* if (id == ID_TRADE_GOODS) { ShowTradeGoodsWindow(h); return 0; } */  /* fb21 보류 */
+        if (id == ID_TRADE_GOODS) { ShowTradeGoodsWindow(h); return 0; }
         if (id >= ID_WARP_BASE && id < ID_WARP_BASE + WARP_COUNT)
         {
             DoWarp(id - ID_WARP_BASE);
@@ -703,7 +730,8 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                     // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
                     // (최상위 메뉴바의 MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다)
                     AppendMenuW(bar, MF_STRING, ID_TRADE_SISE, L"교역");
-                    // fb21: "교역품" 메뉴는 미완성이라 보류(창 코드는 남김). [[교역소 판매목록 분석 (보류)]]
+                    // fb21/fb27: "교역품" — 현재 정박 도시의 실시간 판매목록.
+                    AppendMenuW(bar, MF_STRING, ID_TRADE_GOODS, L"교역품");
                     // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
                     warp = CreatePopupMenu();
                     for (i = 0; i < WARP_COUNT; i++)
