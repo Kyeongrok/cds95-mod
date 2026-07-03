@@ -19,6 +19,7 @@ jobs:
           mkdir -p dist/CDS95Util
           cp CDS95Util/HotelUtilKR.plugin dist/CDS95Util/
           cp CDS95Util/TradeUtilKR.plugin dist/CDS95Util/
+          cp CDS95Util/CharacterUtilKR.plugin dist/CDS95Util/
           cd dist
           zip -r "../CDS95Util-${{ github.ref_name }}.zip" CDS95Util
 
@@ -36,11 +37,13 @@ jobs:
               숙박합니다(숙박비도 일수에 비례). 취소하면 원래대로 30일.
             - **TradeUtilKR** — 상단 메뉴에 "교역 > 시세 일람"을 추가. 전 도시(226개)의
               도시명/문화권/시세/도서관/조선소/조합을 게임 고풍 디자인의 목록창으로 표시합니다.
+            - **CharacterUtilKR** — 상단 메뉴에 "인물"을 추가. 게임 인물/여급 얼굴(MALE/FEMALE.CDS)을
+              LS12 디코드해 컬러 갤러리(6×4)로 표시하고, 인물명·카테고리(인물/여급/스폰서/기타) 필터를 제공합니다.
 
             ### 설치
             `CDS95Util-${{ github.ref_name }}.zip` 을 풀어 나오는 `CDS95Util\` 폴더의 플러그인
             파일들을 게임 폴더의 `CDS95Util\` 안에 넣으세요(폴더째 게임 루트에 덮어써도 됩니다).
             (ddraw.dll = DDrawWrapper 기반 CDS95Util 환경이 이미 설치돼 있어야 합니다.)
 
-            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin` 만 포함됩니다.
+            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin` 만 포함됩니다.
             > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.

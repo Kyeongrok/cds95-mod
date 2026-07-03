@@ -1,8 +1,10 @@
 #include "trade.h"
 #include <commctrl.h>
 #include <windowsx.h>
+#include <string.h>
 #include "cities_data.h"
 #include "item_names.h"
+#include "warp_data.h"
 
 // TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
 // 게임 메뉴바에 항목을 추가하고(서브클래싱으로 클릭 가로챔), 클릭 시 전 도시 목록을 표시한다.
@@ -11,8 +13,32 @@
 // Phase 2b(예정): 국적/시세/규모/투자액/방문·발견을 게임 메모리에서 읽어 컬럼 추가.
 
 #define ID_TRADE_SISE 0xB101
+#define ID_WARP_BASE  0xC000        // 워프 메뉴 항목 ID = ID_WARP_BASE + kWarps 인덱스
 #define WC_SISE       L"TradeUtilKR_Sise"
 #define CITY_COUNT    (int)(sizeof(kCities)/sizeof(kCities[0]))
+#define WARP_COUNT    (int)(sizeof(kWarps)/sizeof(kWarps[0]))
+
+// fb14: 순간이동(워프). ce/CDS_95.CT "순간이동용" = 현재 위치를 담는 16바이트 @ 0x005B63A8.
+//   목적지 도시의 16바이트를 여기에 쓰면 그 도시로 이동한다(현재값이 목록의 현위치와 일치함을 확인).
+#define WARP_ADDR     0x005B63A8u
+
+// kWarps[i] 의 16바이트를 워프 주소에 써서 해당 도시로 순간이동.
+static void DoWarp(int i)
+{
+    void* dst = (void*)WARP_ADDR;
+    DWORD old;
+    if (i < 0 || i >= WARP_COUNT) return;
+    if (IsBadWritePtr(dst, 16)) return;
+    if (VirtualProtect(dst, 16, PAGE_READWRITE, &old))
+    {
+        memcpy(dst, kWarps[i].b, 16);
+        VirtualProtect(dst, 16, old, &old);
+    }
+    else
+    {
+        memcpy(dst, kWarps[i].b, 16);
+    }
+}
 
 // 게임 라이브 메모리: 도시별 시세 배열 (2026-07-03 배열 시그니처 스캔으로 확정).
 //   시세 = u16 @ (SISE_BASE + 도시ID * CITY_STRIDE),  도시0=리스본.
@@ -391,10 +417,15 @@ static void ShowSiseWindow(HWND owner)
 static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     WNDPROC op = g_origProc;
-    if (msg == WM_COMMAND && LOWORD(wp) == ID_TRADE_SISE && HIWORD(wp) == 0)
+    if (msg == WM_COMMAND && HIWORD(wp) == 0)
     {
-        ShowSiseWindow(h);
-        return 0;
+        WORD id = LOWORD(wp);
+        if (id == ID_TRADE_SISE) { ShowSiseWindow(h); return 0; }
+        if (id >= ID_WARP_BASE && id < ID_WARP_BASE + WARP_COUNT)
+        {
+            DoWarp(id - ID_WARP_BASE);
+            return 0;
+        }
     }
     if (msg == WM_NCDESTROY)
     {
@@ -444,11 +475,25 @@ static DWORD WINAPI MonitorThread(LPVOID param)
             {
                 if (!HasOurMenu(bar))
                 {
+                    HMENU warp, sub = NULL; const wchar_t* region = NULL; int i;
                     // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
                     // (최상위 메뉴바의 MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다)
                     AppendMenuW(bar, MF_STRING, ID_TRADE_SISE, L"교역");
+                    // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
+                    warp = CreatePopupMenu();
+                    for (i = 0; i < WARP_COUNT; i++)
+                    {
+                        if (!region || lstrcmpW(region, kWarps[i].region) != 0)
+                        {
+                            sub = CreatePopupMenu();
+                            AppendMenuW(warp, MF_POPUP, (UINT_PTR)sub, kWarps[i].region);
+                            region = kWarps[i].region;
+                        }
+                        AppendMenuW(sub, MF_STRING, ID_WARP_BASE + i, kWarps[i].city);
+                    }
+                    AppendMenuW(bar, MF_POPUP, (UINT_PTR)warp, L"워프");
                     DrawMenuBar(g_hwnd);
-                    OutputDebugStringW(L"[TradeUtilKR] 교역 menu (re)installed.");
+                    OutputDebugStringW(L"[TradeUtilKR] 교역/워프 menu (re)installed.");
                 }
                 if (g_subHwnd != g_hwnd)
                 {
