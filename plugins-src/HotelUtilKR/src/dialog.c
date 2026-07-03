@@ -31,16 +31,19 @@ static BOOL  g_fresh = TRUE;
 static HFONT g_btnFont = NULL;
 static HFONT g_dispFont = NULL;
 
-// --- 팔레트 (세피아/브론즈) ---
-#define COL_BG        RGB(150,130,105)
-#define COL_FACE_TOP  RGB(216,201,176)
-#define COL_FACE_BOT  RGB(158,138,113)
-#define COL_FACE_TOP_P RGB(150,130,105)
-#define COL_FACE_BOT_P RGB(120,100, 80)
-#define COL_LIGHT     RGB(238,228,208)
-#define COL_DARK      RGB( 90, 75, 60)
-#define COL_TEXT      RGB( 55, 40, 25)
-#define COL_DISP_BG   RGB(206,194,171)
+// --- 팔레트 (fb23: 게임(sc04/sc05)풍으로 더 밝은 베이지/탄) ---
+#define COL_BG        RGB(196,180,152)
+#define COL_FACE_TOP  RGB(234,224,204)
+#define COL_FACE_BOT  RGB(206,190,164)
+#define COL_FACE_TOP_P RGB(200,184,158)
+#define COL_FACE_BOT_P RGB(168,150,124)
+#define COL_LIGHT     RGB(248,242,228)
+#define COL_DARK      RGB(120,100, 78)
+#define COL_TEXT      RGB( 60, 44, 28)
+#define COL_DISP_BG   RGB(230,222,202)
+// 취소(CANCEL) 버튼은 좀 더 진한 갈색 (sc05: 맨 아래 취소가 더 진함)
+#define COL_CAN_TOP   RGB(176,150,118)
+#define COL_CAN_BOT   RGB(140,114, 86)
 
 static int ClampDays(int v) { if (v < DAY_MIN) v = DAY_MIN; if (v > DAY_MAX) v = DAY_MAX; return v; }
 
@@ -77,17 +80,20 @@ static void DrawButton(LPDRAWITEMSTRUCT di)
 {
     HDC dc = di->hDC; RECT r = di->rcItem, face, m, o;
     BOOL pressed = (di->itemState & ODS_SELECTED) != 0;
+    BOOL isCancel = (di->CtlID == IDCANCEL);
     WCHAR t[24]; HFONT of; HBRUSH br; int th, oh;
     // 패딩 배경(갈색) + 진한 갈색 외곽 테두리 (액자 느낌)
     br = CreateSolidBrush(COL_BG);   FillRect(dc, &r, br);  DeleteObject(br);
     br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &r, br); DeleteObject(br);
-    // 엠보싱 면 — 테두리 안쪽으로 패딩만큼 들여서
+    // 엠보싱 면 — 테두리 안쪽으로 패딩만큼 들여서. 취소는 더 진한 갈색.
     face = r; InflateRect(&face, -3, -3);
-    VGradient(dc, face, pressed ? COL_FACE_TOP_P : COL_FACE_TOP, pressed ? COL_FACE_BOT_P : COL_FACE_BOT);
+    VGradient(dc, face,
+              pressed ? COL_FACE_TOP_P : (isCancel ? COL_CAN_TOP : COL_FACE_TOP),
+              pressed ? COL_FACE_BOT_P : (isCancel ? COL_CAN_BOT : COL_FACE_BOT));
     Bevel(dc, face, pressed);
     // 텍스트 (멀티라인 세로 중앙정렬 — "CAN\nCEL" 대응)
     GetWindowTextW(di->hwndItem, t, 24);
-    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, isCancel ? COL_LIGHT : COL_TEXT);
     of = (HFONT)SelectObject(dc, g_btnFont);
     m = face; m.top = 0; m.bottom = 0;
     th = DrawTextW(dc, t, -1, &m, DT_CENTER | DT_CALCRECT);

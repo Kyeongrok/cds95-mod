@@ -1,7 +1,8 @@
 #include "character.h"
 #include "ls12.h"
 #include "face_palette.h"   // kFacePalette[768]
-#include "char_names.h"     // kMaleNames[], kFemaleNames[]
+#include "char_names.h"     // kMaleNames[], kFemaleNames[], kMaleCat[], kFemaleCat[]
+#include "char_info.h"      // kMaleInfo[], kFemaleInfo[]  (fb24)
 #include <windowsx.h>
 #include <stdio.h>
 
@@ -15,13 +16,16 @@
 #define FRAME     3
 #define TITLE_H   26
 #define FILTER_H  30
-#define CELL_W    110                     // fb18: 6열에 맞춰 축소
-#define CELL_H    132
-#define LABEL_H   30                       // 코드 + 인물명 2줄
-#define COLS      6
+// fb24: 2열 + 초상화 오른쪽 카테고리별 정보 패널
+#define PORT_W    100                      // 초상화 표시(80x96 -> 100x120, x1.25)
+#define PORT_H    120
+#define INFO_W    188                      // 정보 패널 폭
+#define CELL_W    (PORT_W + 8 + INFO_W)    // 296
+#define CELL_H    120
+#define COLS      2
 #define ROWS_VIS  4
-#define GAP       8
-#define ROW_PITCH (CELL_H + LABEL_H + GAP) // 216
+#define GAP       10
+#define ROW_PITCH (CELL_H + GAP)           // 130
 #define GX        (FRAME + GAP)
 #define GY        (FRAME + TITLE_H + FILTER_H + GAP)
 #define GAL_H     (ROWS_VIS * ROW_PITCH)
@@ -88,6 +92,13 @@ static const wchar_t* NameOf(int idx)
     if (g_gender == 0) return idx < (int)(sizeof(kMaleNames)/sizeof(kMaleNames[0]))   ? kMaleNames[idx]   : L"";
     else               return idx < (int)(sizeof(kFemaleNames)/sizeof(kFemaleNames[0])) ? kFemaleNames[idx] : L"";
 }
+// 얼굴 코드 -> 상세정보(카테고리별, 없으면 빈 문자열)  fb24
+static const wchar_t* InfoOf(int idx)
+{
+    if (idx < 0) return L"";
+    if (g_gender == 0) return idx < (int)(sizeof(kMaleInfo)/sizeof(kMaleInfo[0]))   ? kMaleInfo[idx]   : L"";
+    else               return idx < (int)(sizeof(kFemaleInfo)/sizeof(kFemaleInfo[0])) ? kFemaleInfo[idx] : L"";
+}
 
 static int TotalRows(void) { return (g_filtCount + COLS - 1) / COLS; }
 static int MaxScroll(void) { int m = TotalRows() - ROWS_VIS; return m < 0 ? 0 : m; }
@@ -126,7 +137,7 @@ static void DrawFaceAt(HDC dc, int x, int y, int index)
     static unsigned char rgb[LS12_FACE_SZ * 3];
     BITMAPINFO bi; int i;
     Ls12File* f = CurFile();
-    RECT box; box.left=x-1; box.top=y-1; box.right=x+CELL_W+1; box.bottom=y+CELL_H+1;
+    RECT box; box.left=x-1; box.top=y-1; box.right=x+PORT_W+1; box.bottom=y+PORT_H+1;
     if (index < 0 || index >= f->count || !Ls12_DecodeFace(f, index, g_idx)) {
         HBRUSH br = CreateSolidBrush(COL_BG); FillRect(dc, &box, br); DeleteObject(br);
         return;
@@ -145,7 +156,7 @@ static void DrawFaceAt(HDC dc, int x, int y, int index)
     bi.bmiHeader.biBitCount = 24;
     bi.bmiHeader.biCompression = BI_RGB;
     SetStretchBltMode(dc, COLORONCOLOR);
-    StretchDIBits(dc, x, y, CELL_W, CELL_H, 0, 0, LS12_FACE_W, LS12_FACE_H, rgb, &bi, DIB_RGB_COLORS, SRCCOPY);
+    StretchDIBits(dc, x, y, PORT_W, PORT_H, 0, 0, LS12_FACE_W, LS12_FACE_H, rgb, &bi, DIB_RGB_COLORS, SRCCOPY);
     { HBRUSH br = CreateSolidBrush(COL_DARK); FrameRect(dc, &box, br); DeleteObject(br); }
 }
 
@@ -205,13 +216,23 @@ static void OnPaint(HWND h)
             if (gi >= g_filtCount) continue;
             face = g_filt[gi];
             DrawFaceAt(dc, x, y, face);
-            { wchar_t lb[16]; RECT lr; const wchar_t* nm = NameOf(face);
-              of=(HFONT)SelectObject(dc,g_smallFont); SetTextColor(dc,COL_TEXT);
-              wsprintfW(lb, L"%d", face);
-              lr.left=x; lr.right=x+CELL_W; lr.top=y+CELL_H+1; lr.bottom=y+CELL_H+15;
-              DrawTextW(dc,lb,-1,&lr,DT_CENTER|DT_SINGLELINE);
-              lr.top=y+CELL_H+15; lr.bottom=y+CELL_H+29;
-              DrawTextW(dc,nm,-1,&lr,DT_CENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            // fb24: 초상화 오른쪽 정보 패널 (이름/코드 + 카테고리별 상세)
+            { int ix = x + PORT_W + 8; RECT lr; wchar_t hd[80];
+              const wchar_t* nm = NameOf(face); const wchar_t* nf = InfoOf(face);
+              // 정보 패널 배경(살짝 밝게) + 테두리
+              lr.left=ix-2; lr.top=y; lr.right=ix+INFO_W; lr.bottom=y+PORT_H;
+              { HBRUSH b2=CreateSolidBrush(COL_DISP_BG); FillRect(dc,&lr,b2); DeleteObject(b2);
+                b2=CreateSolidBrush(COL_DARK); FrameRect(dc,&lr,b2); DeleteObject(b2); }
+              // 헤더: 이름 (코드)
+              wsprintfW(hd, L"%s  #%d", nm[0]?nm:L"(무명)", face);
+              of=(HFONT)SelectObject(dc,g_font); SetTextColor(dc,COL_TEXT); SetBkMode(dc,TRANSPARENT);
+              lr.left=ix+2; lr.right=ix+INFO_W-2; lr.top=y+3; lr.bottom=y+20;
+              DrawTextW(dc,hd,-1,&lr,DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+              SelectObject(dc,of);
+              // 상세 정보(여러 줄)
+              of=(HFONT)SelectObject(dc,g_smallFont);
+              lr.top=y+22; lr.bottom=y+PORT_H-3;
+              DrawTextW(dc,nf,-1,&lr,DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL);
               SelectObject(dc,of); }
         }
     }

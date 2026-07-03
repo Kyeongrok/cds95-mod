@@ -2,8 +2,10 @@
 #include <commctrl.h>
 #include <windowsx.h>
 #include <string.h>
+#include <stdlib.h>
 #include "cities_data.h"
 #include "item_names.h"
+#include "goods_names.h"
 #include "warp_data.h"
 
 // TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
@@ -13,6 +15,7 @@
 // Phase 2b(예정): 국적/시세/규모/투자액/방문·발견을 게임 메모리에서 읽어 컬럼 추가.
 
 #define ID_TRADE_SISE 0xB101
+#define ID_TRADE_GOODS 0xB102       // fb21: 교역품 관리
 #define ID_WARP_BASE  0xC000        // 워프 메뉴 항목 ID = ID_WARP_BASE + kWarps 인덱스
 #define WC_SISE       L"TradeUtilKR_Sise"
 #define CITY_COUNT    (int)(sizeof(kCities)/sizeof(kCities[0]))
@@ -47,16 +50,22 @@ static void DoWarp(int i)
 #define SISE_BASE     0x005863B4u
 #define CITY_STRIDE   92
 
-// 도시 구조체(stride 92) 내 필드 오프셋 — SISE_BASE(=시세) 기준. ce/CDS_95.CT 라벨로 확정(2026-07-03).
+// 도시 구조체(stride 92) 내 필드 오프셋 — SISE_BASE(=시세) 기준. ce/CDS_95.CT 라벨로 확정.
 //   규모(0~7)    : -4   (i32)
 //   시세         :  0   (i32; 값이 작아 u16 로도 읽힘)
-//   플래그 비트필드: +8   (byte) — bit4=조합(guild). 나머지 비트는 방문/발견/건설 후보(미확정).
+//   건물수치      : +0x10 (u16 비트필드; struct+0x1C) — 건물 유무 플래그.
 //   시장 아이템1~8: +20~+48 (i32 ×8) — 값 = item_names.h 인덱스, 빈 슬롯은 -1(로드시)/0.
 #define SCALE_OFF     (-4)
-#define FLAGS_OFF     8
-#define GUILD_BIT     4
+#define BUILDING_OFF  0x10
 #define MKT_ITEM_OFF  20
 #define MKT_ITEM_MAX  8
+
+// 건물수치 비트 (fb22 정답 대조로 확정 2026-07-03). 이전 '단가 bit4=조합'은 오류였음.
+#define BIT_PORT      0   // 항구
+#define BIT_TRADE     1   // 교역소
+#define BIT_SHIPYARD  6   // 조선소
+#define BIT_GUILD     7   // 조합
+#define BIT_LIBRARY   8   // 도서관
 
 // 도시 i 필드 주소 (프로세스 내부이므로 절대주소 직접 사용)
 static unsigned CityField(int i, int off)
@@ -84,13 +93,16 @@ static int ReadScale(int i)
     int v; return ReadI32(CityField(i, SCALE_OFF), &v) ? v : -1;
 }
 
-// 도시 i 의 플래그 비트. 매핑 안 돼 있으면 -1.
-static int ReadFlagBit(int i, int bit)
+// 도시 i 의 건물수치(u16) 비트. 매핑 안 돼 있으면 -1.
+static int ReadBuildingBit(int i, int bit)
 {
-    const unsigned char* p = (const unsigned char*)CityField(i, FLAGS_OFF);
-    if (IsBadReadPtr(p, 1)) return -1;
+    const unsigned short* p = (const unsigned short*)CityField(i, BUILDING_OFF);
+    if (IsBadReadPtr(p, sizeof(*p))) return -1;
     return (int)((*p >> bit) & 1);
 }
+
+// 비트값(1/0/-1) → ○/×/-
+static const wchar_t* BitMark(int b) { return b == 1 ? L"○" : (b == 0 ? L"×" : L"-"); }
 
 // 도시 i 의 시장 아이템(유효한 것)들을 "이름, 이름 …" 으로 buf 에 채운다.
 // 유효 판정: 0 < id < 286 (빈 슬롯 -1/0, 잠수폭탄(id0) 은 시장품이 아니므로 제외). 반환=유효 개수.
@@ -127,7 +139,7 @@ static HFONT   g_listFont = NULL;
 // ---------------- 시세 일람 창 (여관 다이얼로그와 같은 세피아/브론즈 오너드로우) ----------------
 
 // 창 레이아웃 (컬럼 총폭보다 좁으면 리스트뷰가 가로 스크롤)
-#define WIN_W    620
+#define WIN_W    672
 #define WIN_H    560
 #define FRAME    3        // 갈색 외곽 프레임 두께
 #define TITLE_H  26       // 커스텀 타이틀바 높이
@@ -185,11 +197,11 @@ static RECT CloseRect(RECT client)
 
 // 컬럼 제목 — AddCol 과 동일. 헤더는 이 배열에서 직접 그린다(Header_GetItem 의 ANSI 확장
 // 인코딩 깨짐을 피하기 위해 컨트롤에서 텍스트를 되읽지 않는다).
-#define COL_COUNT 10
+#define COL_COUNT 11
 static const wchar_t* kCols[COL_COUNT] = {
-    L"번호", L"도시명", L"문화권", L"규모", L"시세", L"시장", L"도서관", L"조선소", L"조합", L"시장아이템"
+    L"번호", L"도시명", L"문화권", L"규모", L"시세", L"교역소", L"시장", L"도서관", L"조선소", L"조합", L"시장아이템"
 };
-static const int kColW[COL_COUNT] = { 40, 104, 78, 40, 46, 40, 52, 52, 44, 240 };
+static const int kColW[COL_COUNT] = { 40, 104, 78, 40, 46, 52, 40, 52, 52, 44, 240 };
 
 // 헤더 오너드로우 서브클래스 — 세피아 그라데이션 + serif 제목
 static LRESULT CALLBACK HdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
@@ -238,7 +250,7 @@ static void PopulateList(HWND lv)
     for (i = 0; i < CITY_COUNT; i++)
     {
         LVITEMW it; wchar_t num[8], sbuf[12], mkt[256];
-        int sise, scale, guild, nItem;
+        int sise, scale, nItem;
         wsprintfW(num, L"%d", i);
         it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0; it.pszText = num;
         SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
@@ -250,13 +262,14 @@ static void PopulateList(HWND lv)
         sise = ReadSise(i);
         if (sise < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", sise);
         SetText(lv, i, 4, sbuf);
-        nItem = BuildMarketItems(i, mkt, 256);       // 시장아이템 목록 + 유무 판정
-        SetText(lv, i, 5, nItem > 0 ? L"○" : L"×");  // 시장 유무
-        SetText(lv, i, 6, kCities[i].lib   ? L"○" : L"×");
-        SetText(lv, i, 7, kCities[i].ship  ? L"○" : L"×");
-        guild = ReadFlagBit(i, GUILD_BIT);   // 조합: 라이브 플래그 비트(정적 데이터는 부정확)
-        SetText(lv, i, 8, guild == 1 ? L"○" : (guild == 0 ? L"×" : L"-"));
-        SetText(lv, i, 9, mkt);              // 시장아이템 이름 나열
+        // 건물: 건물수치(bit) 로 확정. 미로드시 -1 → "-"
+        SetText(lv, i, 5, BitMark(ReadBuildingBit(i, BIT_TRADE)));     // 교역소(fb21)
+        nItem = BuildMarketItems(i, mkt, 256);                          // 시장아이템 목록 + 유무 판정
+        SetText(lv, i, 6, nItem > 0 ? L"○" : L"×");                    // 시장 유무
+        SetText(lv, i, 7, BitMark(ReadBuildingBit(i, BIT_LIBRARY)));   // 도서관
+        SetText(lv, i, 8, BitMark(ReadBuildingBit(i, BIT_SHIPYARD)));  // 조선소
+        SetText(lv, i, 9, BitMark(ReadBuildingBit(i, BIT_GUILD)));     // 조합(fb22로 bit7 확정)
+        SetText(lv, i, 10, mkt);                                        // 시장아이템 이름 나열
     }
 }
 
@@ -412,6 +425,216 @@ static void ShowSiseWindow(HWND owner)
     if (g_siseWnd) { ShowWindow(g_siseWnd, SW_SHOW); UpdateWindow(g_siseWnd); }
 }
 
+// ---------------- 교역품 관리 창 (fb21) ----------------
+// 각 도시의 특산품(교역품)을 교역품명/가격/재고/도시/문화권/규모/교역소 로 나열. 컬럼 클릭 정렬.
+#define WC_GOODS  L"TradeUtilKR_Goods"
+#define GWIN_W    560
+#define GWIN_H    560
+#define SPEC_KIND_OFF   4     // 특산품 종류(item id)   struct+0x10 = SISE_BASE+4
+#define SPEC_PRICE_OFF  8     // 특산품 단가(x1.5)       struct+0x14 = SISE_BASE+8
+#define SPEC_STOCK_OFF  0xC   // 특산품 재고            struct+0x18 = SISE_BASE+0xC
+
+#define GCOL_COUNT 7
+static const wchar_t* kGCols[GCOL_COUNT] = { L"교역품", L"가격", L"재고", L"도시", L"문화권", L"규모", L"교역소" };
+static const int      kGColW[GCOL_COUNT] = { 120, 60, 56, 110, 80, 44, 52 };
+
+typedef struct { int city, kind, price, stock; } GoodsRow;
+static GoodsRow g_goods[256];
+static int      g_goodsCount = 0;
+static int      g_gSortCol = 0, g_gSortAsc = 1;
+static HWND     g_goodsWnd = NULL, g_goodsList = NULL, g_goodsHdr = NULL;
+static WNDPROC  g_goodsOrigHdr = NULL;
+
+static int __cdecl GoodsCmp(const void* a, const void* b)
+{
+    const GoodsRow* x = (const GoodsRow*)a; const GoodsRow* y = (const GoodsRow*)b;
+    int r = 0;
+    switch (g_gSortCol) {
+    case 0: r = lstrcmpW(kTradeGoods[x->kind], kTradeGoods[y->kind]); break;
+    case 1: r = x->price - y->price; break;
+    case 2: r = x->stock - y->stock; break;
+    case 3: r = lstrcmpW(kCities[x->city].name, kCities[y->city].name); break;
+    case 4: r = lstrcmpW(kCities[x->city].sphere, kCities[y->city].sphere); break;
+    case 5: r = ReadScale(x->city) - ReadScale(y->city); break;
+    case 6: r = ReadBuildingBit(x->city, BIT_TRADE) - ReadBuildingBit(y->city, BIT_TRADE); break;
+    }
+    if (r == 0) r = x->city - y->city;
+    return g_gSortAsc ? r : -r;
+}
+
+static void BuildGoods(void)
+{
+    int i;
+    g_goodsCount = 0;
+    for (i = 0; i < CITY_COUNT && g_goodsCount < 256; i++) {
+        int kind, price = 0, stock = 0;
+        if (!ReadI32(CityField(i, SPEC_KIND_OFF), &kind)) continue;
+        if (kind < 0 || kind >= (int)(sizeof(kTradeGoods)/sizeof(kTradeGoods[0]))) continue;
+        ReadI32(CityField(i, SPEC_PRICE_OFF), &price);
+        ReadI32(CityField(i, SPEC_STOCK_OFF), &stock);
+        g_goods[g_goodsCount].city = i;
+        g_goods[g_goodsCount].kind = kind;
+        g_goods[g_goodsCount].price = price & 0xFFFF;
+        g_goods[g_goodsCount].stock = stock & 0xFFFF;
+        g_goodsCount++;
+    }
+    qsort(g_goods, g_goodsCount, sizeof(GoodsRow), GoodsCmp);
+}
+
+static void PopulateGoods(HWND lv)
+{
+    int i; wchar_t buf[16];
+    SendMessageW(lv, LVM_DELETEALLITEMS, 0, 0);
+    for (i = 0; i < g_goodsCount; i++) {
+        GoodsRow* g = &g_goods[i];
+        LVITEMW it; it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0;
+        it.pszText = (LPWSTR)kTradeGoods[g->kind];
+        SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
+        wsprintfW(buf, L"%d", g->price); SetText(lv, i, 1, buf);
+        wsprintfW(buf, L"%d", g->stock); SetText(lv, i, 2, buf);
+        SetText(lv, i, 3, kCities[g->city].name);
+        SetText(lv, i, 4, kCities[g->city].sphere);
+        wsprintfW(buf, L"%d", ReadScale(g->city)); SetText(lv, i, 5, buf);
+        SetText(lv, i, 6, BitMark(ReadBuildingBit(g->city, BIT_TRADE)));
+    }
+}
+
+static LRESULT CALLBACK GoodsHdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    if (m == WM_ERASEBKGND) return 1;
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        int n = (int)SendMessageW(h, HDM_GETITEMCOUNT, 0, 0), i;
+        HFONT of = (HFONT)SelectObject(dc, g_hdrFont);
+        SetBkMode(dc, TRANSPARENT);
+        for (i = 0; i < n; i++) {
+            RECT rc, tr; if (!SendMessageW(h, HDM_GETITEMRECT, (WPARAM)i, (LPARAM)&rc)) continue;
+            VGradient(dc, rc, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, rc, FALSE);
+            tr = rc; tr.left += 6; SetTextColor(dc, COL_TEXT);
+            if (i < GCOL_COUNT) {
+                wchar_t t[24];
+                wsprintfW(t, L"%s%s", kGCols[i], i==g_gSortCol ? (g_gSortAsc?L" ▲":L" ▼") : L"");
+                DrawTextW(dc, t, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
+        }
+        SelectObject(dc, of); EndPaint(h, &ps); return 0;
+    }
+    return CallWindowProcW(g_goodsOrigHdr, h, m, wp, lp);
+}
+
+static void GoodsPaintFrame(HWND h)
+{
+    PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+    RECT rc, tb, cb, cf, tr; HBRUSH br; HFONT of;
+    GetClientRect(h, &rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &rc, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
+    tb.left = FRAME; tb.top = FRAME; tb.right = rc.right - FRAME; tb.bottom = FRAME + TITLE_H;
+    VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, tb, FALSE);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_titleFont); tr = tb; tr.left += 8;
+    DrawTextW(dc, L"교역품 관리", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    cb = CloseRect(rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &cb, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &cb, br); DeleteObject(br);
+    cf = cb; InflateRect(&cf, -2, -2); VGradient(dc, cf, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, cf, FALSE);
+    DrawTextW(dc, L"×", -1, &cb, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+    EndPaint(h, &ps);
+}
+
+static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_CREATE:
+    {
+        int c;
+        g_goodsList = CreateWindowExW(0, L"SysListView32", L"",
+            WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
+            FRAME, FRAME + TITLE_H, GWIN_W - 2*FRAME, GWIN_H - 2*FRAME - TITLE_H,
+            h, (HMENU)1, g_hinst, NULL);
+        SendMessageW(g_goodsList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
+        SendMessageW(g_goodsList, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_goodsList, LVM_SETBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        SendMessageW(g_goodsList, LVM_SETTEXTBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        for (c = 0; c < GCOL_COUNT; c++) AddCol(g_goodsList, c, kGCols[c], kGColW[c]);
+        BuildGoods();
+        PopulateGoods(g_goodsList);
+        g_goodsHdr = (HWND)SendMessageW(g_goodsList, LVM_GETHEADER, 0, 0);
+        if (g_goodsHdr) {
+            SendMessageW(g_goodsHdr, WM_SETFONT, (WPARAM)g_hdrFont, TRUE);
+            g_goodsOrigHdr = (WNDPROC)SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)GoodsHdrProc);
+        }
+        return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: GoodsPaintFrame(h); return 0;
+    case WM_NOTIFY:
+    {
+        LPNMHDR nh = (LPNMHDR)lp;
+        if (nh->idFrom == 1 && nh->code == NM_CUSTOMDRAW) {
+            LPNMLVCUSTOMDRAW cd = (LPNMLVCUSTOMDRAW)lp;
+            switch (cd->nmcd.dwDrawStage) {
+            case CDDS_PREPAINT: return CDRF_NOTIFYITEMDRAW;
+            case CDDS_ITEMPREPAINT: {
+                int i = (int)cd->nmcd.dwItemSpec;
+                BOOL sel = (ListView_GetItemState(g_goodsList, i, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+                if (sel) { cd->clrText = COL_SEL_TX; cd->clrTextBk = COL_SEL_BG; }
+                else     { cd->clrText = COL_TEXT;   cd->clrTextBk = (i & 1) ? COL_ROW_B : COL_ROW_A; }
+                SelectObject(cd->nmcd.hdc, g_listFont);
+                return CDRF_NEWFONT;
+            }}
+            return CDRF_DODEFAULT;
+        }
+        if (nh->idFrom == 1 && nh->code == LVN_COLUMNCLICK) {
+            LPNMLISTVIEW nlv = (LPNMLISTVIEW)lp;
+            int col = nlv->iSubItem;
+            if (col == g_gSortCol) g_gSortAsc ^= 1; else { g_gSortCol = col; g_gSortAsc = 1; }
+            qsort(g_goods, g_goodsCount, sizeof(GoodsRow), GoodsCmp);
+            PopulateGoods(g_goodsList);
+            if (g_goodsHdr) InvalidateRect(g_goodsHdr, NULL, TRUE);
+            return 0;
+        }
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt; RECT rc, cb; pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
+        GetClientRect(h, &rc); cb = CloseRect(rc);
+        if (PtInRect(&cb, pt)) { DestroyWindow(h); return 0; }
+        if (pt.y < FRAME + TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
+        return 0;
+    }
+    case WM_CLOSE: DestroyWindow(h); return 0;
+    case WM_DESTROY:
+        if (g_goodsHdr && g_goodsOrigHdr) SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)g_goodsOrigHdr);
+        g_goodsHdr = NULL; g_goodsOrigHdr = NULL; g_goodsWnd = NULL; g_goodsList = NULL;
+        return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+static void ShowTradeGoodsWindow(HWND owner)
+{
+    static BOOL reg = FALSE;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT; RECT orc;
+    if (g_goodsWnd) { SetForegroundWindow(g_goodsWnd); return; }
+    if (!reg) {
+        WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = GoodsProc; wc.hInstance = g_hinst; wc.lpszClassName = WC_GOODS;
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW); wc.hbrBackground = NULL;
+        RegisterClassW(&wc); reg = TRUE;
+    }
+    if (owner && GetWindowRect(owner, &orc)) {
+        x = orc.left + ((orc.right - orc.left) - GWIN_W) / 2;
+        y = orc.top  + ((orc.bottom - orc.top) - GWIN_H) / 2;
+        if (x < 0) x = 0; if (y < 0) y = 0;
+    }
+    g_goodsWnd = CreateWindowExW(0, WC_GOODS, L"교역품 관리", WS_POPUP, x, y, GWIN_W, GWIN_H, owner, NULL, g_hinst, NULL);
+    if (g_goodsWnd) { ShowWindow(g_goodsWnd, SW_SHOW); UpdateWindow(g_goodsWnd); }
+}
+
 // ---------------- 메뉴 통합 (서브클래싱) ----------------
 
 static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
@@ -420,7 +643,8 @@ static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     if (msg == WM_COMMAND && HIWORD(wp) == 0)
     {
         WORD id = LOWORD(wp);
-        if (id == ID_TRADE_SISE) { ShowSiseWindow(h); return 0; }
+        if (id == ID_TRADE_SISE)  { ShowSiseWindow(h); return 0; }
+        /* if (id == ID_TRADE_GOODS) { ShowTradeGoodsWindow(h); return 0; } */  /* fb21 보류 */
         if (id >= ID_WARP_BASE && id < ID_WARP_BASE + WARP_COUNT)
         {
             DoWarp(id - ID_WARP_BASE);
@@ -479,6 +703,7 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                     // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
                     // (최상위 메뉴바의 MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다)
                     AppendMenuW(bar, MF_STRING, ID_TRADE_SISE, L"교역");
+                    // fb21: "교역품" 메뉴는 미완성이라 보류(창 코드는 남김). [[교역소 판매목록 분석 (보류)]]
                     // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
                     warp = CreatePopupMenu();
                     for (i = 0; i < WARP_COUNT; i++)
