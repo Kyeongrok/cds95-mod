@@ -71,20 +71,34 @@ static void StoreFrame(const void* srcBits, const BITMAPINFO* bmi)
     LeaveCriticalSection(&g_lock);
 }
 
-// present blit 이 게임 창을 향하는지(=화면 present) 판정
-static BOOL IsGamePresent(HDC hdcDest)
+// 프레임버퍼로 보이는 크기인지 (게임 해상도급)
+static BOOL PlausibleFrame(int w, int h)
 {
-    HWND w = WindowFromDC(hdcDest);
-    return w && (w == FindGame());
+    return w >= 320 && h >= 200 && w <= 2048 && h <= 1536;
 }
 
-// ---- 훅: StretchDIBits (DIB → 창) ----
+// 진단: blit 호출 로그 (처음 N개만, %TEMP%\cds_blit_log.txt)
+static volatile LONG g_blitLogN = 0;
+static void LogBlit(const char* name, HDC hdcDest, int w, int h)
+{
+    char line[160]; wchar_t path[MAX_PATH], tmp[MAX_PATH]; HANDLE f; DWORD wr;
+    HWND win;
+    if (InterlockedIncrement(&g_blitLogN) > 200) return;
+    win = WindowFromDC(hdcDest);
+    wsprintfA(line, "%s dest=%p win=%p(%s) %dx%d\r\n", name, (void*)hdcDest, (void*)win,
+              (win && win == FindGame()) ? "GAME" : "-", w, h);
+    GetTempPathW(MAX_PATH, tmp); wsprintfW(path, L"%scds_blit_log.txt", tmp);
+    f = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, 0, NULL);
+    if (f != INVALID_HANDLE_VALUE) { SetFilePointer(f, 0, NULL, FILE_END); WriteFile(f, line, lstrlenA(line), &wr, NULL); CloseHandle(f); }
+}
+
+// ---- 훅: StretchDIBits (DIB → 창/스크린) ----
 typedef int (WINAPI *StretchDIBits_t)(HDC,int,int,int,int,int,int,int,int,const void*,const BITMAPINFO*,UINT,DWORD);
 static StretchDIBits_t oStretchDIBits = NULL;
 static int WINAPI hStretchDIBits(HDC hdc,int xd,int yd,int dw,int dh,int xs,int ys,int sw,int sh,const void* bits,const BITMAPINFO* bmi,UINT usage,DWORD rop)
 {
     int r = oStretchDIBits(hdc,xd,yd,dw,dh,xs,ys,sw,sh,bits,bmi,usage,rop);
-    if (bits && bmi && IsGamePresent(hdc)) StoreFrame(bits, bmi);
+    if (bits && bmi && PlausibleFrame(sw, sh)) { LogBlit("StretchDIBits", hdc, sw, sh); StoreFrame(bits, bmi); }
     return r;
 }
 
@@ -110,7 +124,7 @@ static StretchBlt_t oStretchBlt = NULL;
 static BOOL WINAPI hStretchBlt(HDC hd,int xd,int yd,int dw,int dh,HDC hs,int xs,int ys,int sw,int sh,DWORD rop)
 {
     BOOL r = oStretchBlt(hd,xd,yd,dw,dh,hs,xs,ys,sw,sh,rop);
-    if (IsGamePresent(hd)) GrabFromSrcDC(hs, sw, sh);
+    if (PlausibleFrame(sw, sh)) { LogBlit("StretchBlt", hd, sw, sh); GrabFromSrcDC(hs, sw, sh); }
     return r;
 }
 typedef BOOL (WINAPI *BitBlt_t)(HDC,int,int,int,int,HDC,int,int,DWORD);
@@ -118,7 +132,7 @@ static BitBlt_t oBitBlt = NULL;
 static BOOL WINAPI hBitBlt(HDC hd,int xd,int yd,int w,int h,HDC hs,int xs,int ys,DWORD rop)
 {
     BOOL r = oBitBlt(hd,xd,yd,w,h,hs,xs,ys,rop);
-    if (IsGamePresent(hd)) GrabFromSrcDC(hs, w, h);
+    if (PlausibleFrame(w, h)) { LogBlit("BitBlt", hd, w, h); GrabFromSrcDC(hs, w, h); }
     return r;
 }
 
