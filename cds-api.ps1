@@ -16,10 +16,21 @@
   ./cds-api.ps1 t 44C6E0 5A4E18         # (raw) thiscall getType(ship0)
 #>
 param(
-  [Parameter(Mandatory)][string]$Cmd,
+  [Parameter(Position=0)][string]$Cmd = 'help',
+  [switch]$h,
   [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'
+
+# 각 named 커맨드 설명 (help 출력용)
+$Help = [ordered]@{
+  'change_ship_image' = '<0~7>  항해 배 이미지 타입 설정 (출항/함대편성 때 반영). 0코구 1카라벨 2대형카라벨 3카락 4대형카락 5중카락 6갤리온 7다우'
+  'get_ship_type'     = '[slot] 함선종류 읽기 (기본 slot=0)'
+  'get_sprite_cache'  = '       스프라이트 타입 캐시(0x5B3A00) 읽기'
+  'quit'              = '       게임 강제종료 (프로세스 kill)'
+  'depart'            = '       출항 (상태머신 분기라 직접호출 불가 — 안내)'
+  'help'              = '       이 도움말'
+}
 
 # ---- 저수준: GameApiKR 함수호출 ----
 function Invoke-GameFunc([string]$conv, [string]$addr, [string[]]$args) {
@@ -96,9 +107,16 @@ $Named = @{
 }
 
 # ---- 디스패치 ----
-if ($Cmd -eq 'list') {
-  "== named 커맨드 =="; $Named.Keys | Sort-Object | ForEach-Object { "  $_" }
-  "== raw ==  ./cds-api.ps1 <t|c|s> <addr_hex> [ecx] [args...]"
+if ($h -or $Cmd -in 'help', 'list', '-h', '--help', '?') {
+  "cds-api.ps1 — 게임 함수/기능 CLI (GameApiKR)"
+  ""
+  "사용법:  .\cds-api.ps1 <커맨드> [인자]"
+  ""
+  "named 커맨드:"
+  foreach ($k in $Help.Keys) { "  {0,-18} {1}" -f $k, $Help[$k] }
+  ""
+  "raw 함수호출:  .\cds-api.ps1 <t|c|s> <addr_hex> [ecx] [args...]   (t=thiscall c=cdecl s=stdcall)"
+  "예:  .\cds-api.ps1 change_ship_image 5     .\cds-api.ps1 get_ship_type 1     .\cds-api.ps1 t 44C6E0 5A4E18"
 }
 elseif ($Named.ContainsKey($Cmd)) {
   & $Named[$Cmd] $Rest
