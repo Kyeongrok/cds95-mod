@@ -76,10 +76,10 @@ function Cmd-ChangeShipImage($t) {
   if ($null -eq $t) { return "사용법: change_ship_image <0~7>" }
   $type = [int]$t
   if ($type -lt 0 -or $type -gt 7) { return "타입은 0~7 (0코구 1카라벨 2대형카라벨 3카락 4대형카락 5중카락 6갤리온 7다우)" }
-  # ShipSkinKR 훅용 파일 + 스프라이트 캐시 직접 write (둘 다) — 반영은 출항/함대편성 때
+  # ShipSkinKR 훅이 %TEMP%\cds_shiptype.txt 를 읽어 해상 스프라이트를 스킨(스탯 불변).
+  # (0x5B3A00 은 스프라이트와 무관한 죽은 후보였음 — write 제거. getter call-site 리다이렉트로 반영.)
   Set-Content -Path (Join-Path $env:TEMP 'cds_shiptype.txt') -Value "$type" -Encoding Ascii -NoNewline
-  try { Set-Mem $SPRITE_CACHE $type } catch {}
-  "OK 배 이미지 타입=$type 설정 (다음 출항 또는 함대편성 기함변경 때 반영)"
+  "OK 배 이미지 타입=$type 설정 (약 0.2초 내 해상 스프라이트 반영, 스탯/함선종류 불변)"
 }
 function Cmd-GetShipType($slot) {
   $s = if ($null -eq $slot) { 0 } else { [int]$slot }
