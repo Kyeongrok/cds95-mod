@@ -74,6 +74,19 @@ if ($SkipDeploy) {
 }
 
 if (-not $GamePath -or -not (Test-Path $GamePath)) {
+    # 기본 경로가 없으면 Desktop 하위에서 cds_95.exe 가 있는 폴더를 자동 탐지한다.
+    # (build.ps1 기본값이 다른 PC 경로라 배포가 조용히 건너뛰어져 게임 폴더에 구버전이
+    #  남는 stale 배포 사고 방지 — fb30 "이스탄불 양모/어육"의 진짜 원인이었음.)
+    $detected = Get-ChildItem "$env:USERPROFILE\Desktop" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "cds_95.exe") } |
+        Select-Object -First 1
+    if ($detected) {
+        $GamePath = $detected.FullName
+        Write-Host "게임 폴더 자동 탐지: $GamePath" -ForegroundColor DarkGray
+    }
+}
+
+if (-not $GamePath -or -not (Test-Path $GamePath)) {
     Write-Host "`n게임 경로를 찾을 수 없어 배포를 건너뜁니다: $GamePath" -ForegroundColor Yellow
     Write-Host "스크립트 상단의 `$GamePath 기본값을 실제 경로로 고치거나 -GamePath 로 넘겨주세요." -ForegroundColor Yellow
     return

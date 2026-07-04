@@ -13,3 +13,9 @@
 
 # JetBrains IDE
 /.idea/
+
+# Claude Code local settings
+/.claude/
+
+# Cheat Engine 테이블(26MB 참조 덤프, 로컬 보관 — 버전관리 제외)
+/ce/

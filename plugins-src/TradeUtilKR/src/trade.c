@@ -430,17 +430,20 @@ static void ShowSiseWindow(HWND owner)
 //   판매목록 엔트리 = 16바이트 { 품목id(u32), 공급량(u32), 원산지도시id(u32), x(u32; 도시내 동일) }
 //   (fb27 CE 트레이스로 확정: 빌더 0x480E80 이 이 목록을 만든다)
 #define WC_GOODS  L"TradeUtilKR_Goods"
-#define GWIN_W    492
+#define GWIN_W    400      // fb31: 컬럼 4개(120+110+90+56=376)+스크롤바에 맞춰 폭 축소(구 492)
 #define GWIN_H    540
+#define FILTER_H  26       // 상단 검색창 높이
 #define NGOODS    (int)(sizeof(kTradeGoods)/sizeof(kTradeGoods[0]))
 
 // 문화권 교역품 테이블 (EXE .rdata 정적, VA 0x004DF0E0). 문화권당 i32×5, -1 종료.
 // (fb28: 이 표 + 도시명 = 각 교역소가 파는 공통 교역품. + 도시 특산품)
 #define CULT_TABLE  0x004DF0E0u
 #define CULT_OFF    0x4C           // 도시 구조체의 문화권 인덱스 = SISE_BASE+0x4C (struct+0x58)
+// idx = 도시 구조체 +0x58 (런타임). 226도시 전수 실측 확정(2026-07-04, → obsidian 문화권 인덱스 support).
+// 주의: idx3=아프리카, idx10=아메리카. (이전 버전 아메리카↔아프리카 뒤바뀌어 있었음)
 static const wchar_t* kSpheres[11] = {
-    L"이베리아", L"북유럽", L"지중해", L"아메리카", L"중근동", L"인도",
-    L"중국", L"중앙아시아", L"동남아시아", L"일본", L"아프리카"
+    L"이베리아", L"북유럽", L"지중해", L"아프리카", L"중근동", L"인도",
+    L"중국", L"중앙아시아", L"동남아시아", L"일본", L"아메리카"
 };
 
 #define GCOL_COUNT 4
@@ -453,19 +456,65 @@ static int      g_goodsCount = 0;
 static int      g_gSortCol = 0, g_gSortAsc = 1;   // 기본 교역품순
 static HWND     g_goodsWnd = NULL, g_goodsList = NULL, g_goodsHdr = NULL;
 static WNDPROC  g_goodsOrigHdr = NULL;
+static HWND     g_goodsFilter = NULL;             // 상단 검색 입력창
+static HBRUSH   g_goodsFilterBr = NULL;           // 검색창 배경 브러시
+static wchar_t  g_goodsFilterText[64] = L"";      // 현재 필터 문자열
+
+// 대소문자 무시 부분일치(한글은 그대로 매칭). needle 빈 문자열이면 항상 TRUE.
+static BOOL WStrContainsCI(const wchar_t* hay, const wchar_t* needle)
+{
+    int hlen, nlen, i, j;
+    if (!needle || !needle[0]) return TRUE;
+    if (!hay) return FALSE;
+    hlen = lstrlenW(hay); nlen = lstrlenW(needle);
+    for (i = 0; i + nlen <= hlen; i++) {
+        for (j = 0; j < nlen; j++) {
+            wchar_t a = hay[i + j], b = needle[j];
+            if (a >= L'a' && a <= L'z') a -= 32;
+            if (b >= L'a' && b <= L'z') b -= 32;
+            if (a != b) break;
+        }
+        if (j == nlen) return TRUE;
+    }
+    return FALSE;
+}
 
 static int CityCulture(int i)      // 도시 문화권 인덱스(0~10), 실패 -1
 {
     int v; return ReadI32(CityField(i, CULT_OFF), &v) && v >= 0 && v < 11 ? v : -1;
 }
-static int CultGood(int culture, int n)   // 문화권 공통 교역품 n번째(0~4), 없으면 -1
+// 교역품 지역(goods region) 인덱스 — 0x4DF0E0 공통품 테이블의 행 번호. 0~26 (27종).
+// ★ 주의: 이것은 문화권(struct+0x58, 0~10)과 다른 별개 인덱스다. (207/226 도시가 서로 다름)
+//   공통 교역품은 반드시 이 값으로 인덱싱. fb28의 "struct+0x58"은 이베리아(지역0)에서만 우연히 일치.
+//   실측: 이스탄불 지역=13(=밀/총), 리스본 지역=0(=돌소금/올리브유/총). (2026-07-04)
+#define REGION_TABLE  0x004D14B0u   // 도시별 136바이트 레코드 배열
+#define REGION_STRIDE 136
+#define REGION_OFF    0x1C          // 레코드 내 교역품 지역 인덱스
+#define NREGION       27
+static int GoodsRegion(int i)   // 도시 i 의 교역품 지역(0~26), 실패 -1
 {
-    const int* p = (const int*)(CULT_TABLE + (unsigned)culture * 20 + (unsigned)n * 4);
+    int v; return ReadI32(REGION_TABLE + (unsigned)i * REGION_STRIDE + REGION_OFF, &v)
+        && v >= 0 && v < NREGION ? v : -1;
+}
+static int CultGood(int region, int n)   // 교역품 지역 공통 교역품 n번째(0~4), 없으면 -1
+{
+    const int* p = (const int*)(CULT_TABLE + (unsigned)region * 20 + (unsigned)n * 4);
     int v;
-    if (culture < 0 || culture >= 11 || n < 0 || n >= 5) return -1;
+    if (region < 0 || region >= NREGION || n < 0 || n >= 5) return -1;
     if (IsBadReadPtr(p, sizeof(*p))) return -1;
     v = *p;
     return (v >= 0 && v < NGOODS) ? v : -1;
+}
+
+// 교역품 판매허용 게이트 (EXE .data, VA 0x0058BAB0). 품목종류별 플래그(1/0).
+// 게임 판매목록 빌더가 모든 품목을 이 값으로 필터. 0=미판매(미발견/미언락 지역 품목).
+// 동적: 지역발견/시대에 따라 값이 바뀌므로 라이브로 읽는다. (fb29 실측)
+#define GATE_TABLE  0x0058BAB0u
+static int GoodSellable(int kind)   // 0x58BAB0[kind] != 0 이면 판매 가능
+{
+    int v;
+    if (kind < 0 || kind >= NGOODS) return 0;
+    return ReadI32(GATE_TABLE + (unsigned)kind * 4, &v) && v != 0;
 }
 
 static int __cdecl GoodsCmp(const void* a, const void* b)
@@ -482,29 +531,35 @@ static int __cdecl GoodsCmp(const void* a, const void* b)
     return g_gSortAsc ? r : -r;
 }
 
-// 전 교역소 도시가 파는 교역품 = 문화권 공통품 + 자기 특산품. (연결 내륙 특산품은 별도 과제)
+// 전 교역소 도시가 파는 교역품 — 게임 판매목록 빌더(0x480CC0) 3-phase 모델 재현.
+//   A. 지역 공통품: 0x4DF0E0[교역품지역(record+0x1C)] (자기 특산품과 같은 종류는 제외 — 게임 dedup)
+//   B. 자기 특산품: 도시struct+0x10 (종류)
+//   * A·B 모두 게이트 GoodSellable(=0x58BAB0[종류]!=0) 통과분만. (fb29: 이스탄불 골동품 제외)
+//   C. 연결 내륙도시 특산품(카디스←코르도바 등)은 Ctx+0xB0 동적 리스트라 별도 과제(리서치1) — 미반영.
 static void BuildGoods(void)
 {
     int i, n;
     g_goodsCount = 0;
     for (i = 0; i < CITY_COUNT; i++) {
-        int cult, spec, added[8], na = 0, k, dup;
+        int region, spec, hasSpec;
         if (ReadBuildingBit(i, BIT_TRADE) != 1) continue;   // 교역소 있는 도시만
-        cult = CityCulture(i);
+        region = GoodsRegion(i);   // ★ 공통품은 교역품 지역(record+0x1C), 문화권(struct+0x58) 아님
+        hasSpec = ReadI32(CityField(i, 4), &spec) && spec >= 0 && spec < NGOODS;  // 특산품 종류
+
+        // A. 지역 공통품 (자기 특산품 종류는 B에서 다루므로 제외, 게이트 통과분만)
         for (n = 0; n < 5; n++) {
-            int g = CultGood(cult, n);
+            int g = CultGood(region, n);
             if (g < 0) break;
+            if (hasSpec && g == spec) continue;   // 게임 dedup: 자기 특산품과 겹치면 A 제외
+            if (!GoodSellable(g)) continue;       // 게이트: 미판매 품목 제외
             if (g_goodsCount >= 1200) break;
             g_goods[g_goodsCount].city = i; g_goods[g_goodsCount].kind = g; g_goods[g_goodsCount].isSpec = 0;
             g_goodsCount++;
-            if (na < 8) added[na++] = g;
         }
-        if (ReadI32(CityField(i, 4), &spec) && spec >= 0 && spec < NGOODS) {  // 특산품 종류
-            for (dup = 0, k = 0; k < na; k++) if (added[k] == spec) { dup = 1; break; }
-            if (!dup && g_goodsCount < 1200) {
-                g_goods[g_goodsCount].city = i; g_goods[g_goodsCount].kind = spec; g_goods[g_goodsCount].isSpec = 1;
-                g_goodsCount++;
-            }
+        // B. 자기 특산품 (게이트 통과 시만 — 미판매면 목록에서 빠짐)
+        if (hasSpec && GoodSellable(spec) && g_goodsCount < 1200) {
+            g_goods[g_goodsCount].city = i; g_goods[g_goodsCount].kind = spec; g_goods[g_goodsCount].isSpec = 1;
+            g_goodsCount++;
         }
     }
     qsort(g_goods, g_goodsCount, sizeof(GoodsRow), GoodsCmp);
@@ -512,17 +567,28 @@ static void BuildGoods(void)
 
 static void PopulateGoods(HWND lv)
 {
-    int i;
+    int i, row = 0;
+    const wchar_t* f = g_goodsFilterText;
     SendMessageW(lv, LVM_DELETEALLITEMS, 0, 0);
     for (i = 0; i < g_goodsCount; i++) {
         GoodsRow* g = &g_goods[i];
         int cult = CityCulture(g->city);
-        LVITEMW it; it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0;
-        it.pszText = (LPWSTR)kTradeGoods[g->kind];
+        const wchar_t* gname = kTradeGoods[g->kind];
+        const wchar_t* cname = kCities[g->city].name;
+        const wchar_t* culn  = (cult >= 0 && cult < 11) ? kSpheres[cult] : L"?";
+        const wchar_t* kindn = g->isSpec ? L"특산" : L"공통";
+        LVITEMW it;
+        // 필터: 교역품/도시/문화권/구분 중 하나라도 부분일치하면 표시
+        if (f[0] && !WStrContainsCI(gname, f) && !WStrContainsCI(cname, f)
+                 && !WStrContainsCI(culn, f) && !WStrContainsCI(kindn, f))
+            continue;
+        it.mask = LVIF_TEXT; it.iItem = row; it.iSubItem = 0;
+        it.pszText = (LPWSTR)gname;
         SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
-        SetText(lv, i, 1, kCities[g->city].name);
-        SetText(lv, i, 2, (cult >= 0 && cult < 11) ? kSpheres[cult] : L"?");
-        SetText(lv, i, 3, g->isSpec ? L"특산" : L"공통");
+        SetText(lv, row, 1, cname);
+        SetText(lv, row, 2, culn);
+        SetText(lv, row, 3, kindn);
+        row++;
     }
 }
 
@@ -577,9 +643,17 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_CREATE:
     {
         int c;
+        g_goodsFilterText[0] = 0;
+        // 상단 검색창 (도시명/교역품명/문화권/구분 실시간 필터)
+        g_goodsFilter = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+            FRAME + 2, FRAME + TITLE_H + 2, GWIN_W - 2*FRAME - 4, FILTER_H - 4,
+            h, (HMENU)2, g_hinst, NULL);
+        SendMessageW(g_goodsFilter, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_goodsFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"검색: 도시 · 교역품 · 문화권 · 구분");
         g_goodsList = CreateWindowExW(0, L"SysListView32", L"",
             WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
-            FRAME, FRAME + TITLE_H, GWIN_W - 2*FRAME, GWIN_H - 2*FRAME - TITLE_H,
+            FRAME, FRAME + TITLE_H + FILTER_H, GWIN_W - 2*FRAME, GWIN_H - 2*FRAME - TITLE_H - FILTER_H,
             h, (HMENU)1, g_hinst, NULL);
         SendMessageW(g_goodsList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
         SendMessageW(g_goodsList, WM_SETFONT, (WPARAM)g_listFont, TRUE);
@@ -597,6 +671,21 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     }
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: GoodsPaintFrame(h); return 0;
+    case WM_COMMAND:
+        if (LOWORD(wp) == 2 && HIWORD(wp) == EN_CHANGE) {   // 검색창 내용 변경
+            GetWindowTextW(g_goodsFilter, g_goodsFilterText, 64);
+            PopulateGoods(g_goodsList);
+            return 0;
+        }
+        return 0;
+    case WM_CTLCOLOREDIT:
+    {
+        HDC dc = (HDC)wp;
+        SetTextColor(dc, COL_TEXT);
+        SetBkColor(dc, COL_LIGHT);
+        if (!g_goodsFilterBr) g_goodsFilterBr = CreateSolidBrush(COL_LIGHT);
+        return (LRESULT)g_goodsFilterBr;
+    }
     case WM_NOTIFY:
     {
         LPNMHDR nh = (LPNMHDR)lp;
@@ -636,7 +725,9 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY:
         if (g_goodsHdr && g_goodsOrigHdr) SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)g_goodsOrigHdr);
-        g_goodsHdr = NULL; g_goodsOrigHdr = NULL; g_goodsWnd = NULL; g_goodsList = NULL;
+        if (g_goodsFilterBr) { DeleteObject(g_goodsFilterBr); g_goodsFilterBr = NULL; }
+        g_goodsFilterText[0] = 0;
+        g_goodsHdr = NULL; g_goodsOrigHdr = NULL; g_goodsWnd = NULL; g_goodsList = NULL; g_goodsFilter = NULL;
         return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
