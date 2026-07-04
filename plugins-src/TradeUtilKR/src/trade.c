@@ -459,6 +459,11 @@ static WNDPROC  g_goodsOrigHdr = NULL;
 static HWND     g_goodsFilter = NULL;             // 상단 검색 입력창
 static HBRUSH   g_goodsFilterBr = NULL;           // 검색창 배경 브러시
 static wchar_t  g_goodsFilterText[64] = L"";      // 현재 필터 문자열
+// fb32: 세피아 오버레이 스크롤바 (네이티브 회색 스크롤바를 덮어 게임 분위기에 맞춤)
+#define WC_GOODSSB  L"TradeUtilKR_GoodsSB"
+static HWND     g_goodsSB = NULL;                 // 커스텀 스크롤바 오버레이 창
+static WNDPROC  g_goodsListOrig = NULL;           // 리스트뷰 서브클래스 원본 프로시저
+static int      g_sbDrag = 0, g_sbDragY = 0;      // 썸 드래그 상태
 
 // 대소문자 무시 부분일치(한글은 그대로 매칭). needle 빈 문자열이면 항상 TRUE.
 static BOOL WStrContainsCI(const wchar_t* hay, const wchar_t* needle)
@@ -636,6 +641,160 @@ static void GoodsPaintFrame(HWND h)
     EndPaint(h, &ps);
 }
 
+// ---- fb32: 세피아 커스텀 스크롤바 (리스트뷰 네이티브 스크롤바 위에 오버레이) ----
+typedef struct { BOOL show; int H, sbw, thumbTop, thumbBot; } SBGeom;
+
+static SBGeom GoodsSBCalc(void)
+{
+    SBGeom g; RECT rc; SCROLLINFO si;
+    int trackH, thumbH, span, page, denom, pos, off;
+    ZeroMemory(&g, sizeof(g));
+    if (!g_goodsSB || !g_goodsList) return g;
+    GetClientRect(g_goodsSB, &rc);
+    g.H = rc.bottom; g.sbw = rc.right;
+    if (g.H <= 2 * g.sbw) return g;
+    si.cbSize = sizeof(si); si.fMask = SIF_ALL;
+    if (!GetScrollInfo(g_goodsList, SB_VERT, &si)) return g;
+    span = si.nMax - si.nMin + 1; page = (int)si.nPage; if (page < 1) page = 1;
+    if (span <= page) return g;                       // 스크롤 불필요
+    g.show = TRUE;
+    trackH = (g.H - g.sbw) - g.sbw;                   // 위/아래 화살표 사이 트랙
+    thumbH = trackH * page / span; if (thumbH < 18) thumbH = 18; if (thumbH > trackH) thumbH = trackH;
+    denom = span - page; pos = si.nPos - si.nMin;
+    off = denom > 0 ? (trackH - thumbH) * pos / denom : 0;
+    g.thumbTop = g.sbw + off; g.thumbBot = g.thumbTop + thumbH;
+    return g;
+}
+
+static int GoodsLineStep(void)
+{
+    RECT ir;
+    if (SendMessageW(g_goodsList, LVM_GETITEMCOUNT, 0, 0) > 0 &&
+        ListView_GetItemRect(g_goodsList, 0, &ir, LVIR_BOUNDS) && ir.bottom > ir.top)
+        return ir.bottom - ir.top;
+    return 17;
+}
+static int GoodsPageStep(void)
+{
+    SCROLLINFO si; si.cbSize = sizeof(si); si.fMask = SIF_PAGE;
+    return GetScrollInfo(g_goodsList, SB_VERT, &si) ? (int)si.nPage : 40;
+}
+static void GoodsScrollBy(int dpx)
+{
+    ListView_Scroll(g_goodsList, 0, dpx);
+    if (g_goodsSB) InvalidateRect(g_goodsSB, NULL, FALSE);
+}
+static void GoodsScrollTo(int newPos)
+{
+    SCROLLINFO si; si.cbSize = sizeof(si); si.fMask = SIF_ALL;
+    if (!GetScrollInfo(g_goodsList, SB_VERT, &si)) return;
+    GoodsScrollBy(newPos - si.nPos);
+}
+
+static void DrawSBArrow(HDC dc, RECT r, BOOL up)
+{
+    int cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, s = 3;
+    POINT p[3];
+    HBRUSH br = CreateSolidBrush(COL_TEXT); HPEN pn = CreatePen(PS_SOLID, 1, COL_TEXT);
+    HBRUSH ob; HPEN op;
+    if (up) { p[0].x = cx; p[0].y = cy - s; p[1].x = cx - s; p[1].y = cy + s; p[2].x = cx + s; p[2].y = cy + s; }
+    else    { p[0].x = cx; p[0].y = cy + s; p[1].x = cx - s; p[1].y = cy - s; p[2].x = cx + s; p[2].y = cy - s; }
+    ob = (HBRUSH)SelectObject(dc, br); op = (HPEN)SelectObject(dc, pn);
+    Polygon(dc, p, 3);
+    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(br); DeleteObject(pn);
+}
+
+static LRESULT CALLBACK GoodsSBProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        SBGeom g = GoodsSBCalc();
+        RECT rc, up, dn, th; HBRUSH bg;
+        GetClientRect(h, &rc);
+        bg = CreateSolidBrush(COL_BG); FillRect(dc, &rc, bg); DeleteObject(bg);
+        if (g.show) {
+            up.left = 0; up.top = 0; up.right = g.sbw; up.bottom = g.sbw;
+            dn.left = 0; dn.top = g.H - g.sbw; dn.right = g.sbw; dn.bottom = g.H;
+            th.left = 1; th.top = g.thumbTop; th.right = g.sbw - 1; th.bottom = g.thumbBot;
+            VGradient(dc, up, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, up, FALSE); DrawSBArrow(dc, up, TRUE);
+            VGradient(dc, dn, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, dn, FALSE); DrawSBArrow(dc, dn, FALSE);
+            VGradient(dc, th, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, th, FALSE);
+        }
+        EndPaint(h, &ps); return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        SBGeom g = GoodsSBCalc(); int y = GET_Y_LPARAM(lp);
+        if (!g.show) return 0;
+        SetCapture(h);
+        if      (y < g.sbw)          GoodsScrollBy(-GoodsLineStep());
+        else if (y >= g.H - g.sbw)   GoodsScrollBy( GoodsLineStep());
+        else if (y < g.thumbTop)     GoodsScrollBy(-GoodsPageStep());
+        else if (y >= g.thumbBot)    GoodsScrollBy( GoodsPageStep());
+        else { g_sbDrag = 1; g_sbDragY = y - g.thumbTop; }
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (g_sbDrag) {
+            SBGeom g = GoodsSBCalc();
+            int y = GET_Y_LPARAM(lp), trackH, thumbH, off, denom, span, page, newPos;
+            SCROLLINFO si;
+            if (!g.show) return 0;
+            trackH = (g.H - g.sbw) - g.sbw;
+            thumbH = g.thumbBot - g.thumbTop;
+            off = (y - g_sbDragY) - g.sbw;
+            denom = trackH - thumbH; if (denom < 1) denom = 1;
+            if (off < 0) off = 0; if (off > denom) off = denom;
+            si.cbSize = sizeof(si); si.fMask = SIF_ALL;
+            if (!GetScrollInfo(g_goodsList, SB_VERT, &si)) return 0;
+            span = si.nMax - si.nMin + 1; page = (int)si.nPage;
+            newPos = si.nMin + (span - page) * off / denom;
+            GoodsScrollTo(newPos);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        g_sbDrag = 0;
+        if (GetCapture() == h) ReleaseCapture();
+        return 0;
+    case WM_MOUSEWHEEL:
+        SendMessageW(g_goodsList, WM_MOUSEWHEEL, wp, lp);
+        InvalidateRect(h, NULL, FALSE);
+        return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+// 리스트뷰 서브클래스 — 휠/키보드/선택 등으로 스크롤되면 오버레이 썸 갱신
+static LRESULT CALLBACK GoodsListSubProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    LRESULT r = CallWindowProcW(g_goodsListOrig, h, m, wp, lp);
+    if (g_goodsSB && (m == WM_MOUSEWHEEL || m == WM_KEYDOWN || m == WM_VSCROLL ||
+                      m == WM_LBUTTONDOWN || m == WM_LBUTTONUP))
+        InvalidateRect(g_goodsSB, NULL, FALSE);
+    return r;
+}
+
+// 오버레이를 리스트뷰 네이티브 스크롤바 위에 배치하고, 필요 없으면 숨김
+static void UpdateGoodsSB(void)
+{
+    RECT lr; int sbw; SBGeom g; POINT tl, br; HWND parent;
+    if (!g_goodsSB || !g_goodsList) return;
+    parent = GetParent(g_goodsList);   // WM_CREATE 시점엔 g_goodsWnd 미대입이라 부모를 직접 조회
+    if (!parent) return;
+    GetWindowRect(g_goodsList, &lr);
+    tl.x = lr.left; tl.y = lr.top; br.x = lr.right; br.y = lr.bottom;
+    ScreenToClient(parent, &tl); ScreenToClient(parent, &br);
+    sbw = GetSystemMetrics(SM_CXVSCROLL);
+    MoveWindow(g_goodsSB, br.x - sbw, tl.y, sbw, br.y - tl.y, FALSE);
+    g = GoodsSBCalc();
+    ShowWindow(g_goodsSB, g.show ? SW_SHOW : SW_HIDE);
+    if (g.show) InvalidateRect(g_goodsSB, NULL, TRUE);
+}
+
 static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m)
@@ -652,7 +811,7 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         SendMessageW(g_goodsFilter, WM_SETFONT, (WPARAM)g_listFont, TRUE);
         SendMessageW(g_goodsFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"검색: 도시 · 교역품 · 문화권 · 구분");
         g_goodsList = CreateWindowExW(0, L"SysListView32", L"",
-            WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | LVS_REPORT | LVS_SINGLESEL,
             FRAME, FRAME + TITLE_H + FILTER_H, GWIN_W - 2*FRAME, GWIN_H - 2*FRAME - TITLE_H - FILTER_H,
             h, (HMENU)1, g_hinst, NULL);
         SendMessageW(g_goodsList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
@@ -667,6 +826,11 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             SendMessageW(g_goodsHdr, WM_SETFONT, (WPARAM)g_hdrFont, TRUE);
             g_goodsOrigHdr = (WNDPROC)SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)GoodsHdrProc);
         }
+        // fb32: 세피아 오버레이 스크롤바 생성 + 리스트뷰 서브클래스 (리스트뷰보다 나중에 = z-order 위)
+        g_goodsSB = CreateWindowExW(0, WC_GOODSSB, L"", WS_CHILD | WS_CLIPSIBLINGS,
+            0, 0, 10, 10, h, (HMENU)3, g_hinst, NULL);
+        g_goodsListOrig = (WNDPROC)SetWindowLongPtrW(g_goodsList, GWLP_WNDPROC, (LONG_PTR)GoodsListSubProc);
+        UpdateGoodsSB();
         return 0;
     }
     case WM_ERASEBKGND: return 1;
@@ -675,6 +839,7 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (LOWORD(wp) == 2 && HIWORD(wp) == EN_CHANGE) {   // 검색창 내용 변경
             GetWindowTextW(g_goodsFilter, g_goodsFilterText, 64);
             PopulateGoods(g_goodsList);
+            UpdateGoodsSB();
             return 0;
         }
         return 0;
@@ -709,6 +874,7 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (col == g_gSortCol) g_gSortAsc ^= 1; else { g_gSortCol = col; g_gSortAsc = 1; }
             qsort(g_goods, g_goodsCount, sizeof(GoodsRow), GoodsCmp);
             PopulateGoods(g_goodsList);
+            UpdateGoodsSB();
             if (g_goodsHdr) InvalidateRect(g_goodsHdr, NULL, TRUE);
             return 0;
         }
@@ -725,9 +891,11 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY:
         if (g_goodsHdr && g_goodsOrigHdr) SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)g_goodsOrigHdr);
+        if (g_goodsList && g_goodsListOrig) SetWindowLongPtrW(g_goodsList, GWLP_WNDPROC, (LONG_PTR)g_goodsListOrig);
         if (g_goodsFilterBr) { DeleteObject(g_goodsFilterBr); g_goodsFilterBr = NULL; }
-        g_goodsFilterText[0] = 0;
-        g_goodsHdr = NULL; g_goodsOrigHdr = NULL; g_goodsWnd = NULL; g_goodsList = NULL; g_goodsFilter = NULL;
+        g_goodsFilterText[0] = 0; g_sbDrag = 0;
+        g_goodsHdr = NULL; g_goodsOrigHdr = NULL; g_goodsWnd = NULL; g_goodsList = NULL;
+        g_goodsFilter = NULL; g_goodsSB = NULL; g_goodsListOrig = NULL;
         return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
@@ -742,7 +910,10 @@ static void ShowTradeGoodsWindow(HWND owner)
         WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc));
         wc.lpfnWndProc = GoodsProc; wc.hInstance = g_hinst; wc.lpszClassName = WC_GOODS;
         wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW); wc.hbrBackground = NULL;
-        RegisterClassW(&wc); reg = TRUE;
+        RegisterClassW(&wc);
+        wc.lpfnWndProc = GoodsSBProc; wc.lpszClassName = WC_GOODSSB;   // fb32 커스텀 스크롤바
+        RegisterClassW(&wc);
+        reg = TRUE;
     }
     if (owner && GetWindowRect(owner, &orc)) {
         x = orc.left + ((orc.right - orc.left) - GWIN_W) / 2;
