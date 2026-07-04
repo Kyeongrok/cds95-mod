@@ -85,6 +85,14 @@ $Named = @{
                             $nm = if ($t -ge 0 -and $t -lt 8) { $names[$t] } else { '(빈슬롯/-1)' }
                             "슬롯$s 함선종류 = $t ($nm)" }
   'get_sprite_cache'  = { param($a) "0x5B3A00 = " + (Get-Mem 0x5B3A00) }
+  'quit'              = { param($a)
+                            Get-Process -Name cds_95,_CDS95 -ErrorAction SilentlyContinue | Stop-Process -Force
+                            "OK 게임 종료(프로세스 강제종료)" }
+  'depart'            = { param($a)
+                            # 출항은 단일 함수가 아니라 메인 상태머신 분기(0x4936Cx~0x493705, 현재도시=-1 write).
+                            # 직접 call 불가 → 상태 세팅/UI 필요. 확실한 자동화는 quit 후 재시작(로드→출항)이거나
+                            # ScreenUtilKR로 포트메뉴 '출항' 클릭. (아래는 상태만 흉내내는 실험적 write — 미완)
+                            "출항은 상태머신 분기라 직접 호출 불가. 자동화는 quit+재시작 또는 UI클릭 사용. (트레이스: write@0x493705)" }
 }
 
 # ---- 디스패치 ----
