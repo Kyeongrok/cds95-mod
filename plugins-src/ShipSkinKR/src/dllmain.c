@@ -11,6 +11,7 @@
 
 void InstallShipSkinHook(void);
 void RemoveShipSkinHook(void);
+void ShipMenu_Init(HINSTANCE hinst);   // menu.c — 게임 메뉴바에 "함선" 추가
 
 BOOL WINAPI DllMain(HINSTANCE hModule, DWORD reason, LPVOID reserved)
 {
@@ -21,6 +22,7 @@ BOOL WINAPI DllMain(HINSTANCE hModule, DWORD reason, LPVOID reserved)
         DisableThreadLibraryCalls(hModule);
         if (MH_Initialize() == MH_OK)
             InstallShipSkinHook();   // 실패해도 게임은 정상 진행
+        ShipMenu_Init(hModule);      // 메뉴는 훅과 독립 (모니터 스레드가 게임창 뜨면 부착)
         break;
     case DLL_PROCESS_DETACH:
         RemoveShipSkinHook();
