@@ -21,6 +21,7 @@ jobs:
           cp CDS95Util/TradeUtilKR.plugin dist/CDS95Util/
           cp CDS95Util/CharacterUtilKR.plugin dist/CDS95Util/
           cp CDS95Util/ShipSkinKR.plugin dist/CDS95Util/
+          cp CDS95Util/AudioFixKR.plugin dist/CDS95Util/
           cd dist
           zip -r "../CDS95Util-${{ github.ref_name }}.zip" CDS95Util
 
@@ -46,6 +47,10 @@ jobs:
               하단 **[내보내기]**(선택 배를 `ship_g{n}.bmp` 384×48로) → 그림판 편집 → **[불러오기]**(그 배만 반영, 다른 배 유지).
               **[원래대로(전체)]** 는 편집 전 원본으로 복원. 스킨은 `CDS95Util\shipskin\skins\` 에 모여 재사용됩니다.
               (내보낸 BMP 색 = 게임 실제 색과 일치하도록 해상 팔레트를 캘리브레이션으로 역산해 반영.)
+            - **AudioFixKR** — 시작 시 뜨는 **"CD 에러"** 원천 차단. (원인: CD-ROM이 없으면 CD음악을
+              `_inmm.dll`이 mp3로 에뮬하는데, MCI 드라이버 로드 실패 시 `CDAudioOpen`이 -1을 반환해
+              게임이 막힘.) `CDAudioOpen` 실패를 성공 처리해 **재부팅 없이 게임이 항상 실행**됩니다
+              (MCI가 정상일 땐 음악도 정상 재생, 스탯/데이터 불변).
 
             ### 설치
             `CDS95Util-${{ github.ref_name }}.zip` 을 풀어 나오는 `CDS95Util\` 폴더의 플러그인
