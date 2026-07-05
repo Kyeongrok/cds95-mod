@@ -88,19 +88,24 @@ function Cmd-SelectResolution($idx) {
   "OK select_resolution $n ($sz) — 창 client=$($r2.right)x$($r2.bottom)"
 }
 
-# ---- #2 예방: 정상 종료(WM_CLOSE) → 게임의 CDAudioTerminate가 _inmm MCI를 닫아 누수 방지 ----
+# ---- #2 예방: 게임 완전 종료. ★ _inmmserv(CD에뮬 서버)를 반드시 같이 죽여야 함 ----
+#   _inmmserv.exe(게임폴더\DOOGIE\)는 게임을 죽여도 살아남아 CD에뮬/MCI 상태를 물고 있다가
+#   다음 실행 때 "CD를 드라이브에 넣고" 프롬프트 / CD오디오 에러를 유발한다(재부팅해야 풀리던 진짜 뿌리).
 function Cmd-Quit {
-  $procs = Get-Process -Name cds_95,_CDS95 -ErrorAction SilentlyContinue
-  if (-not $procs) { return "cds_95 미실행" }
+  $procs = Get-Process -Name cds_95,_CDS95,_inmmserv -ErrorAction SilentlyContinue
+  if (-not $procs) { return "게임/서버 미실행" }
   $g = Get-GameWindow
   if ($g -ne [IntPtr]::Zero) {
-    [void][GK]::PostMessageW($g, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)  # WM_CLOSE
+    [void][GK]::PostMessageW($g, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)  # WM_CLOSE (정상 종료 시도)
     $dl = (Get-Date).AddSeconds(6)
     while ((Get-Date) -lt $dl -and (Get-Process -Name cds_95 -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
   }
-  $left = Get-Process -Name cds_95,_CDS95 -ErrorAction SilentlyContinue
-  if ($left) { $left | Stop-Process -Force; return "정상 종료 미완 → 강제종료 폴백" }
-  "OK 게임 정상 종료(WM_CLOSE) — MCI 정상 해제(누수 없음)"
+  # 게임 본체 + CD에뮬 서버까지 확실히 종료 (좀비 _inmmserv 방지)
+  Get-Process -Name cds_95,_CDS95,_inmmserv -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Milliseconds 300
+  $left = (Get-Process -Name cds_95,_CDS95,_inmmserv -ErrorAction SilentlyContinue | Measure-Object).Count
+  if ($left -gt 0) { return "일부 종료 실패($left) — 수동 확인 필요" }
+  "OK 게임 완전 종료 (cds_95 + _inmmserv 정리 — CD프롬프트/오디오에러 재발 방지)"
 }
 
 # ---- #1 복구: "CD 에러"(MCIERR_CANNOT_LOAD_DRIVER) 시 오디오 스택 리셋(재부팅 대체). 관리자 자동승격 ----
