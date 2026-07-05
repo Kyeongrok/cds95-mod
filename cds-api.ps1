@@ -124,7 +124,7 @@ try {
     catch { return "관리자 승격 취소/실패 — 수동 실행 필요: (관리자 PS) Restart-Service Audiosrv -Force" }
     $dl=(Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $dl -and -not (Test-Path "$env:TEMP\cds_recover_audio.log")) { Start-Sleep -Milliseconds 500 }
-    $r = (Test-Path "$env:TEMP\cds_recover_audio.log") ? (Get-Content "$env:TEMP\cds_recover_audio.log" -Raw).Trim() : "승격 대기 시간초과"
+    $r = if (Test-Path "$env:TEMP\cds_recover_audio.log") { (Get-Content "$env:TEMP\cds_recover_audio.log" -Raw).Trim() } else { "승격 대기 시간초과" }
     return "recover_audio: $r`n(참고: AudioFixKR.plugin 설치 시 CD에러 자체가 안 납니다 — 이 명령은 플러그인 없을 때 복구용)"
   }
   try { Restart-Service -Name Audiosrv -Force -ErrorAction Stop; "OK Audiosrv 재시작 완료 (오디오/MCI 상태 리셋)" }
