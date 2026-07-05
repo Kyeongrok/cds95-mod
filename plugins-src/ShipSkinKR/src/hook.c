@@ -167,8 +167,11 @@ static BOOL TryOverlayFrom(const wchar_t* path, void* dst)
     if (f == INVALID_HANDLE_VALUE) return FALSE;
     if (ReadFile(f, g_overlayBuf, ATLAS_OVERLAY_SZ, &rd, NULL) && rd == ATLAS_OVERLAY_SZ)
     {
-        memcpy(dst, g_overlayBuf, ATLAS_OVERLAY_SZ);
-        ok = TRUE;
+        // all-zero(빈) 오버레이 가드: 손상/빈 파일을 적용하면 배가 안 보이므로 스킵(=바닐라 유지).
+        DWORD i, nz = 0;
+        for (i = 0; i < ATLAS_OVERLAY_SZ; i += 64) { if (g_overlayBuf[i]) { nz++; if (nz >= 8) break; } }
+        if (nz >= 8) { memcpy(dst, g_overlayBuf, ATLAS_OVERLAY_SZ); ok = TRUE; }
+        else OutputDebugStringW(L"[ShipSkinKR] overlay looks empty - skipped (vanilla).");
     }
     CloseHandle(f);
     return ok;
@@ -191,12 +194,33 @@ static void ApplyAtlasOverlay(void* dst)
     }
 }
 
+// 최초 바닐라 아틀라스를 shipskin\vanilla.bin 으로 1회 저장 (창의 배별 "원본 복원"용).
+// dst 는 원본 Decode 직후(정규화 前)라 투명영역이 키색 인덱스다 → 게임과 동일하게 정규화
+// (첫 픽셀=키, 그 값을 0=투명으로)한 뒤 저장해야 창 미리보기 배경이 투명(정상)으로 나온다.
+static void SaveVanillaOnce(const void* atlas)
+{
+    wchar_t path[MAX_PATH], dir[MAX_PATH]; HANDLE f; DWORD wr; DWORD i; BYTE key;
+    ShipSkin_OverlayDir(dir);
+    if (!dir[0]) return;
+    CreateDirectoryW(dir, NULL);
+    wsprintfW(path, L"%s\\vanilla.bin", dir);
+    f = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_NEW, 0, NULL);  // 이미 있으면 실패=스킵
+    if (f == INVALID_HANDLE_VALUE) return;
+    memcpy(g_overlayBuf, atlas, ATLAS_OVERLAY_SZ);            // 재사용 버퍼로 복사 후 정규화
+    key = g_overlayBuf[0];
+    for (i = 0; i < ATLAS_OVERLAY_SZ; i++) if (g_overlayBuf[i] == key) g_overlayBuf[i] = 0;
+    WriteFile(f, g_overlayBuf, ATLAS_OVERLAY_SZ, &wr, NULL);
+    CloseHandle(f);
+}
+
 static int __fastcall DetourDecode(void* thisptr, void* edx, int resIndex, void* dst)
 {
     int r = g_origDecode(thisptr, edx, resIndex, dst);   // 원본 먼저(아틀라스 채움)
     LogDecode(thisptr, resIndex, dst, r);
-    if (resIndex == 1)                                    // 해상 배 아틀라스 → 편집 오버레이
-        ApplyAtlasOverlay(dst);
+    if (resIndex == 1) {                                  // 해상 배 아틀라스
+        SaveVanillaOnce(dst);                             // 바닐라 스냅샷(1회)
+        ApplyAtlasOverlay(dst);                           // 편집 오버레이
+    }
     return r;
 }
 
