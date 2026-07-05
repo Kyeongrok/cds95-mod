@@ -60,21 +60,30 @@ function Get-GameWindow {
     return $true }
   [void][GK]::EnumWindows($cb,[IntPtr]::Zero); $script:gwh
 }
-function Send-GameKey([byte]$vk) {   # 키마다 포커스 재확보(수동검증에서 통한 방식)
-  $g = Get-GameWindow; if ($g -eq [IntPtr]::Zero) { return }
-  [void][GK]::SetForegroundWindow($g); Start-Sleep -Milliseconds 300
-  [GK]::keybd_event($vk,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 60; [GK]::keybd_event($vk,0,2,[IntPtr]::Zero); Start-Sleep -Milliseconds 300
+# ScreenUtilKR 제어 프로토콜(%TEMP%\cds_ctrl_cmd.txt → cds_ctrl_ack.txt). click/dblclick/move/capture (client 좌표)
+function Send-CtrlCmd([string]$c) {
+  $cmd = Join-Path $env:TEMP 'cds_ctrl_cmd.txt'
+  $ack = Join-Path $env:TEMP 'cds_ctrl_ack.txt'
+  Remove-Item $ack -ErrorAction SilentlyContinue
+  [System.IO.File]::WriteAllText($cmd, $c)
+  $dl = (Get-Date).AddSeconds(3)
+  while ((Get-Date) -lt $dl -and -not (Test-Path $ack)) { Start-Sleep -Milliseconds 100 }
+  if (Test-Path $ack) { (Get-Content $ack -Raw).Trim() } else { $null }
 }
 function Cmd-SelectResolution($idx) {
   if ($null -eq $idx) { return "사용법: select_resolution <0|1|2>  (0=640x480 1=800x600 2=1024x768)" }
   $n = [int]$idx
   if ($n -lt 0 -or $n -gt 2) { return "0|1|2 만 가능 (0=640x480 1=800x600 2=1024x768)" }
   $g = Get-GameWindow; if ($g -eq [IntPtr]::Zero) { return "cds_95 미실행 또는 게임창 없음" }
-  # 갓 시작한 해상도창은 기본 640(맨 위) 선택 상태 → DOWN*n 으로 목표(0=640,1=800,2=1024)
-  if ($n -gt 0) { 1..$n | ForEach-Object { Send-GameKey 0x28 } }   # DOWN*n
-  Send-GameKey 0x0D                                   # Enter → 확정
-  Start-Sleep -Milliseconds 900
-  $r2 = New-Object GK+RECT; [void][GK]::GetClientRect($g,[ref]$r2)
+  # 해상도창("화면 사이즈")은 키보드가 아니라 마우스 폴링(GetCursorPos+GetAsyncKeyState) 방식.
+  # → ScreenUtilKR click 주입으로 해당 행 + [결정] 클릭 (client 좌표, 640x480 기준).
+  $rowY = @(209, 235, 261)[$n]      # 640 / 800 / 1024 행
+  $r1 = Send-CtrlCmd "click 320 $rowY"
+  if (-not $r1) { return "ScreenUtilKR 미로드 — CDS95Util\ScreenUtilKR.plugin 필요(해상도창은 마우스 클릭 방식)" }
+  Start-Sleep -Milliseconds 500
+  Send-CtrlCmd "click 320 289" | Out-Null            # [결정]
+  Start-Sleep -Milliseconds 1000
+  $r2 = New-Object GK+RECT; [void][GK]::GetClientRect($g, [ref]$r2)
   $sz = @('640x480','800x600','1024x768')[$n]
   "OK select_resolution $n ($sz) — 창 client=$($r2.right)x$($r2.bottom)"
 }
