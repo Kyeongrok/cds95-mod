@@ -1,0 +1,1035 @@
+#include "trade.h"
+#include <commctrl.h>
+#include <windowsx.h>
+#include <string.h>
+#include <stdlib.h>
+#include "cities_data.h"
+#include "item_names.h"
+#include "goods_names.h"
+#include "warp_data.h"
+
+// TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
+// 게임 메뉴바에 항목을 추가하고(서브클래싱으로 클릭 가로챔), 클릭 시 전 도시 목록을 표시한다.
+//
+// Phase 2a: 도시명/문화권/시설(임베드 cities_data.h)로 리스트뷰를 채운다.
+// Phase 2b(예정): 국적/시세/규모/투자액/방문·발견을 게임 메모리에서 읽어 컬럼 추가.
+
+#define ID_TRADE_SISE 0xB101
+#define ID_TRADE_GOODS 0xB102       // fb21: 교역품 관리
+#define ID_WARP_BASE  0xC000        // 워프 메뉴 항목 ID = ID_WARP_BASE + kWarps 인덱스
+#define WC_SISE       L"TradeUtilKR_Sise"
+#define CITY_COUNT    (int)(sizeof(kCities)/sizeof(kCities[0]))
+#define WARP_COUNT    (int)(sizeof(kWarps)/sizeof(kWarps[0]))
+
+// fb14: 순간이동(워프). ce/CDS_95.CT "순간이동용" = 현재 위치를 담는 16바이트 @ 0x005B63A8.
+//   목적지 도시의 16바이트를 여기에 쓰면 그 도시로 이동한다(현재값이 목록의 현위치와 일치함을 확인).
+#define WARP_ADDR     0x005B63A8u
+
+// kWarps[i] 의 16바이트를 워프 주소에 써서 해당 도시로 순간이동.
+static void DoWarp(int i)
+{
+    void* dst = (void*)WARP_ADDR;
+    DWORD old;
+    if (i < 0 || i >= WARP_COUNT) return;
+    if (IsBadWritePtr(dst, 16)) return;
+    if (VirtualProtect(dst, 16, PAGE_READWRITE, &old))
+    {
+        memcpy(dst, kWarps[i].b, 16);
+        VirtualProtect(dst, 16, old, &old);
+    }
+    else
+    {
+        memcpy(dst, kWarps[i].b, 16);
+    }
+}
+
+// 게임 라이브 메모리: 도시별 시세 배열 (2026-07-03 배열 시그니처 스캔으로 확정).
+//   시세 = u16 @ (SISE_BASE + 도시ID * CITY_STRIDE),  도시0=리스본.
+//   226/226 슬롯이 90~105 범위, 현재도시(리스본)=100 으로 검증. 도시 구조체 크기=92바이트.
+// 플러그인은 cds_95.exe 프로세스 내부에서 실행되므로 절대주소를 직접 역참조한다.
+#define SISE_BASE     0x005863B4u
+#define CITY_STRIDE   92
+
+// 도시 구조체(stride 92) 내 필드 오프셋 — SISE_BASE(=시세) 기준. ce/CDS_95.CT 라벨로 확정.
+//   규모(0~7)    : -4   (i32)
+//   시세         :  0   (i32; 값이 작아 u16 로도 읽힘)
+//   건물수치      : +0x10 (u16 비트필드; struct+0x1C) — 건물 유무 플래그.
+//   시장 아이템1~8: +20~+48 (i32 ×8) — 값 = item_names.h 인덱스, 빈 슬롯은 -1(로드시)/0.
+#define SCALE_OFF     (-4)
+#define BUILDING_OFF  0x10
+#define MKT_ITEM_OFF  20
+#define MKT_ITEM_MAX  8
+
+// 건물수치 비트 (fb22 정답 대조로 확정 2026-07-03). 이전 '단가 bit4=조합'은 오류였음.
+#define BIT_PORT      0   // 항구
+#define BIT_TRADE     1   // 교역소
+#define BIT_SHIPYARD  6   // 조선소
+#define BIT_GUILD     7   // 조합
+#define BIT_LIBRARY   8   // 도서관
+
+// 도시 i 필드 주소 (프로세스 내부이므로 절대주소 직접 사용)
+static unsigned CityField(int i, int off)
+{
+    return SISE_BASE + (unsigned)i * CITY_STRIDE + (unsigned)off;
+}
+
+// i32 안전 읽기. 매핑 안 돼 있으면 FALSE.
+static BOOL ReadI32(unsigned addr, int* out)
+{
+    const int* p = (const int*)addr;
+    if (IsBadReadPtr(p, sizeof(*p))) return FALSE;
+    *out = *p; return TRUE;
+}
+
+// 도시 i 의 라이브 시세. 매핑 안 돼 있으면 -1.
+static int ReadSise(int i)
+{
+    int v; return ReadI32(CityField(i, 0), &v) ? v : -1;
+}
+
+// 도시 i 의 규모(0~7). 매핑 안 돼 있으면 -1.
+static int ReadScale(int i)
+{
+    int v; return ReadI32(CityField(i, SCALE_OFF), &v) ? v : -1;
+}
+
+// 도시 i 의 건물수치(u16) 비트. 매핑 안 돼 있으면 -1.
+static int ReadBuildingBit(int i, int bit)
+{
+    const unsigned short* p = (const unsigned short*)CityField(i, BUILDING_OFF);
+    if (IsBadReadPtr(p, sizeof(*p))) return -1;
+    return (int)((*p >> bit) & 1);
+}
+
+// 비트값(1/0/-1) → ○/×/-
+static const wchar_t* BitMark(int b) { return b == 1 ? L"○" : (b == 0 ? L"×" : L"-"); }
+
+// 도시 i 의 시장 아이템(유효한 것)들을 "이름, 이름 …" 으로 buf 에 채운다.
+// 유효 판정: 0 < id < 286 (빈 슬롯 -1/0, 잠수폭탄(id0) 은 시장품이 아니므로 제외). 반환=유효 개수.
+static int BuildMarketItems(int i, wchar_t* buf, int cap)
+{
+    int slot, cnt = 0; (void)cap;
+    buf[0] = 0;
+    for (slot = 0; slot < MKT_ITEM_MAX; slot++)
+    {
+        int v;
+        if (!ReadI32(CityField(i, MKT_ITEM_OFF + slot * 4), &v)) continue;
+        if (v > 0 && v < (int)(sizeof(kItemNames) / sizeof(kItemNames[0])))
+        {
+            if (cnt) lstrcatW(buf, L", ");
+            lstrcatW(buf, kItemNames[v]);
+            cnt++;
+        }
+    }
+    return cnt;
+}
+
+static HINSTANCE g_hinst = NULL;
+static HWND    g_hwnd = NULL;      // 게임 메인 창
+static HWND    g_subHwnd = NULL;
+static WNDPROC g_origProc = NULL;
+static HWND    g_siseWnd = NULL;   // 시세 일람 창
+static HWND    g_list = NULL;
+static HWND    g_hdr = NULL;       // 리스트뷰 헤더(오너드로우용 서브클래스)
+static WNDPROC g_origHdr = NULL;
+static HFONT   g_titleFont = NULL;
+static HFONT   g_hdrFont = NULL;
+static HFONT   g_listFont = NULL;
+
+// ---------------- 시세 일람 창 (여관 다이얼로그와 같은 세피아/브론즈 오너드로우) ----------------
+
+// 창 레이아웃 (컬럼 총폭보다 좁으면 리스트뷰가 가로 스크롤)
+#define WIN_W    672
+#define WIN_H    560
+#define FRAME    3        // 갈색 외곽 프레임 두께
+#define TITLE_H  26       // 커스텀 타이틀바 높이
+
+// 팔레트 (dialog.c 와 동일 계열)
+#define COL_BG        RGB(150,130,105)
+#define COL_FACE_TOP  RGB(216,201,176)
+#define COL_FACE_BOT  RGB(158,138,113)
+#define COL_LIGHT     RGB(238,228,208)
+#define COL_DARK      RGB( 90, 75, 60)
+#define COL_TEXT      RGB( 55, 40, 25)
+#define COL_ROW_A     RGB(206,194,171)   // 짝수 행
+#define COL_ROW_B     RGB(224,214,193)   // 홀수 행
+#define COL_SEL_BG    RGB(150,120, 85)   // 선택 행 배경
+#define COL_SEL_TX    RGB(250,244,228)   // 선택 행 글자
+
+static void VGradient(HDC dc, RECT r, COLORREF top, COLORREF bot)
+{
+    int h = r.bottom - r.top, i;
+    if (h <= 0) return;
+    for (i = 0; i < h; i++)
+    {
+        int rr = GetRValue(top) + (GetRValue(bot) - GetRValue(top)) * i / h;
+        int gg = GetGValue(top) + (GetGValue(bot) - GetGValue(top)) * i / h;
+        int bb = GetBValue(top) + (GetBValue(bot) - GetBValue(top)) * i / h;
+        RECT line; HBRUSH br = CreateSolidBrush(RGB(rr, gg, bb));
+        line.left = r.left; line.right = r.right; line.top = r.top + i; line.bottom = r.top + i + 1;
+        FillRect(dc, &line, br); DeleteObject(br);
+    }
+}
+
+static void Bevel(HDC dc, RECT r, BOOL sunken)
+{
+    COLORREF lt = sunken ? COL_DARK : COL_LIGHT;
+    COLORREF dk = sunken ? COL_LIGHT : COL_DARK;
+    HPEN pl = CreatePen(PS_SOLID, 1, lt), pd = CreatePen(PS_SOLID, 1, dk);
+    HPEN old = (HPEN)SelectObject(dc, pl);
+    MoveToEx(dc, r.left, r.bottom - 1, NULL);
+    LineTo(dc, r.left, r.top); LineTo(dc, r.right - 1, r.top);
+    SelectObject(dc, pd);
+    LineTo(dc, r.right - 1, r.bottom - 1); LineTo(dc, r.left, r.bottom - 1);
+    SelectObject(dc, old); DeleteObject(pl); DeleteObject(pd);
+}
+
+// 닫기 버튼 사각형 (타이틀바 우측)
+static RECT CloseRect(RECT client)
+{
+    RECT cb; int cbw = 22, cbh = 18;
+    cb.right = client.right - FRAME - 4;
+    cb.left  = cb.right - cbw;
+    cb.top   = FRAME + (TITLE_H - cbh) / 2;
+    cb.bottom = cb.top + cbh;
+    return cb;
+}
+
+// 컬럼 제목 — AddCol 과 동일. 헤더는 이 배열에서 직접 그린다(Header_GetItem 의 ANSI 확장
+// 인코딩 깨짐을 피하기 위해 컨트롤에서 텍스트를 되읽지 않는다).
+#define COL_COUNT 11
+static const wchar_t* kCols[COL_COUNT] = {
+    L"번호", L"도시명", L"문화권", L"규모", L"시세", L"교역소", L"시장", L"도서관", L"조선소", L"조합", L"시장아이템"
+};
+static const int kColW[COL_COUNT] = { 40, 104, 78, 40, 46, 52, 40, 52, 52, 44, 240 };
+
+// 헤더 오너드로우 서브클래스 — 세피아 그라데이션 + serif 제목
+static LRESULT CALLBACK HdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    if (m == WM_ERASEBKGND) return 1;
+    if (m == WM_PAINT)
+    {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        int n = (int)SendMessageW(h, HDM_GETITEMCOUNT, 0, 0), i;
+        HFONT of = (HFONT)SelectObject(dc, g_hdrFont);
+        SetBkMode(dc, TRANSPARENT);
+        for (i = 0; i < n; i++)
+        {
+            RECT rc, tr;
+            if (!SendMessageW(h, HDM_GETITEMRECT, (WPARAM)i, (LPARAM)&rc)) continue;
+            VGradient(dc, rc, COL_FACE_TOP, COL_FACE_BOT);
+            Bevel(dc, rc, FALSE);
+            tr = rc; tr.left += 6;
+            SetTextColor(dc, COL_TEXT);
+            if (i < COL_COUNT) DrawTextW(dc, kCols[i], -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+        SelectObject(dc, of);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    return CallWindowProcW(g_origHdr, h, m, wp, lp);
+}
+
+static void AddCol(HWND lv, int i, const wchar_t* t, int w)
+{
+    LVCOLUMNW c;
+    c.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+    c.pszText = (LPWSTR)t; c.cx = w; c.iSubItem = i;
+    SendMessageW(lv, LVM_INSERTCOLUMNW, i, (LPARAM)&c);
+}
+
+static void SetText(HWND lv, int item, int sub, const wchar_t* t)
+{
+    LVITEMW it; it.iSubItem = sub; it.pszText = (LPWSTR)t;
+    SendMessageW(lv, LVM_SETITEMTEXTW, item, (LPARAM)&it);
+}
+
+static void PopulateList(HWND lv)
+{
+    int i;
+    for (i = 0; i < CITY_COUNT; i++)
+    {
+        LVITEMW it; wchar_t num[8], sbuf[12], mkt[256];
+        int sise, scale, nItem;
+        wsprintfW(num, L"%d", i);
+        it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0; it.pszText = num;
+        SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
+        SetText(lv, i, 1, kCities[i].name);
+        SetText(lv, i, 2, kCities[i].sphere);
+        scale = ReadScale(i);
+        if (scale < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", scale);
+        SetText(lv, i, 3, sbuf);
+        sise = ReadSise(i);
+        if (sise < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", sise);
+        SetText(lv, i, 4, sbuf);
+        // 건물: 건물수치(bit) 로 확정. 미로드시 -1 → "-"
+        SetText(lv, i, 5, BitMark(ReadBuildingBit(i, BIT_TRADE)));     // 교역소(fb21)
+        nItem = BuildMarketItems(i, mkt, 256);                          // 시장아이템 목록 + 유무 판정
+        SetText(lv, i, 6, nItem > 0 ? L"○" : L"×");                    // 시장 유무
+        SetText(lv, i, 7, BitMark(ReadBuildingBit(i, BIT_LIBRARY)));   // 도서관
+        SetText(lv, i, 8, BitMark(ReadBuildingBit(i, BIT_SHIPYARD)));  // 조선소
+        SetText(lv, i, 9, BitMark(ReadBuildingBit(i, BIT_GUILD)));     // 조합(fb22로 bit7 확정)
+        SetText(lv, i, 10, mkt);                                        // 시장아이템 이름 나열
+    }
+}
+
+static void PaintFrame(HWND h)
+{
+    PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+    RECT rc, tb, cb, cf, tr; HBRUSH br; HFONT of;
+    GetClientRect(h, &rc);
+    // 바탕 + 갈색 외곽 프레임
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &rc, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
+    // 타이틀바 (세피아 그라데이션 + 베벨)
+    tb.left = FRAME; tb.top = FRAME; tb.right = rc.right - FRAME; tb.bottom = FRAME + TITLE_H;
+    VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, tb, FALSE);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_titleFont);
+    tr = tb; tr.left += 8;
+    DrawTextW(dc, L"시세 일람", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    // 닫기 버튼 (액자형 베벨 + ×)
+    cb = CloseRect(rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &cb, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &cb, br); DeleteObject(br);
+    cf = cb; InflateRect(&cf, -2, -2); VGradient(dc, cf, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, cf, FALSE);
+    DrawTextW(dc, L"×", -1, &cb, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+    EndPaint(h, &ps);
+}
+
+static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_CREATE:
+        g_titleFont = CreateFontW(-16, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+        g_hdrFont   = CreateFontW(-13, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+        g_listFont  = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+        g_list = CreateWindowExW(0, L"SysListView32", L"",
+                                 WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_NOSORTHEADER,
+                                 FRAME, FRAME + TITLE_H,
+                                 WIN_W - 2 * FRAME, WIN_H - 2 * FRAME - TITLE_H,
+                                 h, (HMENU)1, g_hinst, NULL);
+        SendMessageW(g_list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
+        SendMessageW(g_list, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_list, LVM_SETBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        SendMessageW(g_list, LVM_SETTEXTBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        {
+            int c;
+            for (c = 0; c < COL_COUNT; c++) AddCol(g_list, c, kCols[c], kColW[c]);
+        }
+        PopulateList(g_list);
+        // 헤더 오너드로우 서브클래스
+        g_hdr = (HWND)SendMessageW(g_list, LVM_GETHEADER, 0, 0);
+        if (g_hdr)
+        {
+            SendMessageW(g_hdr, WM_SETFONT, (WPARAM)g_hdrFont, TRUE);
+            g_origHdr = (WNDPROC)SetWindowLongPtrW(g_hdr, GWLP_WNDPROC, (LONG_PTR)HdrProc);
+        }
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;  // 깜빡임 방지 — WM_PAINT 에서 전부 그림
+
+    case WM_PAINT:
+        PaintFrame(h);
+        return 0;
+
+    case WM_NOTIFY:
+    {
+        LPNMHDR nh = (LPNMHDR)lp;
+        if (nh->idFrom == 1 && nh->code == NM_CUSTOMDRAW)
+        {
+            LPNMLVCUSTOMDRAW cd = (LPNMLVCUSTOMDRAW)lp;
+            switch (cd->nmcd.dwDrawStage)
+            {
+            case CDDS_PREPAINT:
+                return CDRF_NOTIFYITEMDRAW;
+            case CDDS_ITEMPREPAINT:
+            {
+                int i = (int)cd->nmcd.dwItemSpec;
+                BOOL sel = (ListView_GetItemState(g_list, i, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+                if (sel) { cd->clrText = COL_SEL_TX; cd->clrTextBk = COL_SEL_BG; }
+                else     { cd->clrText = COL_TEXT;   cd->clrTextBk = (i & 1) ? COL_ROW_B : COL_ROW_A; }
+                SelectObject(cd->nmcd.hdc, g_listFont);
+                return CDRF_NEWFONT;
+            }
+            }
+            return CDRF_DODEFAULT;
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt; RECT rc, cb;
+        pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
+        GetClientRect(h, &rc); cb = CloseRect(rc);
+        if (PtInRect(&cb, pt)) { DestroyWindow(h); return 0; }
+        if (pt.y < FRAME + TITLE_H)   // 타이틀바 드래그로 창 이동
+        {
+            ReleaseCapture();
+            SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        }
+        return 0;
+    }
+
+    case WM_CLOSE:
+        DestroyWindow(h);
+        return 0;
+
+    case WM_DESTROY:
+        if (g_hdr && g_origHdr) { SetWindowLongPtrW(g_hdr, GWLP_WNDPROC, (LONG_PTR)g_origHdr); }
+        if (g_titleFont) { DeleteObject(g_titleFont); g_titleFont = NULL; }
+        if (g_hdrFont)   { DeleteObject(g_hdrFont);   g_hdrFont = NULL; }
+        if (g_listFont)  { DeleteObject(g_listFont);  g_listFont = NULL; }
+        g_hdr = NULL; g_origHdr = NULL; g_siseWnd = NULL; g_list = NULL;
+        return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+static void ShowSiseWindow(HWND owner)
+{
+    static BOOL reg = FALSE;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    RECT orc;
+    if (g_siseWnd) { SetForegroundWindow(g_siseWnd); return; }
+    if (!reg)
+    {
+        WNDCLASSW wc;
+        ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = SiseProc;
+        wc.hInstance = g_hinst;
+        wc.lpszClassName = WC_SISE;
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+        wc.hbrBackground = NULL;
+        RegisterClassW(&wc);
+        reg = TRUE;
+    }
+    // fb9: 게임 창 중앙에 뜨도록 위치 계산
+    if (owner && GetWindowRect(owner, &orc))
+    {
+        x = orc.left + ((orc.right - orc.left) - WIN_W) / 2;
+        y = orc.top  + ((orc.bottom - orc.top) - WIN_H) / 2;
+        if (x < 0) x = 0; if (y < 0) y = 0;
+    }
+    // WS_POPUP: 시스템 프레임 없음(갈색 테두리·타이틀바는 직접 그림)
+    g_siseWnd = CreateWindowExW(0, WC_SISE, L"시세 일람",
+                                WS_POPUP, x, y, WIN_W, WIN_H,
+                                owner, NULL, g_hinst, NULL);
+    if (g_siseWnd) { ShowWindow(g_siseWnd, SW_SHOW); UpdateWindow(g_siseWnd); }
+}
+
+// ---------------- 교역품 관리 창 (fb21/fb27, approach B) ----------------
+// 현재 정박한 도시의 실시간 판매목록을 메모리에서 스캔해 교역품명/공급량/원산지 로 표시.
+//   판매목록 엔트리 = 16바이트 { 품목id(u32), 공급량(u32), 원산지도시id(u32), x(u32; 도시내 동일) }
+//   (fb27 CE 트레이스로 확정: 빌더 0x480E80 이 이 목록을 만든다)
+#define WC_GOODS  L"TradeUtilKR_Goods"
+#define GWIN_W    400      // fb31: 컬럼 4개(120+110+90+56=376)+스크롤바에 맞춰 폭 축소(구 492)
+#define GWIN_H    540
+#define FILTER_H  26       // 상단 검색창 높이
+#define NGOODS    (int)(sizeof(kTradeGoods)/sizeof(kTradeGoods[0]))
+
+// 문화권 교역품 테이블 (EXE .rdata 정적, VA 0x004DF0E0). 문화권당 i32×5, -1 종료.
+// (fb28: 이 표 + 도시명 = 각 교역소가 파는 공통 교역품. + 도시 특산품)
+#define CULT_TABLE  0x004DF0E0u
+#define CULT_OFF    0x4C           // 도시 구조체의 문화권 인덱스 = SISE_BASE+0x4C (struct+0x58)
+// idx = 도시 구조체 +0x58 (런타임). 226도시 전수 실측 확정(2026-07-04, → obsidian 문화권 인덱스 support).
+// 주의: idx3=아프리카, idx10=아메리카. (이전 버전 아메리카↔아프리카 뒤바뀌어 있었음)
+static const wchar_t* kSpheres[11] = {
+    L"이베리아", L"북유럽", L"지중해", L"아프리카", L"중근동", L"인도",
+    L"중국", L"중앙아시아", L"동남아시아", L"일본", L"아메리카"
+};
+
+#define GCOL_COUNT 4
+static const wchar_t* kGCols[GCOL_COUNT] = { L"교역품", L"도시", L"문화권", L"구분" };
+static const int      kGColW[GCOL_COUNT] = { 120, 110, 90, 56 };
+
+typedef struct { int city, kind, isSpec; } GoodsRow;
+static GoodsRow g_goods[1200];
+static int      g_goodsCount = 0;
+static int      g_gSortCol = 0, g_gSortAsc = 1;   // 기본 교역품순
+static HWND     g_goodsWnd = NULL, g_goodsList = NULL, g_goodsHdr = NULL;
+static WNDPROC  g_goodsOrigHdr = NULL;
+static HWND     g_goodsFilter = NULL;             // 상단 검색 입력창
+static HBRUSH   g_goodsFilterBr = NULL;           // 검색창 배경 브러시
+static wchar_t  g_goodsFilterText[64] = L"";      // 현재 필터 문자열
+// fb32: 세피아 오버레이 스크롤바 (네이티브 회색 스크롤바를 덮어 게임 분위기에 맞춤)
+#define WC_GOODSSB  L"TradeUtilKR_GoodsSB"
+static HWND     g_goodsSB = NULL;                 // 커스텀 스크롤바 오버레이 창
+static WNDPROC  g_goodsListOrig = NULL;           // 리스트뷰 서브클래스 원본 프로시저
+static int      g_sbDrag = 0, g_sbDragY = 0;      // 썸 드래그 상태
+
+// 대소문자 무시 부분일치(한글은 그대로 매칭). needle 빈 문자열이면 항상 TRUE.
+static BOOL WStrContainsCI(const wchar_t* hay, const wchar_t* needle)
+{
+    int hlen, nlen, i, j;
+    if (!needle || !needle[0]) return TRUE;
+    if (!hay) return FALSE;
+    hlen = lstrlenW(hay); nlen = lstrlenW(needle);
+    for (i = 0; i + nlen <= hlen; i++) {
+        for (j = 0; j < nlen; j++) {
+            wchar_t a = hay[i + j], b = needle[j];
+            if (a >= L'a' && a <= L'z') a -= 32;
+            if (b >= L'a' && b <= L'z') b -= 32;
+            if (a != b) break;
+        }
+        if (j == nlen) return TRUE;
+    }
+    return FALSE;
+}
+
+static int CityCulture(int i)      // 도시 문화권 인덱스(0~10), 실패 -1
+{
+    int v; return ReadI32(CityField(i, CULT_OFF), &v) && v >= 0 && v < 11 ? v : -1;
+}
+// 교역품 지역(goods region) 인덱스 — 0x4DF0E0 공통품 테이블의 행 번호. 0~26 (27종).
+// ★ 주의: 이것은 문화권(struct+0x58, 0~10)과 다른 별개 인덱스다. (207/226 도시가 서로 다름)
+//   공통 교역품은 반드시 이 값으로 인덱싱. fb28의 "struct+0x58"은 이베리아(지역0)에서만 우연히 일치.
+//   실측: 이스탄불 지역=13(=밀/총), 리스본 지역=0(=돌소금/올리브유/총). (2026-07-04)
+#define REGION_TABLE  0x004D14B0u   // 도시별 136바이트 레코드 배열
+#define REGION_STRIDE 136
+#define REGION_OFF    0x1C          // 레코드 내 교역품 지역 인덱스
+#define NREGION       27
+static int GoodsRegion(int i)   // 도시 i 의 교역품 지역(0~26), 실패 -1
+{
+    int v; return ReadI32(REGION_TABLE + (unsigned)i * REGION_STRIDE + REGION_OFF, &v)
+        && v >= 0 && v < NREGION ? v : -1;
+}
+static int CultGood(int region, int n)   // 교역품 지역 공통 교역품 n번째(0~4), 없으면 -1
+{
+    const int* p = (const int*)(CULT_TABLE + (unsigned)region * 20 + (unsigned)n * 4);
+    int v;
+    if (region < 0 || region >= NREGION || n < 0 || n >= 5) return -1;
+    if (IsBadReadPtr(p, sizeof(*p))) return -1;
+    v = *p;
+    return (v >= 0 && v < NGOODS) ? v : -1;
+}
+
+// 교역품 판매허용 게이트 (EXE .data, VA 0x0058BAB0). 품목종류별 플래그(1/0).
+// 게임 판매목록 빌더가 모든 품목을 이 값으로 필터. 0=미판매(미발견/미언락 지역 품목).
+// 동적: 지역발견/시대에 따라 값이 바뀌므로 라이브로 읽는다. (fb29 실측)
+#define GATE_TABLE  0x0058BAB0u
+static int GoodSellable(int kind)   // 0x58BAB0[kind] != 0 이면 판매 가능
+{
+    int v;
+    if (kind < 0 || kind >= NGOODS) return 0;
+    return ReadI32(GATE_TABLE + (unsigned)kind * 4, &v) && v != 0;
+}
+
+static int __cdecl GoodsCmp(const void* a, const void* b)
+{
+    const GoodsRow* x = (const GoodsRow*)a; const GoodsRow* y = (const GoodsRow*)b;
+    int r = 0;
+    switch (g_gSortCol) {
+    case 0: r = lstrcmpW(kTradeGoods[x->kind], kTradeGoods[y->kind]); break;
+    case 1: r = lstrcmpW(kCities[x->city].name, kCities[y->city].name); break;
+    case 2: r = CityCulture(x->city) - CityCulture(y->city); break;
+    case 3: r = x->isSpec - y->isSpec; break;
+    }
+    if (r == 0) r = lstrcmpW(kCities[x->city].name, kCities[y->city].name);
+    return g_gSortAsc ? r : -r;
+}
+
+// 전 교역소 도시가 파는 교역품 — 게임 판매목록 빌더(0x480CC0) 3-phase 모델 재현.
+//   A. 지역 공통품: 0x4DF0E0[교역품지역(record+0x1C)] (자기 특산품과 같은 종류는 제외 — 게임 dedup)
+//   B. 자기 특산품: 도시struct+0x10 (종류)
+//   * A·B 모두 게이트 GoodSellable(=0x58BAB0[종류]!=0) 통과분만. (fb29: 이스탄불 골동품 제외)
+//   C. 연결 내륙도시 특산품(카디스←코르도바 등)은 Ctx+0xB0 동적 리스트라 별도 과제(리서치1) — 미반영.
+static void BuildGoods(void)
+{
+    int i, n;
+    g_goodsCount = 0;
+    for (i = 0; i < CITY_COUNT; i++) {
+        int region, spec, hasSpec;
+        if (ReadBuildingBit(i, BIT_TRADE) != 1) continue;   // 교역소 있는 도시만
+        region = GoodsRegion(i);   // ★ 공통품은 교역품 지역(record+0x1C), 문화권(struct+0x58) 아님
+        hasSpec = ReadI32(CityField(i, 4), &spec) && spec >= 0 && spec < NGOODS;  // 특산품 종류
+
+        // A. 지역 공통품 (자기 특산품 종류는 B에서 다루므로 제외, 게이트 통과분만)
+        for (n = 0; n < 5; n++) {
+            int g = CultGood(region, n);
+            if (g < 0) break;
+            if (hasSpec && g == spec) continue;   // 게임 dedup: 자기 특산품과 겹치면 A 제외
+            if (!GoodSellable(g)) continue;       // 게이트: 미판매 품목 제외
+            if (g_goodsCount >= 1200) break;
+            g_goods[g_goodsCount].city = i; g_goods[g_goodsCount].kind = g; g_goods[g_goodsCount].isSpec = 0;
+            g_goodsCount++;
+        }
+        // B. 자기 특산품 (게이트 통과 시만 — 미판매면 목록에서 빠짐)
+        if (hasSpec && GoodSellable(spec) && g_goodsCount < 1200) {
+            g_goods[g_goodsCount].city = i; g_goods[g_goodsCount].kind = spec; g_goods[g_goodsCount].isSpec = 1;
+            g_goodsCount++;
+        }
+    }
+    qsort(g_goods, g_goodsCount, sizeof(GoodsRow), GoodsCmp);
+}
+
+static void PopulateGoods(HWND lv)
+{
+    int i, row = 0;
+    const wchar_t* f = g_goodsFilterText;
+    SendMessageW(lv, LVM_DELETEALLITEMS, 0, 0);
+    for (i = 0; i < g_goodsCount; i++) {
+        GoodsRow* g = &g_goods[i];
+        int cult = CityCulture(g->city);
+        const wchar_t* gname = kTradeGoods[g->kind];
+        const wchar_t* cname = kCities[g->city].name;
+        const wchar_t* culn  = (cult >= 0 && cult < 11) ? kSpheres[cult] : L"?";
+        const wchar_t* kindn = g->isSpec ? L"특산" : L"공통";
+        LVITEMW it;
+        // 필터: 교역품/도시/문화권/구분 중 하나라도 부분일치하면 표시
+        if (f[0] && !WStrContainsCI(gname, f) && !WStrContainsCI(cname, f)
+                 && !WStrContainsCI(culn, f) && !WStrContainsCI(kindn, f))
+            continue;
+        it.mask = LVIF_TEXT; it.iItem = row; it.iSubItem = 0;
+        it.pszText = (LPWSTR)gname;
+        SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
+        SetText(lv, row, 1, cname);
+        SetText(lv, row, 2, culn);
+        SetText(lv, row, 3, kindn);
+        row++;
+    }
+}
+
+static LRESULT CALLBACK GoodsHdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    if (m == WM_ERASEBKGND) return 1;
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        int n = (int)SendMessageW(h, HDM_GETITEMCOUNT, 0, 0), i;
+        HFONT of = (HFONT)SelectObject(dc, g_hdrFont);
+        SetBkMode(dc, TRANSPARENT);
+        for (i = 0; i < n; i++) {
+            RECT rc, tr; if (!SendMessageW(h, HDM_GETITEMRECT, (WPARAM)i, (LPARAM)&rc)) continue;
+            VGradient(dc, rc, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, rc, FALSE);
+            tr = rc; tr.left += 6; SetTextColor(dc, COL_TEXT);
+            if (i < GCOL_COUNT) {
+                wchar_t t[24];
+                wsprintfW(t, L"%s%s", kGCols[i], i==g_gSortCol ? (g_gSortAsc?L" ▲":L" ▼") : L"");
+                DrawTextW(dc, t, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
+        }
+        SelectObject(dc, of); EndPaint(h, &ps); return 0;
+    }
+    return CallWindowProcW(g_goodsOrigHdr, h, m, wp, lp);
+}
+
+static void GoodsPaintFrame(HWND h)
+{
+    PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+    RECT rc, tb, cb, cf, tr; HBRUSH br; HFONT of;
+    GetClientRect(h, &rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &rc, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
+    tb.left = FRAME; tb.top = FRAME; tb.right = rc.right - FRAME; tb.bottom = FRAME + TITLE_H;
+    VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, tb, FALSE);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_titleFont); tr = tb; tr.left += 8;
+    DrawTextW(dc, L"교역품 관리", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    cb = CloseRect(rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &cb, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &cb, br); DeleteObject(br);
+    cf = cb; InflateRect(&cf, -2, -2); VGradient(dc, cf, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, cf, FALSE);
+    DrawTextW(dc, L"×", -1, &cb, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+    EndPaint(h, &ps);
+}
+
+// ---- fb32: 세피아 커스텀 스크롤바 (리스트뷰 네이티브 스크롤바 위에 오버레이) ----
+typedef struct { BOOL show; int H, sbw, thumbTop, thumbBot; } SBGeom;
+
+static SBGeom GoodsSBCalc(void)
+{
+    SBGeom g; RECT rc; SCROLLINFO si;
+    int trackH, thumbH, span, page, denom, pos, off;
+    ZeroMemory(&g, sizeof(g));
+    if (!g_goodsSB || !g_goodsList) return g;
+    GetClientRect(g_goodsSB, &rc);
+    g.H = rc.bottom; g.sbw = rc.right;
+    if (g.H <= 2 * g.sbw) return g;
+    si.cbSize = sizeof(si); si.fMask = SIF_ALL;
+    if (!GetScrollInfo(g_goodsList, SB_VERT, &si)) return g;
+    span = si.nMax - si.nMin + 1; page = (int)si.nPage; if (page < 1) page = 1;
+    if (span <= page) return g;                       // 스크롤 불필요
+    g.show = TRUE;
+    trackH = (g.H - g.sbw) - g.sbw;                   // 위/아래 화살표 사이 트랙
+    thumbH = trackH * page / span; if (thumbH < 18) thumbH = 18; if (thumbH > trackH) thumbH = trackH;
+    denom = span - page; pos = si.nPos - si.nMin;
+    off = denom > 0 ? (trackH - thumbH) * pos / denom : 0;
+    g.thumbTop = g.sbw + off; g.thumbBot = g.thumbTop + thumbH;
+    return g;
+}
+
+static int GoodsLineStep(void)
+{
+    RECT ir;
+    if (SendMessageW(g_goodsList, LVM_GETITEMCOUNT, 0, 0) > 0 &&
+        ListView_GetItemRect(g_goodsList, 0, &ir, LVIR_BOUNDS) && ir.bottom > ir.top)
+        return ir.bottom - ir.top;
+    return 17;
+}
+static int GoodsPageStep(void)
+{
+    SCROLLINFO si; si.cbSize = sizeof(si); si.fMask = SIF_PAGE;
+    return GetScrollInfo(g_goodsList, SB_VERT, &si) ? (int)si.nPage : 40;
+}
+static void GoodsScrollBy(int dpx)
+{
+    ListView_Scroll(g_goodsList, 0, dpx);
+    if (g_goodsSB) InvalidateRect(g_goodsSB, NULL, FALSE);
+}
+static void GoodsScrollTo(int newPos)
+{
+    SCROLLINFO si; si.cbSize = sizeof(si); si.fMask = SIF_ALL;
+    if (!GetScrollInfo(g_goodsList, SB_VERT, &si)) return;
+    GoodsScrollBy(newPos - si.nPos);
+}
+
+static void DrawSBArrow(HDC dc, RECT r, BOOL up)
+{
+    int cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, s = 3;
+    POINT p[3];
+    HBRUSH br = CreateSolidBrush(COL_TEXT); HPEN pn = CreatePen(PS_SOLID, 1, COL_TEXT);
+    HBRUSH ob; HPEN op;
+    if (up) { p[0].x = cx; p[0].y = cy - s; p[1].x = cx - s; p[1].y = cy + s; p[2].x = cx + s; p[2].y = cy + s; }
+    else    { p[0].x = cx; p[0].y = cy + s; p[1].x = cx - s; p[1].y = cy - s; p[2].x = cx + s; p[2].y = cy - s; }
+    ob = (HBRUSH)SelectObject(dc, br); op = (HPEN)SelectObject(dc, pn);
+    Polygon(dc, p, 3);
+    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(br); DeleteObject(pn);
+}
+
+static LRESULT CALLBACK GoodsSBProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        SBGeom g = GoodsSBCalc();
+        RECT rc, up, dn, th; HBRUSH bg;
+        GetClientRect(h, &rc);
+        bg = CreateSolidBrush(COL_BG); FillRect(dc, &rc, bg); DeleteObject(bg);
+        if (g.show) {
+            up.left = 0; up.top = 0; up.right = g.sbw; up.bottom = g.sbw;
+            dn.left = 0; dn.top = g.H - g.sbw; dn.right = g.sbw; dn.bottom = g.H;
+            th.left = 1; th.top = g.thumbTop; th.right = g.sbw - 1; th.bottom = g.thumbBot;
+            VGradient(dc, up, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, up, FALSE); DrawSBArrow(dc, up, TRUE);
+            VGradient(dc, dn, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, dn, FALSE); DrawSBArrow(dc, dn, FALSE);
+            VGradient(dc, th, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, th, FALSE);
+        }
+        EndPaint(h, &ps); return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        SBGeom g = GoodsSBCalc(); int y = GET_Y_LPARAM(lp);
+        if (!g.show) return 0;
+        SetCapture(h);
+        if      (y < g.sbw)          GoodsScrollBy(-GoodsLineStep());
+        else if (y >= g.H - g.sbw)   GoodsScrollBy( GoodsLineStep());
+        else if (y < g.thumbTop)     GoodsScrollBy(-GoodsPageStep());
+        else if (y >= g.thumbBot)    GoodsScrollBy( GoodsPageStep());
+        else { g_sbDrag = 1; g_sbDragY = y - g.thumbTop; }
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (g_sbDrag) {
+            SBGeom g = GoodsSBCalc();
+            int y = GET_Y_LPARAM(lp), trackH, thumbH, off, denom, span, page, newPos;
+            SCROLLINFO si;
+            if (!g.show) return 0;
+            trackH = (g.H - g.sbw) - g.sbw;
+            thumbH = g.thumbBot - g.thumbTop;
+            off = (y - g_sbDragY) - g.sbw;
+            denom = trackH - thumbH; if (denom < 1) denom = 1;
+            if (off < 0) off = 0; if (off > denom) off = denom;
+            si.cbSize = sizeof(si); si.fMask = SIF_ALL;
+            if (!GetScrollInfo(g_goodsList, SB_VERT, &si)) return 0;
+            span = si.nMax - si.nMin + 1; page = (int)si.nPage;
+            newPos = si.nMin + (span - page) * off / denom;
+            GoodsScrollTo(newPos);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        g_sbDrag = 0;
+        if (GetCapture() == h) ReleaseCapture();
+        return 0;
+    case WM_MOUSEWHEEL:
+        SendMessageW(g_goodsList, WM_MOUSEWHEEL, wp, lp);
+        InvalidateRect(h, NULL, FALSE);
+        return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+// 리스트뷰 서브클래스 — 휠/키보드/선택 등으로 스크롤되면 오버레이 썸 갱신
+static LRESULT CALLBACK GoodsListSubProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    LRESULT r = CallWindowProcW(g_goodsListOrig, h, m, wp, lp);
+    if (g_goodsSB && (m == WM_MOUSEWHEEL || m == WM_KEYDOWN || m == WM_VSCROLL ||
+                      m == WM_LBUTTONDOWN || m == WM_LBUTTONUP))
+        InvalidateRect(g_goodsSB, NULL, FALSE);
+    return r;
+}
+
+// 오버레이를 리스트뷰 네이티브 스크롤바 위에 배치하고, 필요 없으면 숨김
+static void UpdateGoodsSB(void)
+{
+    RECT lr; int sbw; SBGeom g; POINT tl, br; HWND parent;
+    if (!g_goodsSB || !g_goodsList) return;
+    parent = GetParent(g_goodsList);   // WM_CREATE 시점엔 g_goodsWnd 미대입이라 부모를 직접 조회
+    if (!parent) return;
+    GetWindowRect(g_goodsList, &lr);
+    tl.x = lr.left; tl.y = lr.top; br.x = lr.right; br.y = lr.bottom;
+    ScreenToClient(parent, &tl); ScreenToClient(parent, &br);
+    sbw = GetSystemMetrics(SM_CXVSCROLL);
+    MoveWindow(g_goodsSB, br.x - sbw, tl.y, sbw, br.y - tl.y, FALSE);
+    g = GoodsSBCalc();
+    ShowWindow(g_goodsSB, g.show ? SW_SHOW : SW_HIDE);
+    if (g.show) InvalidateRect(g_goodsSB, NULL, TRUE);
+}
+
+static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_CREATE:
+    {
+        int c;
+        g_goodsFilterText[0] = 0;
+        // 상단 검색창 (도시명/교역품명/문화권/구분 실시간 필터)
+        g_goodsFilter = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+            FRAME + 2, FRAME + TITLE_H + 2, GWIN_W - 2*FRAME - 4, FILTER_H - 4,
+            h, (HMENU)2, g_hinst, NULL);
+        SendMessageW(g_goodsFilter, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_goodsFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"검색: 도시 · 교역품 · 문화권 · 구분");
+        g_goodsList = CreateWindowExW(0, L"SysListView32", L"",
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | LVS_REPORT | LVS_SINGLESEL,
+            FRAME, FRAME + TITLE_H + FILTER_H, GWIN_W - 2*FRAME, GWIN_H - 2*FRAME - TITLE_H - FILTER_H,
+            h, (HMENU)1, g_hinst, NULL);
+        SendMessageW(g_goodsList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
+        SendMessageW(g_goodsList, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_goodsList, LVM_SETBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        SendMessageW(g_goodsList, LVM_SETTEXTBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        for (c = 0; c < GCOL_COUNT; c++) AddCol(g_goodsList, c, kGCols[c], kGColW[c]);
+        BuildGoods();
+        PopulateGoods(g_goodsList);
+        g_goodsHdr = (HWND)SendMessageW(g_goodsList, LVM_GETHEADER, 0, 0);
+        if (g_goodsHdr) {
+            SendMessageW(g_goodsHdr, WM_SETFONT, (WPARAM)g_hdrFont, TRUE);
+            g_goodsOrigHdr = (WNDPROC)SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)GoodsHdrProc);
+        }
+        // fb32: 세피아 오버레이 스크롤바 생성 + 리스트뷰 서브클래스 (리스트뷰보다 나중에 = z-order 위)
+        g_goodsSB = CreateWindowExW(0, WC_GOODSSB, L"", WS_CHILD | WS_CLIPSIBLINGS,
+            0, 0, 10, 10, h, (HMENU)3, g_hinst, NULL);
+        g_goodsListOrig = (WNDPROC)SetWindowLongPtrW(g_goodsList, GWLP_WNDPROC, (LONG_PTR)GoodsListSubProc);
+        UpdateGoodsSB();
+        return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: GoodsPaintFrame(h); return 0;
+    case WM_COMMAND:
+        if (LOWORD(wp) == 2 && HIWORD(wp) == EN_CHANGE) {   // 검색창 내용 변경
+            GetWindowTextW(g_goodsFilter, g_goodsFilterText, 64);
+            PopulateGoods(g_goodsList);
+            UpdateGoodsSB();
+            return 0;
+        }
+        return 0;
+    case WM_CTLCOLOREDIT:
+    {
+        HDC dc = (HDC)wp;
+        SetTextColor(dc, COL_TEXT);
+        SetBkColor(dc, COL_LIGHT);
+        if (!g_goodsFilterBr) g_goodsFilterBr = CreateSolidBrush(COL_LIGHT);
+        return (LRESULT)g_goodsFilterBr;
+    }
+    case WM_NOTIFY:
+    {
+        LPNMHDR nh = (LPNMHDR)lp;
+        if (nh->idFrom == 1 && nh->code == NM_CUSTOMDRAW) {
+            LPNMLVCUSTOMDRAW cd = (LPNMLVCUSTOMDRAW)lp;
+            switch (cd->nmcd.dwDrawStage) {
+            case CDDS_PREPAINT: return CDRF_NOTIFYITEMDRAW;
+            case CDDS_ITEMPREPAINT: {
+                int i = (int)cd->nmcd.dwItemSpec;
+                BOOL sel = (ListView_GetItemState(g_goodsList, i, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+                if (sel) { cd->clrText = COL_SEL_TX; cd->clrTextBk = COL_SEL_BG; }
+                else     { cd->clrText = COL_TEXT;   cd->clrTextBk = (i & 1) ? COL_ROW_B : COL_ROW_A; }
+                SelectObject(cd->nmcd.hdc, g_listFont);
+                return CDRF_NEWFONT;
+            }}
+            return CDRF_DODEFAULT;
+        }
+        if (nh->idFrom == 1 && nh->code == LVN_COLUMNCLICK) {
+            LPNMLISTVIEW nlv = (LPNMLISTVIEW)lp;
+            int col = nlv->iSubItem;
+            if (col == g_gSortCol) g_gSortAsc ^= 1; else { g_gSortCol = col; g_gSortAsc = 1; }
+            qsort(g_goods, g_goodsCount, sizeof(GoodsRow), GoodsCmp);
+            PopulateGoods(g_goodsList);
+            UpdateGoodsSB();
+            if (g_goodsHdr) InvalidateRect(g_goodsHdr, NULL, TRUE);
+            return 0;
+        }
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt; RECT rc, cb; pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
+        GetClientRect(h, &rc); cb = CloseRect(rc);
+        if (PtInRect(&cb, pt)) { DestroyWindow(h); return 0; }
+        if (pt.y < FRAME + TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
+        return 0;
+    }
+    case WM_CLOSE: DestroyWindow(h); return 0;
+    case WM_DESTROY:
+        if (g_goodsHdr && g_goodsOrigHdr) SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)g_goodsOrigHdr);
+        if (g_goodsList && g_goodsListOrig) SetWindowLongPtrW(g_goodsList, GWLP_WNDPROC, (LONG_PTR)g_goodsListOrig);
+        if (g_goodsFilterBr) { DeleteObject(g_goodsFilterBr); g_goodsFilterBr = NULL; }
+        g_goodsFilterText[0] = 0; g_sbDrag = 0;
+        g_goodsHdr = NULL; g_goodsOrigHdr = NULL; g_goodsWnd = NULL; g_goodsList = NULL;
+        g_goodsFilter = NULL; g_goodsSB = NULL; g_goodsListOrig = NULL;
+        return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+static void ShowTradeGoodsWindow(HWND owner)
+{
+    static BOOL reg = FALSE;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT; RECT orc;
+    if (g_goodsWnd) { SetForegroundWindow(g_goodsWnd); return; }
+    if (!reg) {
+        WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = GoodsProc; wc.hInstance = g_hinst; wc.lpszClassName = WC_GOODS;
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW); wc.hbrBackground = NULL;
+        RegisterClassW(&wc);
+        wc.lpfnWndProc = GoodsSBProc; wc.lpszClassName = WC_GOODSSB;   // fb32 커스텀 스크롤바
+        RegisterClassW(&wc);
+        reg = TRUE;
+    }
+    if (owner && GetWindowRect(owner, &orc)) {
+        x = orc.left + ((orc.right - orc.left) - GWIN_W) / 2;
+        y = orc.top  + ((orc.bottom - orc.top) - GWIN_H) / 2;
+        if (x < 0) x = 0; if (y < 0) y = 0;
+    }
+    g_goodsWnd = CreateWindowExW(0, WC_GOODS, L"교역품 관리", WS_POPUP, x, y, GWIN_W, GWIN_H, owner, NULL, g_hinst, NULL);
+    if (g_goodsWnd) { ShowWindow(g_goodsWnd, SW_SHOW); UpdateWindow(g_goodsWnd); }
+}
+
+// ---------------- 메뉴 통합 (서브클래싱) ----------------
+
+static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    WNDPROC op = g_origProc;
+    if (msg == WM_COMMAND && HIWORD(wp) == 0)
+    {
+        WORD id = LOWORD(wp);
+        if (id == ID_TRADE_SISE)  { ShowSiseWindow(h); return 0; }
+        if (id == ID_TRADE_GOODS) { ShowTradeGoodsWindow(h); return 0; }
+        if (id >= ID_WARP_BASE && id < ID_WARP_BASE + WARP_COUNT)
+        {
+            DoWarp(id - ID_WARP_BASE);
+            return 0;
+        }
+    }
+    if (msg == WM_NCDESTROY)
+    {
+        if (op) SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)op);
+        g_origProc = NULL; g_subHwnd = NULL; g_hwnd = NULL;
+        return op ? CallWindowProcW(op, h, msg, wp, lp) : DefWindowProcW(h, msg, wp, lp);
+    }
+    return op ? CallWindowProcW(op, h, msg, wp, lp) : DefWindowProcW(h, msg, wp, lp);
+}
+
+static BOOL CALLBACK EnumProc(HWND h, LPARAM l)
+{
+    DWORD pid = 0;
+    (void)l;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid == GetCurrentProcessId() && IsWindowVisible(h) && GetMenu(h))
+    {
+        g_hwnd = h;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL HasOurMenu(HMENU bar)
+{
+    int n = GetMenuItemCount(bar), i;
+    WCHAR s[64];
+    for (i = 0; i < n; i++)
+        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"교역") == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static DWORD WINAPI MonitorThread(LPVOID param)
+{
+    (void)param;
+    OutputDebugStringW(L"[TradeUtilKR] monitor thread started.");
+    for (;;)
+    {
+        HMENU bar;
+        g_hwnd = NULL;
+        EnumWindows(EnumProc, 0);
+        if (g_hwnd)
+        {
+            bar = GetMenu(g_hwnd);
+            if (bar)
+            {
+                if (!HasOurMenu(bar))
+                {
+                    HMENU warp, sub = NULL; const wchar_t* region = NULL; int i;
+                    // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
+                    // (최상위 메뉴바의 MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다)
+                    AppendMenuW(bar, MF_STRING, ID_TRADE_SISE, L"교역");
+                    // fb21/fb27: "교역품" — 현재 정박 도시의 실시간 판매목록.
+                    AppendMenuW(bar, MF_STRING, ID_TRADE_GOODS, L"교역품");
+                    // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
+                    warp = CreatePopupMenu();
+                    for (i = 0; i < WARP_COUNT; i++)
+                    {
+                        if (!region || lstrcmpW(region, kWarps[i].region) != 0)
+                        {
+                            sub = CreatePopupMenu();
+                            AppendMenuW(warp, MF_POPUP, (UINT_PTR)sub, kWarps[i].region);
+                            region = kWarps[i].region;
+                        }
+                        AppendMenuW(sub, MF_STRING, ID_WARP_BASE + i, kWarps[i].city);
+                    }
+                    AppendMenuW(bar, MF_POPUP, (UINT_PTR)warp, L"워프");
+                    DrawMenuBar(g_hwnd);
+                    OutputDebugStringW(L"[TradeUtilKR] 교역/워프 menu (re)installed.");
+                }
+                if (g_subHwnd != g_hwnd)
+                {
+                    g_origProc = (WNDPROC)SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, (LONG_PTR)SubProc);
+                    g_subHwnd = g_hwnd;
+                    OutputDebugStringW(L"[TradeUtilKR] window subclassed.");
+                }
+            }
+        }
+        Sleep(1000);
+    }
+}
+
+void TradeKR_Init(HINSTANCE hinst)
+{
+    INITCOMMONCONTROLSEX icc;
+    HANDLE t;
+    g_hinst = hinst;
+    icc.dwSize = sizeof(icc); icc.dwICC = ICC_LISTVIEW_CLASSES;
+    InitCommonControlsEx(&icc);
+    OutputDebugStringW(L"[TradeUtilKR] init.");
+    t = CreateThread(NULL, 0, MonitorThread, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+}

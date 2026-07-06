@@ -31,7 +31,7 @@ $MinHookDir = Join-Path $PluginsSrc "third_party\minhook"
 
 # 여기서 빌드할 플러그인 타깃과 결과물 파일명을 나열합니다.
 # 새 플러그인을 plugins-src에 추가하면 이 목록에도 추가하세요.
-$PluginTargets = @("CollectionUtilKR")
+$PluginTargets = @("CollectionUtilKR", "HotelUtilKR", "TradeUtilKR", "CharacterUtilKR", "ScreenUtilKR", "ShipSkinKR", "GameApiKR", "AudioFixKR")
 
 function Write-Step($msg) {
     Write-Host "==> $msg" -ForegroundColor Cyan
@@ -71,6 +71,19 @@ foreach ($target in $PluginTargets) {
 if ($SkipDeploy) {
     Write-Host "`n-SkipDeploy 지정됨 - 배포는 건너뜁니다." -ForegroundColor Yellow
     return
+}
+
+if (-not $GamePath -or -not (Test-Path $GamePath)) {
+    # 기본 경로가 없으면 Desktop 하위에서 cds_95.exe 가 있는 폴더를 자동 탐지한다.
+    # (build.ps1 기본값이 다른 PC 경로라 배포가 조용히 건너뛰어져 게임 폴더에 구버전이
+    #  남는 stale 배포 사고 방지 — fb30 "이스탄불 양모/어육"의 진짜 원인이었음.)
+    $detected = Get-ChildItem "$env:USERPROFILE\Desktop" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "cds_95.exe") } |
+        Select-Object -First 1
+    if ($detected) {
+        $GamePath = $detected.FullName
+        Write-Host "게임 폴더 자동 탐지: $GamePath" -ForegroundColor DarkGray
+    }
 }
 
 if (-not $GamePath -or -not (Test-Path $GamePath)) {

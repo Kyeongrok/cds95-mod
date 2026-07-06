@@ -9,21 +9,53 @@ permissions:
   contents: write
 
 jobs:
-  package:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build distribution package
+      - name: Package plugins into zip
         run: |
           mkdir -p dist/CDS95Util
-          cp CDS95Util/DDrawWrapper.plugin dist/ddraw.dll
-          cp CDS95Util/* dist/CDS95Util/
+          cp CDS95Util/HotelUtilKR.plugin dist/CDS95Util/
+          cp CDS95Util/TradeUtilKR.plugin dist/CDS95Util/
+          cp CDS95Util/CharacterUtilKR.plugin dist/CDS95Util/
+          cp CDS95Util/ShipSkinKR.plugin dist/CDS95Util/
+          cp CDS95Util/AudioFixKR.plugin dist/CDS95Util/
           cd dist
-          zip -r "../CDS95Util-${GITHUB_REF_NAME}.zip" .
+          zip -r "../CDS95Util-${{ github.ref_name }}.zip" CDS95Util
 
-      - name: Create release
+      - name: Create release (직접 작성한 KR 플러그인 zip)
         uses: softprops/action-gh-release@v2
         with:
           files: CDS95Util-${{ github.ref_name }}.zip
           generate_release_notes: true
+          body: |
+            ## CDS95Util KR 플러그인 ${{ github.ref_name }}
+
+            대항해시대3 한국어판 전용 플러그인 모음입니다.
+
+            - **HotelUtilKR** — 여관 "숙박"을 누르면 숙박 일수를 직접 입력받아 입력한 만큼만
+              숙박합니다(숙박비도 일수에 비례). 취소하면 원래대로 30일.
+            - **TradeUtilKR** — 상단 메뉴에 "교역 > 시세 일람"을 추가. 전 도시(226개)의
+              도시명/문화권/시세/도서관/조선소/조합을 게임 고풍 디자인의 목록창으로 표시합니다.
+            - **CharacterUtilKR** — 상단 메뉴에 "인물"을 추가. 게임 인물/여급 얼굴(MALE/FEMALE.CDS)을
+              LS12 디코드해 컬러 갤러리(6×4)로 표시하고, 인물명·카테고리(인물/여급/스폰서/기타) 필터를 제공합니다.
+            - **ShipSkinKR** — 상단 메뉴에 "함선"을 추가. 클릭하면 해상 배 스프라이트(4종×8방향)를
+              게임 실제 색으로 보여주는 창이 뜹니다(함선종류/스탯/이름 불변, 화면만).
+              배마다 **[변경]** → 스킨 목록 팝업에서 **원본(바닐라)·저장된 스킨(썸네일)·＋새 스킨 추가(파일)** 를 골라 적용.
+              하단 **[내보내기]**(선택 배를 `ship_g{n}.bmp` 384×48로) → 그림판 편집 → **[불러오기]**(그 배만 반영, 다른 배 유지).
+              **[원래대로(전체)]** 는 편집 전 원본으로 복원. 스킨은 `CDS95Util\shipskin\skins\` 에 모여 재사용됩니다.
+              (내보낸 BMP 색 = 게임 실제 색과 일치하도록 해상 팔레트를 캘리브레이션으로 역산해 반영.)
+            - **AudioFixKR** — 시작 시 뜨는 **"CD 에러"** 원천 차단. (원인: CD-ROM이 없으면 CD음악을
+              `_inmm.dll`이 mp3로 에뮬하는데, MCI 드라이버 로드 실패 시 `CDAudioOpen`이 -1을 반환해
+              게임이 막힘.) `CDAudioOpen` 실패를 성공 처리해 **재부팅 없이 게임이 항상 실행**됩니다
+              (MCI가 정상일 땐 음악도 정상 재생, 스탯/데이터 불변).
+
+            ### 설치
+            `CDS95Util-${{ github.ref_name }}.zip` 을 풀어 나오는 `CDS95Util\` 폴더의 플러그인
+            파일들을 게임 폴더의 `CDS95Util\` 안에 넣으세요(폴더째 게임 루트에 덮어써도 됩니다).
+            (ddraw.dll = DDrawWrapper 기반 CDS95Util 환경이 이미 설치돼 있어야 합니다.)
+
+            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `ShipSkinKR.plugin` 만 포함됩니다.
+            > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
