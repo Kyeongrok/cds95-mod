@@ -1,5 +1,7 @@
 # CDS95Util
 
+[![Downloads](https://img.shields.io/github/downloads/Kyeongrok/cds95-mod/total?color=brightgreen)](https://github.com/Kyeongrok/cds95-mod/releases)
+
 『대항해시대 III』 Windows 95판(CDS95) 유틸리티 모음입니다.
 플러그인 방식으로 구성되어 있어 필요한 기능만 선택해서 사용할 수 있습니다.
 각 플러그인의 상세 설명은 [0.ReadMe.md](0.ReadMe.md) 및 번호가 매겨진 문서들을 참고하세요.
