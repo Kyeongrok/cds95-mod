@@ -1,5 +1,6 @@
 # CDS95Util
 
+[![Release](https://img.shields.io/github/v/release/Kyeongrok/cds95-mod?logo=github)](https://github.com/Kyeongrok/cds95-mod/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Kyeongrok/cds95-mod/total?color=brightgreen)](https://github.com/Kyeongrok/cds95-mod/releases)
 
 『대항해시대 III』 Windows 95판(CDS95) 유틸리티 모음입니다.
