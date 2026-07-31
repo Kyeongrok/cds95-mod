@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <commctrl.h>
+#include <shellapi.h>   // ShellExecuteW — patches.json 을 기본 편집기로 열기
 #include "patch.h"
 
 // PatchUtilKR — cds-helper ExePatch(정적 파일 헥스 패치)의 런타임 메모리판.
@@ -400,6 +401,33 @@ void PatchCore_Load(void)
 #define WC_PATCH   L"PatchUtilKR_Window"
 #define ID_LIST    1001
 #define ID_RELOAD  1002
+#define ID_OPEN    1003
+
+// patches.json 을 기본 편집기로 연다. .json 에 연결 프로그램이 없는 PC 가 흔해서
+// ShellExecute 가 실패하면(반환값 <= 32) 메모장으로 떨어뜨린다.
+// 고친 뒤에는 옆의 "다시 읽기" 를 누르면 반영된다.
+static void OpenPatchesFile(HWND owner)
+{
+    wchar_t path[MAX_PATH], cmd[MAX_PATH + 32];
+    HINSTANCE r;
+    PatchesPath(path, MAX_PATH);
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+        MessageBoxW(owner, path, L"patches.json 을 찾을 수 없습니다", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    r = ShellExecuteW(owner, L"open", path, NULL, NULL, SW_SHOWNORMAL);
+    if ((INT_PTR)r <= 32) {
+        STARTUPINFOW si; PROCESS_INFORMATION pi;
+        ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
+        ZeroMemory(&pi, sizeof(pi));
+        wsprintfW(cmd, L"notepad.exe \"%s\"", path);
+        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+        } else {
+            MessageBoxW(owner, path, L"파일을 열지 못했습니다", MB_OK | MB_ICONWARNING);
+        }
+    }
+}
 
 static HWND g_win = NULL, g_list = NULL;
 static BOOL g_populating = FALSE;
@@ -460,6 +488,8 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
             for (i = 0; i < 6; i++) { c.pszText = (LPWSTR)titles[i]; c.cx = widths[i]; ListView_InsertColumn(g_list, i, &c); }
             CreateWindowExW(0, L"BUTTON", L"patches.json 다시 읽기",
                         WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, h, (HMENU)ID_RELOAD, g_hinst, NULL);
+            CreateWindowExW(0, L"BUTTON", L"patches.json 열기",
+                        WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, h, (HMENU)ID_OPEN, g_hinst, NULL);
             FillList();
             return 0;
         }
@@ -467,12 +497,15 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
             int cw = LOWORD(l), ch = HIWORD(l), bh = 30;
             MoveWindow(g_list, 0, 0, cw, ch - bh, TRUE);
             MoveWindow(GetDlgItem(h, ID_RELOAD), 6, ch - bh + 3, 180, 24, TRUE);
+            MoveWindow(GetDlgItem(h, ID_OPEN), 192, ch - bh + 3, 150, 24, TRUE);
             return 0;
         }
         case WM_COMMAND:
             if (LOWORD(w) == ID_RELOAD) {
                 PatchCore_Load();   // 파일 재파싱 + 현재 메모리로 적용상태 재동기화(적용 중인 패치는 유지)
                 FillList();
+            } else if (LOWORD(w) == ID_OPEN) {
+                OpenPatchesFile(h);
             }
             return 0;
         case WM_NOTIFY: {

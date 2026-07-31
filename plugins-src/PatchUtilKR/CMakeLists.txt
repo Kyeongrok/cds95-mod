@@ -3,7 +3,7 @@ add_library(PatchUtilKR SHARED
     src/patch.c
 )
 
-target_link_libraries(PatchUtilKR PRIVATE user32 gdi32 comctl32)
+target_link_libraries(PatchUtilKR PRIVATE user32 gdi32 comctl32 shell32)
 
 # ListView 등 공용컨트롤 매크로(WC_LISTVIEW, LVM_*, LVITEM/LVCOLUMN)를 와이드로 고정.
 # (정의 안 하면 ANSI 로 잡혀 와이드 구조체와 불일치 → 한글 깨짐/컬럼 오동작)
