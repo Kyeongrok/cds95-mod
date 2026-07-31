@@ -106,10 +106,52 @@ static void SnapshotPatch(Patch* p)
     }
 }
 
-void Patch_SetApplied(int idx, BOOL on)
+// 토글 패치는 쓰기 전에 현재 바이트가 OriginalValue / PatchedValue 중 하나인지 확인한다.
+// patches.json 의 주소는 특정 exe 를 기준으로 뽑은 값이라, 판본이 다른 exe 에 그대로 쓰면
+// 아무 상관 없는 바이트를 덮어써서 게임을 망가뜨린다. 하나라도 어긋나면 그 항목 전체를
+// 건너뛴다 — 일부만 적용되는 쪽이 더 위험하다.
+// (number 형은 대조할 원본값이 json 에 없어서 검사하지 않는다.)
+static BOOL ToggleTargetsLookRight(const Patch* p, int* badIdx)
+{
+    BYTE a[4], b[4];
+    int i, k;
+    if (!p->isToggle) return TRUE;
+    ValueBytes(p->originalValue, p->byteSize, a);
+    ValueBytes(p->patchedValue,  p->byteSize, b);
+    for (i = 0; i < p->naddr; i++) {
+        BYTE* m;
+        int okA = 1, okB = 1;
+        if (!p->mapped[i]) continue;
+        m = OffToMem(p->addrs[i]);
+        if (!m) continue;
+        for (k = 0; k < p->byteSize; k++) {
+            if (m[k] != a[k]) okA = 0;
+            if (m[k] != b[k]) okB = 0;
+        }
+        if (!okA && !okB) { if (badIdx) *badIdx = i; return FALSE; }
+    }
+    return TRUE;
+}
+
+BOOL Patch_SetApplied(int idx, BOOL on)
 {
     Patch* p = &g_patches[idx];
-    int i;
+    int i, bad = 0;
+
+    if (!ToggleTargetsLookRight(p, &bad)) {
+        wchar_t msg[640];
+        LogW(L"[PatchUtilKR] 적용 거부: %s — 오프셋 0x%X 의 현재 값이 원본/패치값 어느 쪽도 아님",
+             p->name[0] ? p->name : L"(무명)", p->addrs[bad]);
+        wsprintfW(msg,
+            L"[%s]\n\n"
+            L"파일오프셋 0x%X 의 현재 값이 OriginalValue 도 PatchedValue 도 아닙니다.\n"
+            L"이 patches.json 은 지금 실행 중인 cds_95.exe 와 다른 판본을 기준으로 만들어졌을 수 있습니다.\n\n"
+            L"엉뚱한 곳을 덮어쓰지 않도록 이 항목은 적용하지 않았습니다.",
+            p->name[0] ? p->name : L"(무명)", p->addrs[bad]);
+        MessageBoxW(NULL, msg, L"PatchUtilKR — 주소가 맞지 않습니다", MB_OK | MB_ICONWARNING);
+        return FALSE;
+    }
+
     for (i = 0; i < p->naddr; i++) {
         BYTE* m;
         BYTE  bytes[4];
@@ -127,6 +169,7 @@ void Patch_SetApplied(int idx, BOOL on)
         }
     }
     p->applied = on;
+    return TRUE;
 }
 
 // ------------------------------------------------------------------ 미니 JSON 파서 (cds-helper 출력 전용)
@@ -522,9 +565,13 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
                             g_populating = TRUE;
                             ListView_SetCheckState(g_list, nm->iItem, FALSE);
                             g_populating = FALSE;
+                        } else if (!Patch_SetApplied(nm->iItem, is)) {
+                            // 주소 검증에 걸려 적용을 거부했다 — 체크 표시를 실제 상태로 되돌린다.
+                            g_populating = TRUE;
+                            ListView_SetCheckState(g_list, nm->iItem, p->applied);
+                            g_populating = FALSE;
                         } else {
                             wchar_t st[48];
-                            Patch_SetApplied(nm->iItem, is);
                             StateText(p, st);
                             ListView_SetItemText(g_list, nm->iItem, 4, st);
                             LogW(L"[PatchUtilKR] %s %s", p->name[0] ? p->name : L"(무명)", is ? L"적용" : L"해제");
