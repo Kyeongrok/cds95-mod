@@ -1,0 +1,22 @@
+[
+  {
+    "Name": "예시(값형) — 3바이트 주소에 5 기록",
+    "Description": "cds-helper '커스텀 패치'와 동일 스키마. 이 파일을 patches.json 으로 복사하거나 cds-helper에서 내보낸 파일을 patches.json 으로 두면 됩니다. 주소=파일오프셋(hex).",
+    "Address": "0x77BE6",
+    "Addresses": ["0x77BE6", "0x77C92"],
+    "ByteSize": 1,
+    "Value": 5,
+    "Type": "number",
+    "OriginalValue": 0,
+    "PatchedValue": 0
+  },
+  {
+    "Name": "예시(토글형)",
+    "Description": "적용 시 PatchedValue, 해제 시 OriginalValue 를 모든 주소에 기록.",
+    "Addresses": ["0x5CCDA"],
+    "ByteSize": 1,
+    "Type": "toggle",
+    "OriginalValue": 116,
+    "PatchedValue": 235
+  }
+]
