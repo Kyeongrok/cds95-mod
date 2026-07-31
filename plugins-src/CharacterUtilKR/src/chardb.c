@@ -45,31 +45,12 @@ static void NormName(const wchar_t* s, wchar_t* out, int cap)
     out[n] = 0;
 }
 
-static int FindIn(const wchar_t* const* tbl, int n, const wchar_t* key)
+int CharDb_NameMatches(int gender, int code, const wchar_t* name)
 {
-    wchar_t tmp[96];
-    int i;
-    for (i = 0; i < n; i++) {
-        if (!tbl[i] || !tbl[i][0]) continue;
-        NormName(tbl[i], tmp, 96);
-        if (lstrcmpW(tmp, key) == 0) return i;
-    }
-    return -1;
-}
-
-int CharDb_FindByName(const wchar_t* name, int* gender, int* code)
-{
-    wchar_t key[96];
-    int i;
-    if (!name || !name[0]) return 0;
-    NormName(name, key, 96);
-    if (!key[0]) return 0;
-
-    i = FindIn(kMaleNames, MALE_N, key);
-    if (i >= 0) { if (gender) *gender = CHARDB_MALE; if (code) *code = i; return 1; }
-
-    i = FindIn(kFemaleNames, FEMALE_N, key);
-    if (i >= 0) { if (gender) *gender = CHARDB_FEMALE; if (code) *code = i; return 1; }
-
-    return 0;
+    const wchar_t* entry = CharDb_Name(gender, code);
+    wchar_t a[96], b[96];
+    if (!entry[0] || !name || !name[0]) return 0;
+    NormName(entry, a, 96);
+    NormName(name, b, 96);
+    return lstrcmpW(a, b) == 0;
 }

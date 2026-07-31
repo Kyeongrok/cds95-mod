@@ -10,6 +10,7 @@
 //   상단 "파일" 메뉴에 "인물" 항목 추가(서브클래싱으로 클릭 가로챔) → 브라우저 오픈.
 // fb31: 창을 탭 2개로 나눔 — [도감] 은 기존 얼굴 브라우저, [항해사 찾기] 는
 //   SAVEDATA.CDS 를 읽어 고용 가능한 인물을 특기/레벨로 추려 보여준다(navview.c, 읽기 전용).
+//   지금은 ui.h 의 CHARKR_SHOW_NAV_TAB=0 이라 [항해사 찾기] 탭을 띄우지 않는다(도감 전용 창).
 
 #define ID_CHAR   0xB301
 #define WC_CHAR   L"CharUtilKR_Browser"
@@ -22,7 +23,11 @@ static HWND    g_gameHwnd = NULL;
 static HWND    g_subHwnd = NULL;
 static WNDPROC g_origProc = NULL;
 static HWND    g_wnd = NULL;
-static int     g_tab = TAB_GALLERY;
+#if CHARKR_SHOW_NAV_TAB
+static int     g_tab = TAB_NAV;       // 이 창을 여는 목적이 대개 항해사 찾기라 이쪽을 기본으로 연다
+#else
+static int     g_tab = TAB_GALLERY;   // 탭을 숨긴 빌드에서는 도감만 존재한다
+#endif
 static int     g_gender = FACE_MALE;
 static int     g_scroll = 0;   // 맨 위에 보이는 행
 static int     g_catFilter = 0;// 0=전체 1=인물 2=여급 3=스폰서 4=기타
@@ -49,7 +54,15 @@ static void RebuildFilter(void)
 
 static const wchar_t* kCatBtn[5] = { L"전체", L"인물", L"여급", L"스폰서", L"기타" };
 static RECT CloseRect(RECT c) { RECT r; r.right=c.right-FRAME-4; r.left=r.right-22; r.top=FRAME+4; r.bottom=r.top+18; return r; }
-static RECT TabRect(int i)   { RECT r; r.left = i ? 85 : 13; r.right = r.left + (i ? 110 : 70); r.top=TAB_Y+2; r.bottom=TAB_Y+TAB_H-2; return r; }
+// 탭 표시 순서는 [항해사 찾기][도감] — 자주 쓰는 쪽을 왼쪽에 둔다(탭 번호 순서와는 별개).
+static RECT TabRect(int tab)
+{
+    RECT r;
+    if (tab == TAB_NAV) { r.left = 13;  r.right = r.left + 110; }
+    else                { r.left = 129; r.right = r.left + 70;  }
+    r.top = TAB_Y + 2; r.bottom = TAB_Y + TAB_H - 2;
+    return r;
+}
 static RECT MaleRect(void)   { RECT r; r.left=FRAME+8;  r.top=FILTER_Y; r.right=r.left+40; r.bottom=r.top+22; return r; }
 static RECT FemaleRect(void) { RECT r; r.left=FRAME+50; r.top=FILTER_Y; r.right=r.left+40; r.bottom=r.top+22; return r; }
 static RECT CatRect(int i)   { RECT r; r.left=FRAME+100 + i*54; r.right=r.left+50; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
@@ -112,12 +125,14 @@ static void OnPaint(HWND h)
     UI_Text(dc, tr, L"인물 브라우저", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     UI_Button(dc, CloseRect(rc), L"×", FALSE);
 
-    // 탭바
-    UI_Button(dc, TabRect(TAB_GALLERY), L"도감",      g_tab==TAB_GALLERY);
+#if CHARKR_SHOW_NAV_TAB
     UI_Button(dc, TabRect(TAB_NAV),     L"항해사 찾기", g_tab==TAB_NAV);
-
+    UI_Button(dc, TabRect(TAB_GALLERY), L"도감",      g_tab==TAB_GALLERY);
     if (g_tab == TAB_NAV) Nav_Paint(dc);
     else                  PaintGallery(dc);
+#else
+    PaintGallery(dc);
+#endif
 
     EndPaint(h, &ps);
 }
@@ -158,7 +173,9 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         UI_CreateFonts();
         Face_Load();
         RebuildFilter();
+#if CHARKR_SHOW_NAV_TAB
         Nav_Init(h, g_hinst);
+#endif
         return 0;
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: OnPaint(h); return 0;
@@ -178,8 +195,10 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         // 창 바닥을 누른 시점에 포커스를 되가져온다(자식 클릭은 여기로 오지 않는다).
         SetFocus(h);
         { RECT cb=CloseRect(rc); if (PtInRect(&cb,pt)) { DestroyWindow(h); return 0; } }
-        { RECT r=TabRect(TAB_GALLERY); if (PtInRect(&r,pt)) { SetTab(h,TAB_GALLERY); return 0; } }
+#if CHARKR_SHOW_NAV_TAB
         { RECT r=TabRect(TAB_NAV);     if (PtInRect(&r,pt)) { SetTab(h,TAB_NAV); return 0; } }
+        { RECT r=TabRect(TAB_GALLERY); if (PtInRect(&r,pt)) { SetTab(h,TAB_GALLERY); return 0; } }
+#endif
         if (g_tab == TAB_NAV) {
             if (Nav_Click(h, pt)) return 0;
         } else {
@@ -195,7 +214,9 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     }
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE) { DestroyWindow(h); return 0; }
+#if CHARKR_SHOW_NAV_TAB
         if (wp == VK_TAB)    { SetTab(h, g_tab == TAB_NAV ? TAB_GALLERY : TAB_NAV); return 0; }
+#endif
         if (g_tab == TAB_NAV) {
             if (Nav_Key(h, wp)) return 0;
             return 0;
@@ -240,7 +261,9 @@ void CharKR_ShowWindow(HWND owner, HINSTANCE hinst)
     }
     g_wnd = CreateWindowExW(0, WC_CHAR, L"인물 브라우저", WS_POPUP, x, y, WIN_W, WIN_H, owner, NULL, hinst, NULL);
     if (g_wnd) {
+#if CHARKR_SHOW_NAV_TAB
         Nav_Activate(g_wnd, g_tab == TAB_NAV);
+#endif
         ShowWindow(g_wnd, SW_SHOW); UpdateWindow(g_wnd); SetFocus(g_wnd);
     }
 }

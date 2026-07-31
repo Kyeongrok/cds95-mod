@@ -17,10 +17,12 @@
 #define OFF_BLDG    0x30
 #define OFF_NAME1   0x32
 #define OFF_NAME2   0x45
+#define OFF_FACE    0x58   // u16 LE. 0xFFFF = 얼굴 없음(몬스터 등)
 #define OFF_AGE     0x5C
 #define OFF_ZODIAC  0x60
 #define OFF_HIRE    0x62
-#define NAME_LEN    20
+#define NAME1_LEN   20
+#define NAME2_LEN   19     // 0x45~0x57. 0x58 부터는 얼굴코드다
 
 #define PLAYER_FAME 0x53
 #define PLAYER_CITY 0x57
@@ -76,16 +78,22 @@ const wchar_t* Save_BuildingName(unsigned char b)
 static void ReadStr(const unsigned char* p, int len, wchar_t* out, int cap)
 {
     char buf[64];
-    int n = 0;
+    int n = 0, w;
     out[0] = 0;
     if (len > (int)sizeof(buf) - 1) len = (int)sizeof(buf) - 1;
     while (n < len && p[n] != 0) { buf[n] = (char)p[n]; n++; }
     buf[n] = 0;
     if (n == 0) return;
+
     // 949 = cp949(한국어). 게임 원본이 cp932 인 판본이라도 여기서는 한글 통합수정판을 전제한다.
-    if (MultiByteToWideChar(949, 0, buf, n, out, cap - 1) <= 0) { out[0] = 0; return; }
-    out[cap - 1] = 0;
-    { int w = lstrlenW(out); while (w > 0 && out[w-1] == L' ') out[--w] = 0; }
+    // 길이를 넘겨 부르면 MultiByteToWideChar 는 널을 붙여주지 않는다. 반환값 자리에 직접 붙여야
+    // 하는데, 이걸 빼먹으면 뒤의 초기화 안 된 스택이 이름 꼬리로 딸려 들어온다.
+    w = MultiByteToWideChar(949, 0, buf, n, out, cap - 1);
+    if (w <= 0) { out[0] = 0; return; }
+    if (w > cap - 1) w = cap - 1;
+    out[w] = 0;
+
+    while (w > 0 && out[w-1] == L' ') out[--w] = 0;
 }
 
 static unsigned char* ReadWholeFile(const wchar_t* path, DWORD* sizeOut)
@@ -138,6 +146,26 @@ static int LooksValid(const unsigned char* r)
     return 1;
 }
 
+// 얼굴코드는 +0x58 에 그대로 들어 있다(u16 LE). 다만 남/여 얼굴 파일을 구분하는 플래그는
+// 레코드 어디에도 없어서(비트 단위로 전수 조사해도 남/여를 가르는 자리가 없음),
+// 그 코드 자리의 이름표가 어느 쪽과 맞는지로 성별을 가린다.
+// 이름 표기가 흔들리는 인물(예: 세이브 "크리스트발" vs 표 "크르스트발")은 이름이 안 맞으므로
+// 표에 항목이 있는 쪽을 택한다 — 실제로 이 게임의 인물 얼굴은 대부분 남자 표에 있다.
+static void ResolveFace(SaveChar* c, unsigned short raw)
+{
+    c->faceGender = -1;
+    c->faceCode   = -1;
+    if (raw == 0xFFFF) return;                          // 얼굴 없는 레코드(해수·이벤트 등)
+    if (raw >= (unsigned short)CharDb_Count(CHARDB_MALE)) return;
+
+    if      (CharDb_NameMatches(CHARDB_MALE,   raw, c->name)) c->faceGender = CHARDB_MALE;
+    else if (CharDb_NameMatches(CHARDB_FEMALE, raw, c->name)) c->faceGender = CHARDB_FEMALE;
+    else if (CharDb_Name(CHARDB_MALE,   raw)[0])              c->faceGender = CHARDB_MALE;
+    else if (CharDb_Name(CHARDB_FEMALE, raw)[0])              c->faceGender = CHARDB_FEMALE;
+    else                                                      c->faceGender = CHARDB_MALE;
+    c->faceCode = raw;
+}
+
 void Save_Free(SaveData* s)
 {
     if (s->chars) { HeapFree(GetProcessHeap(), 0, s->chars); s->chars = NULL; }
@@ -178,14 +206,20 @@ int Save_Load(SaveData* s)
         if ((DWORD)(CHAR_START + (i + 1) * CHAR_SIZE) > sz) break;
         if (!LooksValid(r)) continue;
 
-        ReadStr(r + OFF_NAME1, NAME_LEN, n1, 32);
-        ReadStr(r + OFF_NAME2, NAME_LEN, n2, 32);
+        ReadStr(r + OFF_NAME1, NAME1_LEN, n1, 32);
+        ReadStr(r + OFF_NAME2, NAME2_LEN, n2, 32);
         if (!n1[0] && !n2[0]) continue;
 
         c = &arr[n];
         c->index = i;
-        if (n1[0] && n2[0]) wsprintfW(c->name, L"%s·%s", n1, n2);
-        else                lstrcpynW(c->name, n1[0] ? n1 : n2, 64);
+        // n1/n2 는 각각 최대 31자라 "n1·n2" 가 name[64] 에 딱 맞아떨어진다(여유 0).
+        // 넉넉한 버퍼에 만든 뒤 잘라 담아 그 아슬아슬함을 없앤다.
+        {
+            wchar_t full[80];
+            if (n1[0] && n2[0]) wsprintfW(full, L"%s·%s", n1, n2);
+            else                lstrcpynW(full, n1[0] ? n1 : n2, 80);
+            lstrcpynW(c->name, full, (int)(sizeof(c->name)/sizeof(c->name[0])));
+        }
 
         c->hp    = r[OFF_HP];
         c->intel = r[OFF_INT];
@@ -201,9 +235,7 @@ int Save_Load(SaveData* s)
         c->zodiac = r[OFF_ZODIAC];
         c->hire   = r[OFF_HIRE];
 
-        c->faceGender = -1;
-        c->faceCode   = -1;
-        CharDb_FindByName(c->name, &c->faceGender, &c->faceCode);
+        ResolveFace(c, (unsigned short)(r[OFF_FACE] | (r[OFF_FACE+1] << 8)));
 
         n++;
     }

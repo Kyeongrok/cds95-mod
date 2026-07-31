@@ -53,6 +53,10 @@ int Ls12_DecodeFace(Ls12File* f, int index, unsigned char* out)
     const unsigned char* comp;
     unsigned complen, outlen, totalbits, bitpos, outpos, delta;
     if (index < 0 || index >= f->count) return 0;
+    // 파트 테이블의 오프셋/길이는 파일에서 그대로 읽은 값이라 파일 밖을 가리킬 수 있다.
+    // 검사 없이 쓰면 힙 밖을 읽어 프로세스가 죽는다.
+    if (!f->data || f->off[index] >= (unsigned)f->size) return 0;
+    if (f->comp[index] > (unsigned)f->size - f->off[index]) return 0;
     comp = f->data + f->off[index];
     complen = f->comp[index];
     outlen = f->uncomp[index];

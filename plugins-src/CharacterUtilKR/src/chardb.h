@@ -14,7 +14,6 @@ const wchar_t* CharDb_Name(int gender, int code);      // 없으면 L""
 const wchar_t* CharDb_Info(int gender, int code);      // 없으면 L""
 unsigned char  CharDb_Cat(int gender, int code);       // 0=기타 1=인물 2=여급 3=스폰서
 
-// 이름으로 얼굴코드를 역추적한다(가운뎃점/공백/마침표 무시).
-// 세이브 파일의 인물 이름에는 얼굴코드가 없어서 이름으로 되찾는 수밖에 없다.
-// 찾으면 1 을 돌려주고 gender/code 를 채운다. 못 찾으면 0.
-int CharDb_FindByName(const wchar_t* name, int* gender, int* code);
+// 그 자리의 이름표가 주어진 이름과 같은지(가운뎃점/공백/마침표 무시).
+// 세이브의 얼굴코드는 남/여 표를 구분하지 않아서, 성별은 이름이 어느 표와 맞는지로 가린다.
+int CharDb_NameMatches(int gender, int code, const wchar_t* name);
