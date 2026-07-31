@@ -971,6 +971,41 @@ static BOOL HasOurMenu(HMENU bar)
             return TRUE;
     return FALSE;
 }
+// 최상위 메뉴바에서 "파일" 팝업 서브메뉴를 찾는다. 없으면 NULL.
+static HMENU FindFileMenu(HMENU bar)
+{
+    int n = GetMenuItemCount(bar), i; WCHAR s[64];
+    // 실제 라벨은 "파일 (&F)" 처럼 니모닉이 붙으므로 접두어로 매칭한다.
+    for (i = 0; i < n; i++)
+        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && s[0] == L'파' && s[1] == L'일')
+            return GetSubMenu(bar, i);
+    return NULL;
+}
+// "파일" 안에 KR 플러그인 항목(ID 0xB000~0xCFFF)이 이미 있는지 → 최초 설치 플러그인만 구분선 추가.
+static BOOL FileMenuHasPluginItem(HMENU m)
+{
+    int n = GetMenuItemCount(m), i;
+    for (i = 0; i < n; i++) {
+        UINT id = GetMenuItemID(m, (UINT)i);
+        if (id != (UINT)-1 && id >= 0xB000 && id <= 0xCFFF) return TRUE;
+    }
+    return FALSE;
+}
+// 연속된 구분선을 1개로 접는다(변경했으면 TRUE). 세 플러그인 스레드 race 로 구분선이
+// 2~3개 생겨도 다음 폴링에서 자동으로 하나로 수렴시킨다.
+static BOOL CollapseSeparators(HMENU m)
+{
+    BOOL changed = FALSE; int i;
+    for (i = GetMenuItemCount(m) - 1; i > 0; i--) {
+        UINT a = GetMenuState(m, (UINT)i, MF_BYPOSITION);
+        UINT b = GetMenuState(m, (UINT)(i - 1), MF_BYPOSITION);
+        if ((a & MF_SEPARATOR) && (b & MF_SEPARATOR)) {
+            RemoveMenu(m, (UINT)i, MF_BYPOSITION);
+            changed = TRUE;
+        }
+    }
+    return changed;
+}
 
 static DWORD WINAPI MonitorThread(LPVOID param)
 {
@@ -986,14 +1021,19 @@ static DWORD WINAPI MonitorThread(LPVOID param)
             bar = GetMenu(g_hwnd);
             if (bar)
             {
-                if (!HasOurMenu(bar))
+                // "파일" 드롭다운이 있으면 그 안에, 없으면 예전처럼 최상위에 붙인다.
+                HMENU fileMenu = FindFileMenu(bar);
+                HMENU target = fileMenu ? fileMenu : bar;
+                if (!HasOurMenu(target))
                 {
                     HMENU warp, sub = NULL; const wchar_t* region = NULL; int i;
+                    if (fileMenu && !FileMenuHasPluginItem(fileMenu))
+                        AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL); // 게임 원래 항목과 구분(최초 1회)
                     // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
-                    // (최상위 메뉴바의 MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다)
-                    AppendMenuW(bar, MF_STRING, ID_TRADE_SISE, L"교역");
+                    // (MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다 — 파일 서브메뉴 안에서도 동일)
+                    AppendMenuW(target, MF_STRING, ID_TRADE_SISE, L"교역");
                     // fb21/fb27: "교역품" — 현재 정박 도시의 실시간 판매목록.
-                    AppendMenuW(bar, MF_STRING, ID_TRADE_GOODS, L"교역품");
+                    AppendMenuW(target, MF_STRING, ID_TRADE_GOODS, L"교역품");
                     // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
                     warp = CreatePopupMenu();
                     for (i = 0; i < WARP_COUNT; i++)
@@ -1006,10 +1046,11 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                         }
                         AppendMenuW(sub, MF_STRING, ID_WARP_BASE + i, kWarps[i].city);
                     }
-                    AppendMenuW(bar, MF_POPUP, (UINT_PTR)warp, L"워프");
+                    AppendMenuW(target, MF_POPUP, (UINT_PTR)warp, L"워프");
                     DrawMenuBar(g_hwnd);
                     OutputDebugStringW(L"[TradeUtilKR] 교역/워프 menu (re)installed.");
                 }
+                if (fileMenu && CollapseSeparators(fileMenu)) DrawMenuBar(g_hwnd); // race 로 생긴 중복 구분선 정리
                 if (g_subHwnd != g_hwnd)
                 {
                     g_origProc = (WNDPROC)SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, (LONG_PTR)SubProc);
