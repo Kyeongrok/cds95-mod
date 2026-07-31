@@ -10,10 +10,9 @@
 #define MAX_PATCHES 256
 #define ID_PATCH_OPEN 0xB500u     // "파일>패치" 메뉴 커맨드 (KR 예약대역 0xB000~0xCFFF)
 
-// 패치 창은 아직 다듬는 중이라 "파일" 드롭다운에 노출하지 않는다.
-// 창/적용 코드는 그대로 남겨 두었으니 이 값만 1 로 바꾸면 메뉴가 다시 붙는다.
-// (0 인 동안에는 메뉴 감시 스레드를 아예 띄우지 않아 게임 창 서브클래싱도 하지 않는다.)
-#define PATCHKR_SHOW_MENU 0
+// "파일" 드롭다운의 "패치" 항목 노출 스위치.
+// 0 이면 메뉴 감시 스레드를 아예 띄우지 않아 게임 창 서브클래싱도 하지 않는다.
+#define PATCHKR_SHOW_MENU 1
 
 typedef struct {
     wchar_t      name[128];

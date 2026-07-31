@@ -1,0 +1,154 @@
+[
+  {
+    "Name": "아무데서나 세이브",
+    "Description": "통합수정판 1. 저장 메뉴를 어디서든(항해 중) 열 수 있게. 7곳에 78 87 56 00 기록",
+    "Addresses": [
+      "0x77BE6",
+      "0x77C92",
+      "0x7851B",
+      "0x78849",
+      "0x78866",
+      "0x788C4",
+      "0x788D3"
+    ],
+    "ByteSize": 4,
+    "Type": "number",
+    "Value": 5670776,
+    "OriginalValue": 0,
+    "PatchedValue": 0
+  },
+  {
+    "Name": "용어: 웅변→변론",
+    "Description": "통합수정판 0-1. 0x15E0DC (4바이트 텍스트)",
+    "Addresses": [
+      "0x15E0DC"
+    ],
+    "ByteSize": 4,
+    "Type": "toggle",
+    "OriginalValue": 2948265407,
+    "PatchedValue": 3501699002
+  },
+  {
+    "Name": "용어: 규칙→규율",
+    "Description": "통합수정판 0-2. 0x166610 \"규칙이 회복되었다\"",
+    "Addresses": [
+      "0x166610"
+    ],
+    "ByteSize": 4,
+    "Type": "toggle",
+    "OriginalValue": 2730808497,
+    "PatchedValue": 2998981809
+  },
+  {
+    "Name": "용어: 사교→주교",
+    "Description": "통합수정판 0-5. 0x161BF7 \"멕시코 사교좌 교회\"",
+    "Addresses": [
+      "0x161BF7"
+    ],
+    "ByteSize": 4,
+    "Type": "toggle",
+    "OriginalValue": 3014780859,
+    "PatchedValue": 3014776513
+  },
+  {
+    "Name": "용어: 선두상→선수상(조선소)",
+    "Description": "통합수정판 0-3. '선두상'->'선수상'. exe 안 14곳 전부 (문자열 시작 +2 의 2바이트: 두 B5CE -> 수 BCF6)",
+    "Addresses": [
+      "0x12EB22",
+      "0x12F3D0",
+      "0x12F46D",
+      "0x12F496",
+      "0x12F4E2",
+      "0x12F549",
+      "0x12F5D2",
+      "0x12FA7A",
+      "0x12FB72",
+      "0x12FB83",
+      "0x13986A",
+      "0x13987A",
+      "0x142DBA",
+      "0x14DCF7"
+    ],
+    "ByteSize": 2,
+    "Type": "toggle",
+    "OriginalValue": 52917,
+    "PatchedValue": 63164
+  },
+  {
+    "Name": "주점힌트-카카오(메리다→미틀라)",
+    "Description": "통합수정판 8-1",
+    "Addresses": [
+      "0x1244BC"
+    ],
+    "ByteSize": 1,
+    "Type": "toggle",
+    "OriginalValue": 206,
+    "PatchedValue": 204
+  },
+  {
+    "Name": "도서-헤엄치는새(마젤란→희망봉)",
+    "Description": "통합수정판 9-1",
+    "Addresses": [
+      "0xD9850"
+    ],
+    "ByteSize": 1,
+    "Type": "toggle",
+    "OriginalValue": 6,
+    "PatchedValue": 0
+  },
+  {
+    "Name": "도서-남극인(남방→남극대륙)",
+    "Description": "통합수정판 9-2",
+    "Addresses": [
+      "0xDA3E0"
+    ],
+    "ByteSize": 1,
+    "Type": "toggle",
+    "OriginalValue": 9,
+    "PatchedValue": 10
+  },
+  {
+    "Name": "도서-지옥의꽃(신대륙→말라카)",
+    "Description": "통합수정판 9-3",
+    "Addresses": [
+      "0xD9940"
+    ],
+    "ByteSize": 4,
+    "Type": "toggle",
+    "OriginalValue": 1,
+    "PatchedValue": 3
+  },
+  {
+    "Name": "도서-정토의연꽃(중국→잉카)",
+    "Description": "통합수정판 9-4",
+    "Addresses": [
+      "0xD9F80"
+    ],
+    "ByteSize": 4,
+    "Type": "toggle",
+    "OriginalValue": 5,
+    "PatchedValue": 193
+  },
+  {
+    "Name": "도서-고무나무(향료→잉카)",
+    "Description": "통합수정판 9-5",
+    "Addresses": [
+      "0xDA070"
+    ],
+    "ByteSize": 4,
+    "Type": "toggle",
+    "OriginalValue": 4,
+    "PatchedValue": 193
+  },
+  {
+    "Name": "도서-담배(아스테카→신대륙)",
+    "Description": "통합수정판 9-6",
+    "Addresses": [
+      "0xDA930"
+    ],
+    "ByteSize": 4,
+    "Type": "toggle",
+    "OriginalValue": 192,
+    "PatchedValue": 1
+  }
+]
