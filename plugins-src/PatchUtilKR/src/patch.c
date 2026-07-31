@@ -10,6 +10,11 @@
 #define MAX_PATCHES 256
 #define ID_PATCH_OPEN 0xB500u     // "파일>패치" 메뉴 커맨드 (KR 예약대역 0xB000~0xCFFF)
 
+// 패치 창은 아직 다듬는 중이라 "파일" 드롭다운에 노출하지 않는다.
+// 창/적용 코드는 그대로 남겨 두었으니 이 값만 1 로 바꾸면 메뉴가 다시 붙는다.
+// (0 인 동안에는 메뉴 감시 스레드를 아예 띄우지 않아 게임 창 서브클래싱도 하지 않는다.)
+#define PATCHKR_SHOW_MENU 0
+
 typedef struct {
     wchar_t      name[128];
     wchar_t      desc[256];
@@ -374,13 +379,21 @@ void PatchCore_Load(void)
         Patch* p = &g_patches[i];
         BYTE* m0;
         SnapshotPatch(p);
+        // 로드 시 현재 메모리가 이미 적용값(toggle=PatchedValue, number=Value)과 같으면
+        // 체크(ON)로 표시해 창이 실제 상태를 반영하게 한다. (snap[0]=로드시점 현재 메모리)
+        if (p->mapped[0]) {
+            BYTE tb[4]; int b; BOOL match = TRUE;
+            ValueBytes(p->isToggle ? p->patchedValue : p->value, p->byteSize, tb);
+            for (b = 0; b < p->byteSize; b++) if (p->snap[0][b] != tb[b]) { match = FALSE; break; }
+            p->applied = match;
+        }
         m0 = p->naddr ? OffToMem(p->addrs[0]) : NULL;
-        LogW(L"  [%d] %s off=0x%X x%d %s VA=0x%08X mapped=%d cur=0x%02X",
+        LogW(L"  [%d] %s off=0x%X x%d %s VA=0x%08X mapped=%d cur=0x%02X applied=%d",
              i, p->name[0] ? p->name : L"(무명)",
              p->naddr ? p->addrs[0] : 0, p->byteSize,
              p->isToggle ? L"toggle" : L"value",
              (unsigned int)(UINT_PTR)m0, p->naddr ? p->mapped[0] : 0,
-             (m0 && p->mapped[0]) ? m0[0] : 0);
+             (m0 && p->mapped[0]) ? m0[0] : 0, p->applied);
     }
 }
 
@@ -459,9 +472,7 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
         }
         case WM_COMMAND:
             if (LOWORD(w) == ID_RELOAD) {
-                int i;
-                for (i = 0; i < g_npatch; i++) if (g_patches[i].applied) Patch_SetApplied(i, FALSE);
-                PatchCore_Load();
+                PatchCore_Load();   // 파일 재파싱 + 현재 메모리로 적용상태 재동기화(적용 중인 패치는 유지)
                 FillList();
             }
             return 0;
@@ -620,10 +631,15 @@ static DWORD WINAPI MenuThread(LPVOID pv)
 
 void PatchKR_Init(HINSTANCE hinst)
 {
-    HANDLE t;
     g_hinst = hinst;
     InitPE();
     PatchCore_Load();
-    t = CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
-    if (t) CloseHandle(t);
+#if PATCHKR_SHOW_MENU
+    {
+        HANDLE t = CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
+        if (t) CloseHandle(t);
+    }
+#else
+    LogW(L"[PatchUtilKR] 메뉴 비노출 (PATCHKR_SHOW_MENU=0) — patches.json 파싱만 하고 창은 띄우지 않습니다.");
+#endif
 }
