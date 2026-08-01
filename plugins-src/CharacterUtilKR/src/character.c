@@ -2,21 +2,28 @@
 #include "ui.h"
 #include "faces.h"
 #include "chardb.h"
+#include "maids.h"
 #include "navview.h"
 #include <windowsx.h>
 
 // fb15/fb16: 인물(얼굴) 코드 브라우저 — 갤러리(2열, 스크롤) + 남/여/카테고리 필터.
 //   얼굴 = 80x96 8bpp(LS12 디코드), kFacePalette 로 컬러화(게임 캡처 역산 근사 팔레트).
 //   상단 "파일" 메뉴에 "인물" 항목 추가(서브클래싱으로 클릭 가로챔) → 브라우저 오픈.
-// fb31: 창을 탭 2개로 나눔 — [도감] 은 기존 얼굴 브라우저, [항해사 찾기] 는
+// fb31: 창을 탭으로 나눔 — [도감] 은 기존 얼굴 브라우저, [항해사 찾기] 는
 //   SAVEDATA.CDS 를 읽어 고용 가능한 인물을 특기/레벨로 추려 보여준다(navview.c, 읽기 전용).
-//   지금은 ui.h 의 CHARKR_SHOW_NAV_TAB=0 이라 [항해사 찾기] 탭을 띄우지 않는다(도감 전용 창).
+//   ui.h 의 CHARKR_SHOW_NAV_TAB=0 으로 두면 [항해사 찾기] 만 빠진다.
+// fb32: [여급] 을 도감의 카테고리 버튼에서 빼내 독립 탭으로 올림. 여급은 얼굴이 아니라
+//   CDS_95.EXE 여급 표의 "행"이 단위다(maids.c) — 얼굴 3개(23·34·77)를 여급 두 명이
+//   나눠 쓰기 때문에 얼굴로 세면 뒤쪽 한 명이 통째로 빠진다. 상세도 char_info.h 대신
+//   그 표에서 바로 뽑고, 등장연도는 select box 로 메모리에 직접 써넣는다.
+//   갤러리 격자/스크롤은 [도감] 과 그대로 공유한다(g_filt 항목 종류만 다르다).
 
 #define ID_CHAR   0xB301
 #define WC_CHAR   L"CharUtilKR_Browser"
 
 #define TAB_GALLERY 0
 #define TAB_NAV     1
+#define TAB_MAID    2
 
 static HINSTANCE g_hinst = NULL;
 static HWND    g_gameHwnd = NULL;
@@ -26,40 +33,75 @@ static HWND    g_wnd = NULL;
 #if CHARKR_SHOW_NAV_TAB
 static int     g_tab = TAB_NAV;       // 이 창을 여는 목적이 대개 항해사 찾기라 이쪽을 기본으로 연다
 #else
-static int     g_tab = TAB_GALLERY;   // 탭을 숨긴 빌드에서는 도감만 존재한다
+static int     g_tab = TAB_MAID;      // 항해사 찾기를 뺀 빌드에서는 여급이 맨 왼쪽 탭이다
 #endif
-static int     g_gender = FACE_MALE;
+static int     g_gender = FACE_MALE;  // [도감] 탭에서만 쓴다. [여급] 은 전원 여성이라 고정
 static int     g_scroll = 0;   // 맨 위에 보이는 행
-static int     g_catFilter = 0;// 0=전체 1=인물 2=여급 3=스폰서 4=기타
-static int     g_filt[600];    // 현재 필터에 맞는 얼굴코드 목록
+static int     g_catFilter = 0;// 0=전체 1=인물 3=스폰서 4=기타 (여급은 독립 탭으로 뺐다)
+
+// 초상화를 어느 표에서 꺼낼지. [여급] 탭은 성별 버튼 없이 항상 여성이다.
+static int CurGender(void) { return g_tab == TAB_MAID ? FACE_FEMALE : g_gender; }
+// 갤러리 한 칸. maid < 0 이면 얼굴코드 한 개가 한 칸(인물/스폰서/기타),
+// maid >= 0 이면 여급 표의 그 행이 한 칸이다(얼굴은 face 로 그린다).
+typedef struct { short face; short maid; } GalEntry;
+static GalEntry g_filt[600];   // 현재 필터에 맞는 항목 목록
 static int     g_filtCount = 0;
+static int     g_maidsOk = 0;  // 여급 표를 메모리에서 읽는 데 성공했는지
 
 static int TotalRows(void) { return (g_filtCount + COLS - 1) / COLS; }
 static int MaxScroll(void) { int m = TotalRows() - ROWS_VIS; return m < 0 ? 0 : m; }
 
-// 현재 (성별, 카테고리)에 맞는 얼굴코드 목록을 g_filt 에 채운다.
+static void Emit(int face, int maid)
+{
+    if (g_filtCount >= (int)(sizeof(g_filt)/sizeof(g_filt[0]))) return;
+    g_filt[g_filtCount].face = (short)face;
+    g_filt[g_filtCount].maid = (short)maid;
+    g_filtCount++;
+}
+
+// 현재 탭에 맞는 항목 목록을 g_filt 에 채운다.
+// [여급] 은 EXE 표를 그대로 순서대로 펼친다(얼굴 23·34·77 은 두 칸이 된다).
+// [도감] 은 예전처럼 얼굴코드 한 개가 한 칸이다.
 static void RebuildFilter(void)
 {
-    int total = Face_Count(g_gender);
     int i;
     g_filtCount = 0;
-    for (i = 0; i < total && g_filtCount < (int)(sizeof(g_filt)/sizeof(g_filt[0])); i++) {
-        int cat = CharDb_Cat(g_gender, i);
-        int ok = (g_catFilter == 0) ? 1 :
-                 (g_catFilter == 4) ? (cat == 0) : (cat == g_catFilter);
-        if (ok) g_filt[g_filtCount++] = i;
+    if (g_tab == TAB_MAID) {
+        for (i = 0; i < Maid_Count(); i++) Emit(Maid_At(i)->face, i);
+    } else {
+        int total = Face_Count(g_gender);
+        for (i = 0; i < total; i++) {
+            int cat = CharDb_Cat(g_gender, i);
+            int ok = (g_catFilter == 0) ? 1 :
+                     (g_catFilter == 4) ? (cat == 0) : (cat == g_catFilter);
+            if (ok) Emit(i, -1);
+        }
     }
     g_scroll = 0;
 }
 
-static const wchar_t* kCatBtn[5] = { L"전체", L"인물", L"여급", L"스폰서", L"기타" };
+// 카테고리 버튼. 여급은 독립 탭으로 뺐으므로 여기서는 빠진다(라벨 순서 != 카테고리 번호).
+static const struct { const wchar_t* label; int cat; } kCatBtn[] = {
+    { L"전체", 0 }, { L"인물", 1 }, { L"스폰서", 3 }, { L"기타", 4 },
+};
+#define CAT_N ((int)(sizeof(kCatBtn)/sizeof(kCatBtn[0])))
 static RECT CloseRect(RECT c) { RECT r; r.right=c.right-FRAME-4; r.left=r.right-22; r.top=FRAME+4; r.bottom=r.top+18; return r; }
-// 탭 표시 순서는 [항해사 찾기][도감] — 자주 쓰는 쪽을 왼쪽에 둔다(탭 번호 순서와는 별개).
-static RECT TabRect(int tab)
+// 탭은 [항해사 찾기][여급][도감] 순으로 왼쪽부터 — 자주 쓰는 쪽을 왼쪽에 둔다
+// (탭 번호 순서와는 별개다). CHARKR_SHOW_NAV_TAB=0 이면 맨 앞 하나만 빠진다.
+static const struct { int id; const wchar_t* label; int w; } kTabs[] = {
+#if CHARKR_SHOW_NAV_TAB
+    { TAB_NAV,     L"항해사 찾기", 110 },
+#endif
+    { TAB_MAID,    L"여급",         60 },
+    { TAB_GALLERY, L"도감",         70 },
+};
+#define TAB_N ((int)(sizeof(kTabs)/sizeof(kTabs[0])))
+
+static RECT TabRectAt(int i)
 {
-    RECT r;
-    if (tab == TAB_NAV) { r.left = 13;  r.right = r.left + 110; }
-    else                { r.left = 129; r.right = r.left + 70;  }
+    RECT r; int k, x = 13;
+    for (k = 0; k < i; k++) x += kTabs[k].w + 6;
+    r.left = x; r.right = x + kTabs[i].w;
     r.top = TAB_Y + 2; r.bottom = TAB_Y + TAB_H - 2;
     return r;
 }
@@ -68,19 +110,266 @@ static RECT FemaleRect(void) { RECT r; r.left=FRAME+50; r.top=FILTER_Y; r.right=
 static RECT CatRect(int i)   { RECT r; r.left=FRAME+100 + i*54; r.right=r.left+50; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
 static RECT SbTrack(void)    { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_W; r.top=GY; r.bottom=GY+GAL_H; return r; }
 
+// ---- 여급 값 편집 (직접 그린 select box + 펼침 목록) ----
+// 자식 COMBOBOX 는 게임 DirectDraw 화면 위에서 불안정해서 navview 와 같은 방식으로 직접 그린다.
+// 목록 셋은 격자 크기만 다르고 나머지는 같아서 DropGeom() 하나로 묶어 둔다.
+//   DROP_YEAR 1470~1530 중 하나 고르면 닫힘
+//   DROP_LANG 14종 체크박스 — 여러 개를 켰다 껐다 해야 하니 열어 둔 채 토글만
+//   DROP_CITY 226개 — 한 화면에 안 들어가서 이 목록만 휠로 스크롤한다
+#define DROP_NONE 0
+#define DROP_YEAR 1
+#define DROP_LANG 2
+#define DROP_CITY 3
+
+#define DD_ITEM_H 22
+
+#define YR_COLS   6
+#define YR_ROWS   11                                  // 6x11=66 칸에 61개 연도(1470~1530)
+#define YR_ITEM_W 46
+#define LG_COLS   2
+#define LG_ROWS   7                                   // 2x7=14
+#define LG_ITEM_W 130
+#define CT_COLS   5
+#define CT_ROWS   12                                  // 한 번에 60개씩 보이고 나머지는 스크롤
+#define CT_ITEM_W 100
+
+// 목록 크기를 늘리고 행 수를 안 맞추면 뒤쪽 항목이 조용히 사라진다. 여기서 막는다.
+typedef char YearGridFits[(YR_COLS * YR_ROWS >= MAID_YEAR_N) ? 1 : -1];
+typedef char LangGridFits[(LG_COLS * LG_ROWS >= MAID_LANG_N) ? 1 : -1];
+
+static int  g_drop = DROP_NONE;
+static int  g_dropRow = -1;   // 목록을 펼친 여급 행
+static RECT g_ddPanel;        // 펼칠 때 한 번만 잰다(스크롤하면 닫으므로 다시 안 잰다)
+static int  g_ddScroll = 0;   // DROP_CITY 전용. 맨 위에 보이는 행
+
+static int DropItemCount(int kind)
+{
+    return kind == DROP_YEAR ? MAID_YEAR_N :
+           kind == DROP_LANG ? MAID_LANG_N :
+           kind == DROP_CITY ? Maid_CityCount() : 0;
+}
+static void DropGeom(int kind, int* cols, int* rows, int* iw)
+{
+    if (kind == DROP_YEAR)      { *cols=YR_COLS; *rows=YR_ROWS; *iw=YR_ITEM_W; }
+    else if (kind == DROP_LANG) { *cols=LG_COLS; *rows=LG_ROWS; *iw=LG_ITEM_W; }
+    else                        { *cols=CT_COLS; *rows=CT_ROWS; *iw=CT_ITEM_W; }
+}
+static int DropTotalRows(int kind)
+{
+    int cols, rows, iw;
+    DropGeom(kind, &cols, &rows, &iw);
+    return (DropItemCount(kind) + cols - 1) / cols;
+}
+static int DropMaxScroll(int kind)
+{
+    int m;
+    if (kind != DROP_CITY) return 0;   // 연도/언어는 한 화면에 다 들어간다
+    m = DropTotalRows(kind) - CT_ROWS;
+    return m < 0 ? 0 : m;
+}
+
+// 셀(x,y) 안 정보 패널 아래쪽의 편집 줄.
+//   맨 아랫줄: "등장" 라벨 + 연도 상자 (+ CHARKR_EDIT_LANG 이면 그 오른쪽에 [언어 수정])
+//   그 윗줄  : CHARKR_EDIT_CITY 일 때만 "도시" 라벨 + 도시 상자
+// 도시 편집이 꺼져 있으면 도시는 본문 글씨로 내려가고 편집 줄이 하나로 줄어, 그만큼
+// 본문(언어 목록)이 넓어진다.
+#if CHARKR_EDIT_CITY
+#define MAID_CTRL_H 55
+#else
+#define MAID_CTRL_H 30
+#endif
+
+static RECT MaidYearRect(int x, int y)
+{
+    RECT r;
+    r.left   = x + PORT_W + 8 + 36;
+    r.right  = r.left + 96;
+    r.top    = y + PORT_H - 27;
+    r.bottom = r.top + DD_ITEM_H;
+    return r;
+}
+static RECT MaidCityRect(int x, int y)
+{
+    RECT r = MaidYearRect(x, y);
+    r.top -= 25; r.bottom -= 25;
+    return r;
+}
+static RECT MaidLabelRect(RECT box, int x)
+{
+    RECT r = box;
+    r.right = r.left - 4;
+    r.left  = x + PORT_W + 8 + 2;
+    return r;
+}
+static RECT MaidLangRect(int x, int y)
+{
+    RECT r = MaidYearRect(x, y);
+    r.left  = r.right + 8;
+    r.right = x + PORT_W + 8 + INFO_W - 4;
+    return r;
+}
+
+// 펼친 목록. 갤러리 위에 덮어 그리므로 PaintGallery 맨 끝에서 부른다.
+static void PaintDropPanel(HDC dc)
+{
+    RECT p = g_ddPanel, it;
+    HBRUSH br;
+    int cols, rows, iw, i, n, first;
+    const MaidInfo* m;
+
+    if (g_drop == DROP_NONE) return;
+    m = Maid_At(g_dropRow);
+    DropGeom(g_drop, &cols, &rows, &iw);
+    n = DropItemCount(g_drop);
+    first = g_ddScroll * cols;
+
+    br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK);    FrameRect(dc, &p, br); DeleteObject(br);
+
+    for (i = first; i < n && i - first < cols * rows; i++) {
+        int k = i - first, cur = 0;
+        const wchar_t* label;
+        wchar_t buf[16];
+
+        it.left   = p.left + (k % cols) * iw + 1;
+        it.right  = it.left + iw - 2;
+        it.top    = p.top  + (k / cols) * DD_ITEM_H + 1;
+        it.bottom = it.top + DD_ITEM_H - 1;
+
+        if (g_drop == DROP_YEAR) {
+            cur = (MAID_YEAR_MIN + i == Maid_Year(m));
+            wsprintfW(buf, L"%d", MAID_YEAR_MIN + i);
+            label = buf;
+        } else if (g_drop == DROP_CITY) {
+            cur = (i == m->city);
+            label = Maid_CityName(i);
+        } else {
+            cur = (m->lang >> i) & 1;
+            label = Maid_LangName(i);
+        }
+
+        if (cur && g_drop != DROP_LANG) {
+            br = CreateSolidBrush(COL_SEL_BG); FillRect(dc, &it, br); DeleteObject(br);
+        }
+
+        if (g_drop == DROP_LANG) {
+            // 켜진 언어는 [v], 꺼진 언어는 빈 상자
+            RECT bx;
+            bx.left = it.left + 5; bx.right = bx.left + 13;
+            bx.top  = it.top + 4;  bx.bottom = bx.top + 13;
+            br = CreateSolidBrush(cur ? COL_SEL_BG : COL_LIGHT); FillRect(dc, &bx, br); DeleteObject(br);
+            UI_Bevel(dc, bx, TRUE);
+            if (cur) UI_Text(dc, bx, L"v", g_smallFont, RGB(250,244,228),
+                             DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            it.left = bx.right + 6;
+            UI_Text(dc, it, label, g_smallFont, COL_TEXT,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        } else {
+            UI_Text(dc, it, label, g_smallFont, cur ? RGB(250,244,228) : COL_TEXT,
+                    (g_drop == DROP_YEAR ? DT_CENTER : DT_LEFT)
+                    | DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        }
+    }
+
+    if (g_drop == DROP_CITY) {
+        RECT tr = p;
+        tr.left = p.left + cols * iw; tr.right = p.right;
+        UI_Scrollbar(dc, tr, g_ddScroll, DropMaxScroll(g_drop), CT_ROWS, DropTotalRows(g_drop));
+    }
+}
+
+// 펼친 목록에서 클릭 지점의 항목 번호. 목록 밖이면 -1.
+static int PanelHit(POINT pt)
+{
+    int cols, rows, iw, col, row, i;
+    if (g_drop == DROP_NONE || !PtInRect(&g_ddPanel, pt)) return -1;
+    DropGeom(g_drop, &cols, &rows, &iw);
+    col = (pt.x - g_ddPanel.left) / iw;
+    row = (pt.y - g_ddPanel.top)  / DD_ITEM_H;
+    if (col < 0 || col >= cols || row < 0 || row >= rows) return -1;
+    i = (g_ddScroll + row) * cols + col;
+    return (i >= 0 && i < DropItemCount(g_drop)) ? i : -1;
+}
+
+// 누른 상자 바로 아래에 펼치되, 창 밖으로 나가면 안으로 밀어 넣는다
+// (아래쪽 줄의 칸은 위로 펼친다).
+static void OpenDrop(HWND h, int kind, int maidRow, RECT anchor)
+{
+    int cols, rows, iw, w, hgt;
+    RECT p;
+
+    DropGeom(kind, &cols, &rows, &iw);
+    w   = cols * iw + (kind == DROP_CITY ? SB_W : 0);
+    hgt = rows * DD_ITEM_H;
+
+    p.left = anchor.left;   p.right  = p.left + w;
+    p.top  = anchor.bottom; p.bottom = p.top + hgt;
+    if (p.right > WIN_W - FRAME) { int d = p.right - (WIN_W - FRAME); p.left -= d; p.right -= d; }
+    if (p.left < FRAME)          { p.left = FRAME; p.right = p.left + w; }
+    if (p.bottom > WIN_H - FRAME) { p.top = anchor.top - hgt; p.bottom = p.top + hgt; }
+    if (p.top < FRAME)            { p.top = FRAME; p.bottom = p.top + hgt; }
+
+    g_drop = kind;
+    g_dropRow = maidRow;
+    g_ddPanel = p;
+    // 도시 목록은 지금 도시가 보이는 자리에서 열어 준다(226개를 처음부터 훑지 않도록).
+    g_ddScroll = 0;
+    if (kind == DROP_CITY) {
+        int want = Maid_At(maidRow)->city / cols - rows / 2;
+        int mx = DropMaxScroll(kind);
+        g_ddScroll = want < 0 ? 0 : (want > mx ? mx : want);
+    }
+    InvalidateRect(h, NULL, FALSE);
+}
+
+// 갤러리 좌표 -> 항목 번호. 셀 밖이면 -1. 맞으면 그 셀의 좌상단을 cx/cy 로 돌려준다.
+static int CellHit(POINT pt, int* cx, int* cy)
+{
+    int r, c;
+    for (r = 0; r < ROWS_VIS; r++) {
+        for (c = 0; c < COLS; c++) {
+            int x = GX + c*(CELL_W+GAP);
+            int y = GY + r*ROW_PITCH;
+            if (pt.x >= x && pt.x < x + CELL_W && pt.y >= y && pt.y < y + CELL_H) {
+                int gi = (g_scroll + r)*COLS + c;
+                if (gi >= g_filtCount) return -1;
+                *cx = x; *cy = y;
+                return gi;
+            }
+        }
+    }
+    return -1;
+}
+
 static void PaintGallery(HDC dc)
 {
     int r, c;
     RECT ir;
     wchar_t cnt[32];
 
-    UI_Button(dc, MaleRect(),   L"남", g_gender==FACE_MALE);
-    UI_Button(dc, FemaleRect(), L"여", g_gender==FACE_FEMALE);
-    { int bi; for (bi=0;bi<5;bi++) UI_Button(dc, CatRect(bi), kCatBtn[bi], g_catFilter==bi); }
+    // [여급] 은 성별/카테고리를 고를 게 없어서 필터바 자리에 안내만 둔다.
+    if (g_tab == TAB_MAID) {
+        ir.left=FRAME+8; ir.right=FRAME+430; ir.top=FILTER_Y; ir.bottom=FILTER_Y+22;
+        UI_Text(dc, ir, L"CDS_95.EXE 여급 표 — 등장연도는 눌러서 바꾸면 메모리에 바로 반영됩니다",
+                g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    } else {
+        UI_Button(dc, MaleRect(),   L"남", g_gender==FACE_MALE);
+        UI_Button(dc, FemaleRect(), L"여", g_gender==FACE_FEMALE);
+        { int bi; for (bi=0;bi<CAT_N;bi++)
+            UI_Button(dc, CatRect(bi), kCatBtn[bi].label, g_catFilter==kCatBtn[bi].cat); }
+    }
 
     wsprintfW(cnt, L"%d명", g_filtCount);
-    ir.left=FRAME+380; ir.right=WIN_W-FRAME-8; ir.top=FILTER_Y; ir.bottom=FILTER_Y+22;
+    ir.left=FRAME+430; ir.right=WIN_W-FRAME-8; ir.top=FILTER_Y; ir.bottom=FILTER_Y+22;
     UI_Text(dc, ir, cnt, g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+
+    if (g_tab == TAB_MAID && !g_maidsOk) {
+        RECT e;
+        e.left = GX; e.right = WIN_W - FRAME - GAP; e.top = GY; e.bottom = GY + 60;
+        UI_Text(dc, e, L"CDS_95.EXE 에서 여급 표를 찾지 못했습니다(다른 버전의 실행 파일인 듯합니다).",
+                g_font, COL_TEXT, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        return;
+    }
 
     for (r = 0; r < ROWS_VIS; r++) {
         int row = g_scroll + r;
@@ -89,24 +378,54 @@ static void PaintGallery(HDC dc)
             int x = GX + c*(CELL_W+GAP);
             int y = GY + r*ROW_PITCH;
             if (gi >= g_filtCount) continue;
-            face = g_filt[gi];
-            Face_Draw(dc, x, y, PORT_W, PORT_H, g_gender, face);
+            face = g_filt[gi].face;
+            Face_Draw(dc, x, y, PORT_W, PORT_H, CurGender(), face);
             // 초상화 오른쪽 정보 패널 (이름/코드 + 카테고리별 상세)
-            { int ix = x + PORT_W + 8; RECT lr; wchar_t hd[80];
-              const wchar_t* nm = CharDb_Name(g_gender, face);
-              const wchar_t* nf = CharDb_Info(g_gender, face);
+            { int ix = x + PORT_W + 8, maid = g_filt[gi].maid;
+              RECT lr; wchar_t hd[80]; wchar_t mb[256];
+              const MaidInfo* m = maid >= 0 ? Maid_At(maid) : NULL;
+              const wchar_t* nm; const wchar_t* nf;
+              if (m) {
+                  nm = m->name;
+                  Maid_FormatInfo(m, mb, (int)(sizeof(mb)/sizeof(mb[0])));
+                  nf = mb;
+              } else {
+                  nm = CharDb_Name(CurGender(), face);
+                  nf = CharDb_Info(CurGender(), face);
+              }
               lr.left=ix-2; lr.top=y; lr.right=ix+INFO_W; lr.bottom=y+PORT_H;
               { HBRUSH b2=CreateSolidBrush(COL_DISP_BG); FillRect(dc,&lr,b2); DeleteObject(b2);
                 b2=CreateSolidBrush(COL_DARK); FrameRect(dc,&lr,b2); DeleteObject(b2); }
-              wsprintfW(hd, L"%s  #%d", nm[0]?nm:L"(무명)", face);
+              // 혈액형은 못 고치는 값이라 머리글에 붙여 아래 두 줄을 편집용으로 비운다.
+              if (m) wsprintfW(hd, L"%s  #%d · %s형", nm[0]?nm:L"(무명)", face, Maid_BloodName(m->blood));
+              else   wsprintfW(hd, L"%s  #%d", nm[0]?nm:L"(무명)", face);
               lr.left=ix+2; lr.right=ix+INFO_W-2; lr.top=y+3; lr.bottom=y+20;
               UI_Text(dc, lr, hd, g_font, COL_TEXT, DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
-              lr.top=y+22; lr.bottom=y+PORT_H-3;
-              UI_Text(dc, lr, nf, g_smallFont, COL_TEXT, DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL); }
+              // 여급 칸은 아래쪽을 편집 컨트롤에 내준다(MAID_CTRL_H 만큼).
+              lr.top=y+22; lr.bottom = m ? y+PORT_H-MAID_CTRL_H : y+PORT_H-3;
+              UI_Text(dc, lr, nf, g_smallFont, COL_TEXT, DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL);
+              if (m) {
+                  RECT yb = MaidYearRect(x,y);
+                  wchar_t ys[16];
+#if CHARKR_EDIT_CITY
+                  RECT cb = MaidCityRect(x,y);
+                  UI_Text(dc, MaidLabelRect(cb,x), L"도시", g_smallFont, COL_TEXT,
+                          DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                  UI_Select(dc, cb, Maid_CityName(m->city), g_drop==DROP_CITY && g_dropRow==maid);
+#endif
+#if CHARKR_EDIT_LANG
+                  UI_Button(dc, MaidLangRect(x,y), L"언어 수정", g_drop==DROP_LANG && g_dropRow==maid);
+#endif
+                  wsprintfW(ys, L"%d년", Maid_Year(m));
+                  UI_Text(dc, MaidLabelRect(yb,x), L"등장", g_smallFont, COL_TEXT,
+                          DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+                  UI_Select(dc, yb, ys, g_drop==DROP_YEAR && g_dropRow==maid);
+              } }
         }
     }
 
     UI_Scrollbar(dc, SbTrack(), g_scroll, MaxScroll(), ROWS_VIS, TotalRows());
+    PaintDropPanel(dc);   // 펼친 목록은 갤러리 위에 덮어 그린다
 }
 
 static void OnPaint(HWND h)
@@ -125,44 +444,48 @@ static void OnPaint(HWND h)
     UI_Text(dc, tr, L"인물 브라우저", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     UI_Button(dc, CloseRect(rc), L"×", FALSE);
 
-#if CHARKR_SHOW_NAV_TAB
-    UI_Button(dc, TabRect(TAB_NAV),     L"항해사 찾기", g_tab==TAB_NAV);
-    UI_Button(dc, TabRect(TAB_GALLERY), L"도감",      g_tab==TAB_GALLERY);
+    { int i; for (i = 0; i < TAB_N; i++)
+        UI_Button(dc, TabRectAt(i), kTabs[i].label, g_tab == kTabs[i].id); }
+
     if (g_tab == TAB_NAV) Nav_Paint(dc);
-    else                  PaintGallery(dc);
-#else
-    PaintGallery(dc);
-#endif
+    else                  PaintGallery(dc);   // [여급] 과 [도감] 이 격자를 공유한다
 
     EndPaint(h, &ps);
 }
 
+// 펼친 목록 위치는 열 때 한 번만 재므로, 그 아래가 움직이는 일은 전부 닫고 시작한다.
+static int  AnyDropOpen(void) { return g_drop != DROP_NONE; }
+static void CloseDrops(void)  { g_drop = DROP_NONE; g_dropRow = -1; g_ddScroll = 0; }
+
 static void ScrollTo(HWND h, int row)
 {
     int mx = MaxScroll();
+    int wasOpen = AnyDropOpen();
     if (row < 0) row = 0;
     if (row > mx) row = mx;
-    if (row != g_scroll) { g_scroll = row; InvalidateRect(h, NULL, FALSE); }
+    CloseDrops();
+    // 끝까지 스크롤된 상태에서 또 굴려도, 목록을 닫았으면 다시 그려야 지워진다.
+    if (row != g_scroll || wasOpen) { g_scroll = row; InvalidateRect(h, NULL, FALSE); }
 }
 static void SetGender(HWND h, int g)
 {
     if (g==g_gender) return;
     g_gender = g;
-    if (g==FACE_MALE && g_catFilter==2) g_catFilter = 0;  // 남인데 여급 필터면 전체로(여급은 여성만)
     RebuildFilter(); InvalidateRect(h,NULL,FALSE);
 }
 static void SetCat(HWND h, int c)
 {
     if (c==g_catFilter) return;
     g_catFilter = c;
-    if (c==2) g_gender = FACE_FEMALE;   // 여급은 전원 여성 → 자동으로 여 선택
     RebuildFilter(); InvalidateRect(h,NULL,FALSE);
 }
 static void SetTab(HWND h, int t)
 {
     if (t == g_tab) return;
     g_tab = t;
+    CloseDrops();
     Nav_Activate(h, t == TAB_NAV);
+    if (t != TAB_NAV) RebuildFilter();   // [여급] <-> [도감] 은 목록 내용이 아예 다르다
     InvalidateRect(h, NULL, FALSE);
 }
 
@@ -172,6 +495,7 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_CREATE:
         UI_CreateFonts();
         Face_Load();
+        g_maidsOk = Maid_Load();   // 실패하면 여급도 예전처럼 얼굴코드 단위 + char_info.h 로
         RebuildFilter();
 #if CHARKR_SHOW_NAV_TAB
         Nav_Init(h, g_hinst);
@@ -184,6 +508,14 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return DefWindowProcW(h, m, wp, lp);
     case WM_MOUSEWHEEL: {
         int notches = GET_WHEEL_DELTA_WPARAM(wp) / 120;
+        // 226개짜리 도시 목록이 펼쳐져 있으면 휠은 갤러리가 아니라 그 목록을 굴린다.
+        if (g_drop == DROP_CITY) {
+            int mx = DropMaxScroll(g_drop), s = g_ddScroll - notches;
+            if (s < 0) s = 0;
+            if (s > mx) s = mx;
+            if (s != g_ddScroll) { g_ddScroll = s; InvalidateRect(h, NULL, FALSE); }
+            return 0;
+        }
         if (g_tab == TAB_NAV) Nav_Wheel(h, notches);
         else                  ScrollTo(h, g_scroll - notches);
         return 0;
@@ -194,29 +526,71 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         // 이름 검색칸(EDIT)에 포커스가 남아 있으면 방향키 스크롤이 먹지 않는다.
         // 창 바닥을 누른 시점에 포커스를 되가져온다(자식 클릭은 여기로 오지 않는다).
         SetFocus(h);
+        // 펼친 목록이 있으면 그쪽이 클릭을 먼저 먹는다. 연도/도시는 하나 고르면 닫히고,
+        // 언어는 여러 개를 켰다 껐다 해야 하니 열어 둔 채로 토글만 한다(바깥 클릭 = 닫기).
+        if (AnyDropOpen()) {
+            int i = PanelHit(pt), kind = g_drop, row = g_dropRow;
+            if (kind == DROP_LANG) {
+                if (i >= 0) Maid_ToggleLang(row, i);
+                else        CloseDrops();
+            } else {
+                CloseDrops();
+                if (i >= 0) {
+                    if (kind == DROP_YEAR) Maid_SetYear(row, MAID_YEAR_MIN + i);
+                    else                   Maid_SetCity(row, i);
+                }
+            }
+            InvalidateRect(h, NULL, FALSE);
+            return 0;
+        }
         { RECT cb=CloseRect(rc); if (PtInRect(&cb,pt)) { DestroyWindow(h); return 0; } }
-#if CHARKR_SHOW_NAV_TAB
-        { RECT r=TabRect(TAB_NAV);     if (PtInRect(&r,pt)) { SetTab(h,TAB_NAV); return 0; } }
-        { RECT r=TabRect(TAB_GALLERY); if (PtInRect(&r,pt)) { SetTab(h,TAB_GALLERY); return 0; } }
-#endif
+        { int i; for (i = 0; i < TAB_N; i++) {
+            RECT r = TabRectAt(i);
+            if (PtInRect(&r, pt)) { SetTab(h, kTabs[i].id); return 0; } } }
         if (g_tab == TAB_NAV) {
             if (Nav_Click(h, pt)) return 0;
         } else {
-            { RECT r=MaleRect();   if (PtInRect(&r,pt)) { SetGender(h,FACE_MALE); return 0; } }
-            { RECT r=FemaleRect(); if (PtInRect(&r,pt)) { SetGender(h,FACE_FEMALE); return 0; } }
-            { int bi; for (bi=0;bi<5;bi++){ RECT r=CatRect(bi); if (PtInRect(&r,pt)) { SetCat(h,bi); return 0; } } }
+            if (g_tab == TAB_GALLERY) {
+                { RECT r=MaleRect();   if (PtInRect(&r,pt)) { SetGender(h,FACE_MALE); return 0; } }
+                { RECT r=FemaleRect(); if (PtInRect(&r,pt)) { SetGender(h,FACE_FEMALE); return 0; } }
+                { int bi; for (bi=0;bi<CAT_N;bi++){ RECT r=CatRect(bi);
+                    if (PtInRect(&r,pt)) { SetCat(h,kCatBtn[bi].cat); return 0; } } }
+            }
             { RECT sb=SbTrack(); if (PtInRect(&sb,pt)) {   // 트랙 클릭 = 페이지 이동
                 int mid=(sb.top+sb.bottom)/2;
                 ScrollTo(h, g_scroll + (pt.y<mid?-ROWS_VIS:ROWS_VIS)); return 0; } }
+            // 여급 칸의 도시/등장연도 상자와 [언어 수정] 버튼
+            { int cx, cy, gi = CellHit(pt, &cx, &cy);
+              if (gi >= 0 && g_filt[gi].maid >= 0) {
+                  int maid = g_filt[gi].maid;
+                  RECT r;
+#if CHARKR_EDIT_CITY
+                  r = MaidCityRect(cx, cy);
+                  if (PtInRect(&r, pt)) { OpenDrop(h, DROP_CITY, maid, r); return 0; }
+#endif
+#if CHARKR_EDIT_LANG
+                  r = MaidLangRect(cx, cy);
+                  if (PtInRect(&r, pt)) { OpenDrop(h, DROP_LANG, maid, r); return 0; }
+#endif
+                  r = MaidYearRect(cx, cy);
+                  if (PtInRect(&r, pt)) { OpenDrop(h, DROP_YEAR, maid, r); return 0; }
+              } }
         }
         if (pt.y < FRAME+TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
         return 0;
     }
     case WM_KEYDOWN:
+        // 목록이 펼쳐져 있으면 ESC 는 창이 아니라 목록을 닫는다.
+        if (AnyDropOpen() && wp == VK_ESCAPE) {
+            CloseDrops(); InvalidateRect(h, NULL, FALSE); return 0;
+        }
         if (wp == VK_ESCAPE) { DestroyWindow(h); return 0; }
-#if CHARKR_SHOW_NAV_TAB
-        if (wp == VK_TAB)    { SetTab(h, g_tab == TAB_NAV ? TAB_GALLERY : TAB_NAV); return 0; }
-#endif
+        // TAB = 다음 탭으로 (표시 순서대로 순환)
+        if (wp == VK_TAB) {
+            int i; for (i = 0; i < TAB_N; i++) if (kTabs[i].id == g_tab) break;
+            SetTab(h, kTabs[(i + 1) % TAB_N].id);
+            return 0;
+        }
         if (g_tab == TAB_NAV) {
             if (Nav_Key(h, wp)) return 0;
             return 0;
@@ -228,8 +602,8 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         case VK_NEXT:  ScrollTo(h, g_scroll+ROWS_VIS); return 0;
         case VK_HOME:  ScrollTo(h, 0); return 0;
         case VK_END:   ScrollTo(h, MaxScroll()); return 0;
-        case 'M':      SetGender(h,FACE_MALE); return 0;
-        case 'F':      SetGender(h,FACE_FEMALE); return 0;
+        case 'M':      if (g_tab == TAB_GALLERY) SetGender(h,FACE_MALE);   return 0;
+        case 'F':      if (g_tab == TAB_GALLERY) SetGender(h,FACE_FEMALE); return 0;
         }
         return 0;
     case WM_CLOSE: DestroyWindow(h); return 0;

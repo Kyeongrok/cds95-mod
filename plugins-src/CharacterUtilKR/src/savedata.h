@@ -52,6 +52,7 @@ int  Save_Load(SaveData* s);
 void Save_Free(SaveData* s);
 
 const wchar_t* Save_CityName(unsigned char id);      // 255 -> "함대소속"
+int            Save_CityCount(void);                 // kCities 크기(226). 표는 savedata.c 만 들고 있다
 const wchar_t* Save_BuildingName(unsigned char b);   // 4 -> "주점", 5 -> "여관"
 const wchar_t* Save_SkillName(int id);               // 1 -> "항해술"
 const wchar_t* Save_SkillShort(int id);              // 1 -> "항"

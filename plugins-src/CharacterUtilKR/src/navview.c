@@ -127,24 +127,6 @@ static void Reload(HWND h)
 
 // ---- 그리기 ----
 
-// 콤보박스처럼 보이는 눌림 상자 + 오른쪽 ▼.
-static void DrawSelect(HDC dc, RECT r, const wchar_t* text, BOOL open)
-{
-    RECT t = r, a;
-    HBRUSH br = CreateSolidBrush(open ? COL_FACE_TOP : COL_DISP_BG);
-    FillRect(dc, &r, br); DeleteObject(br);
-    UI_Bevel(dc, r, TRUE);
-    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &r, br); DeleteObject(br);
-
-    t.left += 6; t.right -= 20;
-    UI_Text(dc, t, text, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
-
-    a = r; a.left = r.right - 18; a.right = r.right - 2; a.top += 2; a.bottom -= 2;
-    UI_VGradient(dc, a, COL_FACE_TOP, COL_FACE_BOT);
-    UI_Bevel(dc, a, open);
-    UI_Text(dc, a, L"▼", g_smallFont, COL_TEXT, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-}
-
 static const wchar_t* SkillText(int id) { return id == 0 ? L"(전체)" : Save_SkillName(id); }
 
 // 열린 드롭다운 패널. 목록 위에 덮어 그리므로 Nav_Paint 의 맨 마지막에 호출한다.
@@ -245,9 +227,9 @@ void Nav_Paint(HDC dc)
     UI_Button(dc, RcGray(),    L"미등장포함", g_showGray);
 
     UI_Text(dc, RcSkillLbl(), L"특기", g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-    DrawSelect(dc, RcSkill(), SkillText(g_skill), g_open == 1);
+    UI_Select(dc, RcSkill(), SkillText(g_skill), g_open == 1);
     UI_Text(dc, RcLvLbl(), L"Lv", g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-    DrawSelect(dc, RcLv(), g_skill > 0 ? kLvText[g_lvMin] : L"-", g_open == 2);
+    UI_Select(dc, RcLv(), g_skill > 0 ? kLvText[g_lvMin] : L"-", g_open == 2);
 
     if (g_save.loaded) wsprintfW(buf, L"내명성 %d · %d명", g_save.playerFame, g_count);
     else               lstrcpyW(buf, L"SAVEDATA.CDS 없음");

@@ -55,6 +55,23 @@ void UI_Button(HDC dc, RECT r, const wchar_t* t, BOOL active)
       DrawTextW(dc, t, -1, &r, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX); SelectObject(dc, of); }
 }
 
+void UI_Select(HDC dc, RECT r, const wchar_t* text, BOOL open)
+{
+    RECT t = r, a;
+    HBRUSH br = CreateSolidBrush(open ? COL_FACE_TOP : COL_DISP_BG);
+    FillRect(dc, &r, br); DeleteObject(br);
+    UI_Bevel(dc, r, TRUE);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &r, br); DeleteObject(br);
+
+    t.left += 6; t.right -= 20;
+    UI_Text(dc, t, text, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+
+    a = r; a.left = r.right - 18; a.right = r.right - 2; a.top += 2; a.bottom -= 2;
+    UI_VGradient(dc, a, COL_FACE_TOP, COL_FACE_BOT);
+    UI_Bevel(dc, a, open);
+    UI_Text(dc, a, L"▼", g_smallFont, COL_TEXT, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+}
+
 void UI_Text(HDC dc, RECT r, const wchar_t* t, HFONT f, COLORREF c, UINT fmt)
 {
     HFONT of = (HFONT)SelectObject(dc, f ? f : g_font);

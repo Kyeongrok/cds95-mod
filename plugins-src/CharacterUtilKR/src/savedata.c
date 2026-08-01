@@ -64,6 +64,8 @@ const wchar_t* Save_CityName(unsigned char id)
     return L"?";
 }
 
+int Save_CityCount(void) { return (int)(sizeof(kCities)/sizeof(kCities[0])); }
+
 const wchar_t* Save_BuildingName(unsigned char b)
 {
     switch (b) {

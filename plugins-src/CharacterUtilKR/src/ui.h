@@ -4,14 +4,13 @@
 // 인물 창의 공통 레이아웃/그리기 도우미.
 // 창 하나를 "도감" 탭(character.c)과 "항해사 찾기" 탭(navview.c)이 나눠 쓴다.
 
-// "항해사 찾기" 탭 노출 스위치. 0 으로 두면 탭 버튼도 탭바도 그리지 않고,
-// 탭바 높이가 0 이 되어 창이 탭 도입 전 크기(도감 전용 레이아웃)로 돌아간다.
+// "항해사 찾기" 탭 노출 스위치. 0 으로 두면 그 탭만 사라지고 [여급][도감]은 남는다.
 // navview/savedata 코드는 그대로 남으므로 1 로 되돌리면 그대로 복구된다.
 #define CHARKR_SHOW_NAV_TAB 1
 
 #define FRAME     3
 #define TITLE_H   26
-#define TAB_H     (CHARKR_SHOW_NAV_TAB ? 26 : 0)
+#define TAB_H     26
 #define FILTER_H  30
 #define GAP       10
 #define SB_W      12
@@ -59,6 +58,11 @@ void UI_VGradient(HDC dc, RECT r, COLORREF top, COLORREF bot);
 void UI_Bevel(HDC dc, RECT r, BOOL sunken);
 void UI_Button(HDC dc, RECT r, const wchar_t* t, BOOL active);
 void UI_Text(HDC dc, RECT r, const wchar_t* t, HFONT f, COLORREF c, UINT fmt);
+
+// 콤보박스처럼 보이는 눌림 상자 + 오른쪽 ▼. 펼친 목록은 쓰는 쪽이 직접 그린다.
+// (게임 DirectDraw 화면 위에서 COMBOBOX 자식 컨트롤이 불안정해 전부 직접 그린다.
+//  navview 의 특기/Lv 필터와 도감의 여급 등장연도가 같이 쓴다.)
+void UI_Select(HDC dc, RECT r, const wchar_t* text, BOOL open);
 
 // 세로 스크롤바(트랙+썸)를 그린다. 클릭 판정은 호출한 쪽에서 track 으로 한다.
 void UI_Scrollbar(HDC dc, RECT track, int scroll, int maxScroll, int visRows, int totalRows);

@@ -4,6 +4,7 @@ add_library(CharacterUtilKR SHARED
     src/navview.c
     src/savedata.c
     src/chardb.c
+    src/maids.c
     src/faces.c
     src/ui.c
     src/ls12.c
