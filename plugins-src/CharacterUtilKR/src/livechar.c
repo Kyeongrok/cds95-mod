@@ -9,6 +9,8 @@
 #define LC_NAME_LEN 19
 
 #define YEAR_RVA  0x1A4D20u    // 현재날짜 "연". 여기도 .data 뒷부분이라 실행 중에만 있다
+#define FAME_RVA  0x1B614Cu    // 주인공 명성치(4바이트). ce/CDS_95.CT "주인공 정보"
+#define FAME_MAX  10000000
 #define YEAR_MIN  1400
 #define YEAR_MAX  1700
 
@@ -148,6 +150,18 @@ int LiveChar_Year(void)
     return (y >= YEAR_MIN && y <= YEAR_MAX) ? y : 0;
 }
 
+// 인물 배열과 무관하게 읽을 수 있으므로 g_ready 를 따지지 않는다
+// (배열 검사에 실패해도 명성은 보여줄 수 있어야 한다).
+int LiveChar_PlayerFame(void)
+{
+    const unsigned char* base = (const unsigned char*)GetModuleHandleW(NULL);
+    int v;
+    if (!base) return -1;
+    if (!Readable(base + FAME_RVA, sizeof(int))) return -1;
+    v = *(const int*)(base + FAME_RVA);
+    return (v >= 0 && v <= FAME_MAX) ? v : -1;
+}
+
 // 표기 흔들림(가운뎃점/공백/마침표)을 걷어낸 비교용 키. chardb.c 의 NormName 과 같은 뜻이다.
 static void NormName(const wchar_t* s, wchar_t* out, int cap)
 {
@@ -193,6 +207,33 @@ int LiveChar_Age(int slot)
 {
     if (!g_ready || slot < 0 || slot >= LIVECHAR_COUNT) return -9999;
     return *(const int*)(g_tbl + slot * LIVECHAR_SIZE + LC_AGE);
+}
+
+#define LC_SKILL0 0x38   /* 특기 1(항해술). 이후 4바이트씩 27개 */
+
+static int* SkillPtr(int slot, int id)
+{
+    if (!g_ready || slot < 0 || slot >= LIVECHAR_COUNT) return NULL;
+    if (id < 1 || id > LIVECHAR_SKILL_N) return NULL;
+    return (int*)(g_tbl + slot * LIVECHAR_SIZE + LC_SKILL0 + (id - 1) * 4);
+}
+
+int LiveChar_Skill(int slot, int id)
+{
+    const int* p = SkillPtr(slot, id);
+    if (!p) return -1;
+    return (*p >= 0 && *p <= LIVECHAR_SKILL_MAX) ? *p : -1;
+}
+
+int LiveChar_SetSkill(int slot, int id, int lv)
+{
+    int* p = SkillPtr(slot, id);
+    DWORD old = 0;
+    if (!p || lv < 0 || lv > LIVECHAR_SKILL_MAX) return 0;
+    if (!VirtualProtect(p, sizeof(int), PAGE_READWRITE, &old)) return 0;
+    *p = lv;
+    VirtualProtect(p, sizeof(int), old, &old);
+    return 1;
 }
 
 int LiveChar_SetBirthYear(int slot, int year)

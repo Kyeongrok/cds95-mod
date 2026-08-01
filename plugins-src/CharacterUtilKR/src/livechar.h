@@ -41,9 +41,21 @@ int LiveChar_OkCount(void);      // 그 중 필드까지 인물 레코드로 말
 
 int LiveChar_Year(void);                    // 게임 안의 지금 연도. 못 읽으면 0
 
+// 주인공 명성. 못 읽으면 -1.
+// 세이브(+0x53)에서도 읽을 수 있지만 그쪽은 2바이트라 65535 를 넘으면 잘리고,
+// 마지막으로 저장한 시점 값이라 지금과 다르다. 실행 중 값은 4바이트다.
+int LiveChar_PlayerFame(void);
+
 // 이름(성·이름을 가운뎃점으로 이은 것)과 얼굴코드로 칸 번호를 찾는다.
 // 딱 하나만 맞을 때만 그 번호를, 아니면 -1 을 돌려준다(엉뚱한 인물에 쓰지 않도록).
 int LiveChar_Find(const wchar_t* name, int faceCode);
 
 int LiveChar_Age(int slot);                 // 현재 나이. 실패면 -9999
 int LiveChar_SetBirthYear(int slot, int year);   // 나이 = 지금연도 - 생년. 성공 1
+
+// 특기 레벨. id 는 세이브와 같은 1~27(항해술 … 동아시아어), 값은 0~3.
+// 레코드 +0x38 부터 4바이트씩 27개가 늘어서고 그 끝(+0xA0) 다음이 명성치(+0xA4)다.
+#define LIVECHAR_SKILL_N   27
+#define LIVECHAR_SKILL_MAX 3
+int LiveChar_Skill(int slot, int id);            // 못 읽으면 -1
+int LiveChar_SetSkill(int slot, int id, int lv); // 성공 1

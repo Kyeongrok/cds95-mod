@@ -29,6 +29,16 @@ typedef char NavYearGridFits[(DD_YR_COLS * DD_YR_ROWS >= LIVECHAR_YEAR_N) ? 1 : 
 #define YR_BOX_X   190
 #define YR_BOX_W   104
 
+// 특기 편집 패널 — 27종을 2열 14행으로 늘어놓고, 칸마다 0~3 을 한 줄로 붙여 고른다.
+// 레벨이 넷뿐이라 접었다 펴는 상자보다 이렇게 늘어놓는 쪽이 한 번에 눌러진다.
+#define SK_COLS    2
+#define SK_ROWS    14                       // 2x14=28 칸에 27종
+#define SK_NAME_W  86
+#define SK_LV_W    20
+#define SK_ITEM_W  (SK_NAME_W + (LIVECHAR_SKILL_MAX + 1) * SK_LV_W + 8)
+#define SK_BTN_W   52                       // 줄에 붙는 [특기] 버튼
+typedef char NavSkillGridFits[(SK_COLS * SK_ROWS >= LIVECHAR_SKILL_N) ? 1 : -1];
+
 static SaveData g_save;
 static int   g_list[512];      // 필터를 통과한 인물의 g_save.chars 인덱스
 static int   g_count = 0;
@@ -40,12 +50,14 @@ static int   g_onlyHirable = 1;   // 고용가능(2) & 함대소속 아님
 static int   g_showGray = 0;      // 18세 미만 / 60세 초과 포함
 static int   g_skill = 0;         // 정렬/필터 기준 특기. 0 = 미선택(특기 조건 없음)
 static int   g_lvMin = 0;         // 0 = 레벨 제한 없음. g_skill==0 이면 쓰이지 않는다
-static int   g_open = 0;          // 열려 있는 드롭다운: 0=없음 1=특기 2=Lv 3=생년
+static int   g_open = 0;          // 열려 있는 드롭다운: 0=없음 1=특기 2=Lv 3=생년 4=특기수정
 
-// 생년 목록 상태. g_yrChar 는 g_save.chars 의 색인(g_list 위치가 아니다 — 스크롤과 무관하게
-// 대상이 안 흔들리도록).
+// 생년/특기수정 패널 상태. 대상은 g_save.chars 의 색인이다(g_list 위치가 아니다 —
+// 스크롤과 무관하게 대상이 안 흔들리도록).
 static int   g_yrChar = -1;
 static RECT  g_yrPanel;
+static int   g_skChar = -1;
+static RECT  g_skPanel;
 
 // g_save.chars 색인 -> 실행 중 인물 배열의 칸 번호.
 // 0 = 아직 안 찾음 / -1 = 못 찾음 / 그 외 = 칸 번호 + 1.
@@ -91,6 +103,14 @@ static int NowYear(void)
 {
     int y = LiveChar_Year();
     return y ? y : (int)g_save.year;
+}
+
+// 내 명성. 세이브 쪽은 2바이트라 65535 를 넘으면 잘리고 저장 시점 값이라 뒤처지므로,
+// 실행 중 값(4바이트)이 읽히면 그쪽을 쓴다.
+static int MyFame(void)
+{
+    int f = LiveChar_PlayerFame();
+    return f >= 0 ? f : (int)g_save.playerFame;
 }
 
 static const wchar_t* kLvText[DD_LV_N] = { L"전체", L"1↑", L"2↑", L"3↑", L"4↑", L"5" };
@@ -252,6 +272,89 @@ static RECT RcYearBox(int y)
     r.top = y + 40; r.bottom = y + 60;
     return r;
 }
+// 줄 y 의 [특기] 버튼. 2행(능력치 줄) 오른쪽 끝.
+static RECT RcSkillBtn(int y)
+{
+    RECT r;
+    r.right = NAV_X + NAV_W - 6; r.left = r.right - SK_BTN_W;
+    r.top = y + 24; r.bottom = y + 42;
+    return r;
+}
+
+// 특기 편집 패널을 버튼 아래에 편다. 창 밖으로 나가면 안으로/위로 밀어 넣는다.
+static void OpenSkillPanel(int ci, RECT anchor)
+{
+    int w = SK_COLS * SK_ITEM_W, hgt = SK_ROWS * DD_ITEM_H;
+    RECT p;
+    p.left = anchor.right - w; p.right = p.left + w;
+    p.top  = anchor.bottom;    p.bottom = p.top + hgt;
+    if (p.right > WIN_W - FRAME) { int d = p.right - (WIN_W - FRAME); p.left -= d; p.right -= d; }
+    if (p.left < FRAME)          { p.left = FRAME; p.right = p.left + w; }
+    if (p.bottom > WIN_H - FRAME) { p.top = anchor.top - hgt; p.bottom = p.top + hgt; }
+    if (p.top < FRAME)            { p.top = FRAME; p.bottom = p.top + hgt; }
+    g_skPanel = p;
+    g_skChar  = ci;
+    g_open    = 4;
+}
+
+// 특기 편집 패널. 칸마다 이름 + [0][1][2][3], 지금 레벨이 눌린 모양으로 칠해진다.
+static void DrawSkillPanel(HDC dc)
+{
+    RECT p = g_skPanel, it;
+    HBRUSH br;
+    int i, slot;
+
+    if (g_open != 4 || g_skChar < 0) return;
+    slot = LiveSlotOf(g_skChar);
+
+    br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK);    FrameRect(dc, &p, br); DeleteObject(br);
+
+    for (i = 0; i < LIVECHAR_SKILL_N; i++) {
+        int id = i + 1, lv = LiveChar_Skill(slot, id), k;
+        RECT nr;
+        it.left   = p.left + (i / SK_ROWS) * SK_ITEM_W + 1;
+        it.right  = it.left + SK_ITEM_W - 2;
+        it.top    = p.top  + (i % SK_ROWS) * DD_ITEM_H + 1;
+        it.bottom = it.top + DD_ITEM_H - 1;
+
+        nr = it; nr.left += 4; nr.right = nr.left + SK_NAME_W;
+        UI_Text(dc, nr, Save_SkillName(id), g_smallFont,
+                lv > 0 ? COL_TEXT : RGB(130, 115, 95),
+                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+
+        for (k = 0; k <= LIVECHAR_SKILL_MAX; k++) {
+            RECT b;
+            wchar_t t[4];
+            b.left = it.left + SK_NAME_W + 6 + k * SK_LV_W;
+            b.right = b.left + SK_LV_W - 2;
+            b.top = it.top + 2; b.bottom = it.bottom - 2;
+            if (k == lv) { br = CreateSolidBrush(COL_SEL_BG); FillRect(dc, &b, br); DeleteObject(br); }
+            UI_Bevel(dc, b, k == lv);
+            wsprintfW(t, L"%d", k);
+            UI_Text(dc, b, t, g_smallFont, k == lv ? RGB(250,244,228) : COL_TEXT,
+                    DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        }
+    }
+}
+
+// 특기 패널에서 클릭 지점의 (특기 id, 레벨). 못 맞히면 id 0.
+static void SkillPanelHit(POINT pt, int* id, int* lv)
+{
+    int col, row, i, k, x;
+    *id = 0; *lv = 0;
+    if (g_open != 4 || !PtInRect(&g_skPanel, pt)) return;
+    col = (pt.x - g_skPanel.left) / SK_ITEM_W;
+    row = (pt.y - g_skPanel.top)  / DD_ITEM_H;
+    if (col < 0 || col >= SK_COLS || row < 0 || row >= SK_ROWS) return;
+    i = col * SK_ROWS + row;
+    if (i >= LIVECHAR_SKILL_N) return;
+    x = pt.x - (g_skPanel.left + col * SK_ITEM_W) - SK_NAME_W - 6;
+    if (x < 0) return;                       // 이름 쪽을 눌렀다
+    k = x / SK_LV_W;
+    if (k < 0 || k > LIVECHAR_SKILL_MAX) return;
+    *id = i + 1; *lv = k;
+}
 
 static void PaintRow(HDC dc, int y, int ci, const SaveChar* c, int selected)
 {
@@ -259,7 +362,7 @@ static void PaintRow(HDC dc, int y, int ci, const SaveChar* c, int selected)
     HBRUSH br;
     COLORREF fg = COL_TEXT;
     wchar_t buf[192], gen[128], lang[128];
-    int k, poor = (c->fame > g_save.playerFame);
+    int k, poor = (c->fame > MyFame());
     int tx = NAV_X + 52;
     int right = NAV_X + NAV_W;
 
@@ -287,6 +390,10 @@ static void PaintRow(HDC dc, int y, int ci, const SaveChar* c, int selected)
     wsprintfW(buf, L"체%d 지%d 무%d 매%d 운%d   %s",
               c->hp, c->intel, c->str, c->chm, c->luk, gen);
     tr.left = tx; tr.right = right - 6; tr.top = y + 24; tr.bottom = y + 42;
+    if (LiveSlotOf(ci) >= 0) {                       // 고칠 수 있는 인물만 버튼을 준다
+        tr.right = right - SK_BTN_W - 12;
+        UI_Button(dc, RcSkillBtn(y), L"특기", g_open == 4 && g_skChar == ci);
+    }
     UI_Text(dc, tr, buf, g_smallFont, fg, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
 
     // 3행: 소재 / 건물 / 나이 + [생년] + 언어 특기
@@ -348,7 +455,7 @@ void Nav_Paint(HDC dc)
         int m = MatchedCount();
         if (m < g_count) wsprintfW(buf, L"%d년 · %d명 · 짝 %d", NowYear(), g_count, m);
         else             wsprintfW(buf, L"%d년 · 내명성 %d · %d명",
-                                   NowYear(), g_save.playerFame, g_count);
+                                   NowYear(), MyFame(), g_count);
     }
     UI_Text(dc, RcInfo(), buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
@@ -370,7 +477,8 @@ void Nav_Paint(HDC dc)
     }
 
     UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), NAV_ROWS, g_count);
-    DrawPanel(dc);   // 목록 위에 덮어 그린다
+    DrawPanel(dc);        // 목록 위에 덮어 그린다
+    DrawSkillPanel(dc);
 }
 
 // ---- 입력 ----
@@ -432,6 +540,16 @@ int Nav_Click(HWND h, POINT pt)
 {
     RECT r;
 
+    // 특기 편집 패널은 여러 개를 잇달아 고치는 판이라 열어 둔 채 값만 바꾼다(바깥 = 닫기).
+    if (g_open == 4) {
+        int id, lv;
+        SkillPanelHit(pt, &id, &lv);
+        if (id) LiveChar_SetSkill(LiveSlotOf(g_skChar), id, lv);
+        else if (!PtInRect(&g_skPanel, pt)) { g_open = 0; g_skChar = -1; Rebuild(); }
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
+
     // 드롭다운이 열려 있으면 그쪽이 모든 클릭을 먼저 먹는다(항목 선택 / 바깥 클릭은 닫기).
     if (g_open) {
         int i = PanelHit(pt);
@@ -468,13 +586,13 @@ int Nav_Click(HWND h, POINT pt)
     if (pt.x >= NAV_X && pt.x < NAV_X + NAV_W && pt.y >= NAV_Y && pt.y < NAV_Y + NAV_H) {
         int i = g_scroll + (pt.y - NAV_Y) / NAV_ROW_H;
         if (i < g_count) {
-            // 그 줄의 생년 상자를 눌렀으면 목록을 편다(실행 중 배열에서 짝을 찾은 인물만).
-            RECT yb = RcYearBox(NAV_Y + (i - g_scroll) * NAV_ROW_H);
+            // 그 줄의 생년 상자 / [특기] 버튼(실행 중 배열에서 짝을 찾은 인물만).
+            int ry = NAV_Y + (i - g_scroll) * NAV_ROW_H;
+            RECT yb = RcYearBox(ry), sb = RcSkillBtn(ry);
             int ci = g_list[i];
-            if (PtInRect(&yb, pt) && LiveSlotOf(ci) >= 0) {
-                OpenYearPanel(ci, yb);
-                InvalidateRect(h, NULL, FALSE);
-                return 1;
+            if (LiveSlotOf(ci) >= 0) {
+                if (PtInRect(&yb, pt)) { OpenYearPanel(ci, yb); InvalidateRect(h,NULL,FALSE); return 1; }
+                if (PtInRect(&sb, pt)) { OpenSkillPanel(ci, sb); InvalidateRect(h,NULL,FALSE); return 1; }
             }
         }
         g_sel = (i < g_count) ? i : -1;
@@ -487,7 +605,7 @@ int Nav_Click(HWND h, POINT pt)
 int Nav_Key(HWND h, WPARAM wp)
 {
     if (g_open) {   // 패널이 열려 있을 땐 ESC 로 닫기만 받는다
-        if (wp == VK_ESCAPE) { g_open = 0; g_yrChar = -1; InvalidateRect(h, NULL, FALSE); return 1; }
+        if (wp == VK_ESCAPE) { g_open = 0; g_yrChar = -1; g_skChar = -1; InvalidateRect(h, NULL, FALSE); return 1; }
         return 1;
     }
     switch (wp) {
@@ -525,7 +643,7 @@ void Nav_Init(HWND parent, HINSTANCE hinst)
 void Nav_Activate(HWND h, int active)
 {
     (void)h;
-    if (!active) { g_open = 0; g_yrChar = -1; return; }
+    if (!active) { g_open = 0; g_yrChar = -1; g_skChar = -1; return; }
     // 인물 배열은 게임이 세이브를 불러온 뒤에야 채워진다. 탭에 들어올 때마다 다시 확인한다.
     if (!LiveChar_Ready() && LiveChar_Load()) { ClearLiveCache(); Rebuild(); }
     if (!g_save.loaded) {
@@ -540,4 +658,5 @@ void Nav_Destroy(void)
     Save_Free(&g_save);
     g_open = 0;
     g_yrChar = -1;
+    g_skChar = -1;
 }
