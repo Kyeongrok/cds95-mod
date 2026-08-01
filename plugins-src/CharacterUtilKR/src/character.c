@@ -3,6 +3,7 @@
 #include "faces.h"
 #include "chardb.h"
 #include "maids.h"
+#include "patrons.h"
 #include "navview.h"
 #include <windowsx.h>
 
@@ -38,12 +39,18 @@ static int     g_tab = TAB_MAID;      // 항해사 찾기를 뺀 빌드에서는
 static int     g_gender = FACE_MALE;  // [도감] 탭에서만 쓴다. [여급] 은 전원 여성이라 고정
 static int     g_scroll = 0;   // 맨 위에 보이는 행
 static int     g_catFilter = 0;// 0=전체 1=인물 3=스폰서 4=기타 (여급은 독립 탭으로 뺐다)
+static int     g_prefFilter = 0; // 스폰서 취향 추리기. 0=전체, 그 밖은 (취향비트 + 1)
+// 스폰서 정렬. 0=자금 많은 순(기본) 1=자금 적은 순 2=얼굴코드 순
+#define SORT_N 3
+static int     g_sponsorSort = 0;
+static const wchar_t* kSortBtn[SORT_N] = { L"자금 ↓", L"자금 ↑", L"번호순" };
 
 // 초상화를 어느 표에서 꺼낼지. [여급] 탭은 성별 버튼 없이 항상 여성이다.
 static int CurGender(void) { return g_tab == TAB_MAID ? FACE_FEMALE : g_gender; }
-// 갤러리 한 칸. maid < 0 이면 얼굴코드 한 개가 한 칸(인물/스폰서/기타),
-// maid >= 0 이면 여급 표의 그 행이 한 칸이다(얼굴은 face 로 그린다).
-typedef struct { short face; short maid; } GalEntry;
+// 갤러리 한 칸. 셋 다 -1 이면 얼굴코드 한 개가 한 칸(인물/기타),
+// maid >= 0 이면 여급 표의 그 행, patron >= 0 이면 후원자 표의 그 행이 한 칸이다.
+// (여급도 후원자도 여러 명이 얼굴 하나를 나눠 써서, 얼굴로 세면 사람이 빠진다.)
+typedef struct { short face; short maid; short patron; } GalEntry;
 static GalEntry g_filt[600];   // 현재 필터에 맞는 항목 목록
 static int     g_filtCount = 0;
 static int     g_maidsOk = 0;  // 여급 표를 메모리에서 읽는 데 성공했는지
@@ -51,12 +58,26 @@ static int     g_maidsOk = 0;  // 여급 표를 메모리에서 읽는 데 성�
 static int TotalRows(void) { return (g_filtCount + COLS - 1) / COLS; }
 static int MaxScroll(void) { int m = TotalRows() - ROWS_VIS; return m < 0 ? 0 : m; }
 
-static void Emit(int face, int maid)
+static void Emit(int face, int maid, int patron)
 {
     if (g_filtCount >= (int)(sizeof(g_filt)/sizeof(g_filt[0]))) return;
-    g_filt[g_filtCount].face = (short)face;
-    g_filt[g_filtCount].maid = (short)maid;
+    g_filt[g_filtCount].face   = (short)face;
+    g_filt[g_filtCount].maid   = (short)maid;
+    g_filt[g_filtCount].patron = (short)patron;
     g_filtCount++;
+}
+
+// 이 얼굴칸의 후원자 행들을 목록에 넣는다(취향 추리기까지 걸러서). 넣은 수를 돌려준다.
+static int EmitPatronsOfFace(int gender, int face)
+{
+    int r, n = 0;
+    for (r = 0; r < CharDb_PatronCount(); r++) {
+        if (CharDb_PatronFace(r) != face || CharDb_PatronGender(r) != gender) continue;
+        if (g_prefFilter > 0 && !(CharDb_PatronPrefAt(r) >> (g_prefFilter - 1) & 1)) continue;
+        Emit(face, -1, r);
+        n++;
+    }
+    return n;
 }
 
 // 현재 탭에 맞는 항목 목록을 g_filt 에 채운다.
@@ -67,14 +88,34 @@ static void RebuildFilter(void)
     int i;
     g_filtCount = 0;
     if (g_tab == TAB_MAID) {
-        for (i = 0; i < Maid_Count(); i++) Emit(Maid_At(i)->face, i);
+        for (i = 0; i < Maid_Count(); i++) Emit(Maid_At(i)->face, i, -1);
     } else {
         int total = Face_Count(g_gender);
         for (i = 0; i < total; i++) {
             int cat = CharDb_Cat(g_gender, i);
             int ok = (g_catFilter == 0) ? 1 :
                      (g_catFilter == 4) ? (cat == 0) : (cat == g_catFilter);
-            if (ok) Emit(i, -1);
+            if (!ok) continue;
+            // 스폰서는 얼굴이 아니라 후원자 표의 행이 단위다(한 얼굴에 둘이 붙기도 한다).
+            if (cat == 3) EmitPatronsOfFace(g_gender, i);
+            else          Emit(i, -1, -1);
+        }
+        // 스폰서는 자금으로 줄 세운다. 자금을 모르는 후원자(-1)는 늘 맨 뒤로.
+        // 많아야 80여 개라 삽입 정렬로 충분하다.
+        if (g_catFilter == 3 && g_sponsorSort != 2) {
+            int a, b;
+            for (a = 1; a < g_filtCount; a++) {
+                GalEntry v = g_filt[a];
+                int vw = CharDb_PatronWealthAt(v.patron);
+                for (b = a - 1; b >= 0; b--) {
+                    int w = CharDb_PatronWealthAt(g_filt[b].patron);
+                    int before = (vw < 0) ? 0 : (w < 0) ? 1 :
+                                 (g_sponsorSort == 0 ? vw > w : vw < w);
+                    if (!before) break;
+                    g_filt[b + 1] = g_filt[b];
+                }
+                g_filt[b + 1] = v;
+            }
         }
     }
     g_scroll = 0;
@@ -116,10 +157,14 @@ static RECT SbTrack(void)    { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_
 //   DROP_YEAR 1470~1530 중 하나 고르면 닫힘
 //   DROP_LANG 14종 체크박스 — 여러 개를 켰다 껐다 해야 하니 열어 둔 채 토글만
 //   DROP_CITY 226개 — 한 화면에 안 들어가서 이 목록만 휠로 스크롤한다
+//   DROP_PREF 스폰서 취향 추리기 — 필터바에 있고 여급과 무관하다
 #define DROP_NONE 0
 #define DROP_YEAR 1
 #define DROP_LANG 2
 #define DROP_CITY 3
+#define DROP_PREF 4
+//   DROP_PYEAR 스폰서 등장연도 — 여급 생년과 같은 격자를 쓰되 기준연도만 다르다
+#define DROP_PYEAR 5
 
 #define DD_ITEM_H 22
 
@@ -132,6 +177,9 @@ static RECT SbTrack(void)    { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_
 #define CT_COLS   5
 #define CT_ROWS   12                                  // 한 번에 60개씩 보이고 나머지는 스크롤
 #define CT_ITEM_W 100
+#define PF_COLS   1
+#define PF_ROWS   (CHARDB_PREF_N + 1)                 // (전체) + 취향 8종
+#define PF_ITEM_W 100
 
 // 목록 크기를 늘리고 행 수를 안 맞추면 뒤쪽 항목이 조용히 사라진다. 여기서 막는다.
 typedef char YearGridFits[(YR_COLS * YR_ROWS >= MAID_YEAR_N) ? 1 : -1];
@@ -146,14 +194,23 @@ static int DropItemCount(int kind)
 {
     return kind == DROP_YEAR ? MAID_YEAR_N :
            kind == DROP_LANG ? MAID_LANG_N :
-           kind == DROP_CITY ? Maid_CityCount() : 0;
+           kind == DROP_CITY ? Maid_CityCount() :
+           kind == DROP_PREF ? (CHARDB_PREF_N + 1) :
+           kind == DROP_PYEAR ? PATRON_YEAR_N : 0;
 }
 static void DropGeom(int kind, int* cols, int* rows, int* iw)
 {
-    if (kind == DROP_YEAR)      { *cols=YR_COLS; *rows=YR_ROWS; *iw=YR_ITEM_W; }
+    if (kind == DROP_YEAR || kind == DROP_PYEAR)
+                                { *cols=YR_COLS; *rows=YR_ROWS; *iw=YR_ITEM_W; }
     else if (kind == DROP_LANG) { *cols=LG_COLS; *rows=LG_ROWS; *iw=LG_ITEM_W; }
+    else if (kind == DROP_PREF) { *cols=PF_COLS; *rows=PF_ROWS; *iw=PF_ITEM_W; }
     else                        { *cols=CT_COLS; *rows=CT_ROWS; *iw=CT_ITEM_W; }
 }
+
+// 취향 추리기 상자의 라벨. 0 = 전체.
+static const wchar_t* PrefText(int i) { return i == 0 ? L"(전체)" : CharDb_PrefName(i - 1); }
+static RECT PrefRect(void) { RECT r; r.left=FRAME+322; r.right=r.left+100; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+static RECT SortRect(void) { RECT r; r.left=FRAME+430; r.right=r.left+70;  r.top=FILTER_Y; r.bottom=r.top+22; return r; }
 static int DropTotalRows(int kind)
 {
     int cols, rows, iw;
@@ -236,7 +293,14 @@ static void PaintDropPanel(HDC dc)
         it.top    = p.top  + (k / cols) * DD_ITEM_H + 1;
         it.bottom = it.top + DD_ITEM_H - 1;
 
-        if (g_drop == DROP_YEAR) {
+        if (g_drop == DROP_PREF) {
+            cur = (i == g_prefFilter);
+            label = PrefText(i);
+        } else if (g_drop == DROP_PYEAR) {
+            cur = (PATRON_YEAR_MIN + i == Patron_Year(g_dropRow));
+            wsprintfW(buf, L"%d", PATRON_YEAR_MIN + i);
+            label = buf;
+        } else if (g_drop == DROP_YEAR) {
             cur = (MAID_YEAR_MIN + i == Maid_Year(m));
             wsprintfW(buf, L"%d", MAID_YEAR_MIN + i);
             label = buf;
@@ -265,8 +329,10 @@ static void PaintDropPanel(HDC dc)
             UI_Text(dc, it, label, g_smallFont, COL_TEXT,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         } else {
+            int centered = (g_drop == DROP_YEAR || g_drop == DROP_PYEAR);
+            if (!centered) it.left += 6;   // 왼쪽 정렬은 글씨가 테두리에 붙지 않게
             UI_Text(dc, it, label, g_smallFont, cur ? RGB(250,244,228) : COL_TEXT,
-                    (g_drop == DROP_YEAR ? DT_CENTER : DT_LEFT)
+                    (centered ? DT_CENTER : DT_LEFT)
                     | DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         }
     }
@@ -357,6 +423,11 @@ static void PaintGallery(HDC dc)
         UI_Button(dc, FemaleRect(), L"여", g_gender==FACE_FEMALE);
         { int bi; for (bi=0;bi<CAT_N;bi++)
             UI_Button(dc, CatRect(bi), kCatBtn[bi].label, g_catFilter==kCatBtn[bi].cat); }
+        // 취향 추리기/정렬은 스폰서 목록에서만 쓸모가 있어 그때만 띄운다.
+        if (g_catFilter == 3) {
+            UI_Select(dc, PrefRect(), PrefText(g_prefFilter), g_drop == DROP_PREF);
+            UI_Button(dc, SortRect(), kSortBtn[g_sponsorSort], g_sponsorSort != 2);
+        }
     }
 
     wsprintfW(cnt, L"%d명", g_filtCount);
@@ -381,13 +452,18 @@ static void PaintGallery(HDC dc)
             face = g_filt[gi].face;
             Face_Draw(dc, x, y, PORT_W, PORT_H, CurGender(), face);
             // 초상화 오른쪽 정보 패널 (이름/코드 + 카테고리별 상세)
-            { int ix = x + PORT_W + 8, maid = g_filt[gi].maid;
+            { int ix = x + PORT_W + 8, maid = g_filt[gi].maid, prow = g_filt[gi].patron;
               RECT lr; wchar_t hd[80]; wchar_t mb[256];
               const MaidInfo* m = maid >= 0 ? Maid_At(maid) : NULL;
               const wchar_t* nm; const wchar_t* nf;
               if (m) {
                   nm = m->name;
                   Maid_FormatInfo(m, mb, (int)(sizeof(mb)/sizeof(mb[0])));
+                  nf = mb;
+              } else if (prow >= 0) {
+                  // 후계자가 선대 초상화를 물려받아 얼굴이 겹치므로 이름은 표에서 가져온다.
+                  nm = CharDb_PatronName(prow);
+                  CharDb_FormatPatronRow(prow, mb, (int)(sizeof(mb)/sizeof(mb[0])));
                   nf = mb;
               } else {
                   nm = CharDb_Name(CurGender(), face);
@@ -401,9 +477,26 @@ static void PaintGallery(HDC dc)
               else   wsprintfW(hd, L"%s  #%d", nm[0]?nm:L"(무명)", face);
               lr.left=ix+2; lr.right=ix+INFO_W-2; lr.top=y+3; lr.bottom=y+20;
               UI_Text(dc, lr, hd, g_font, COL_TEXT, DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
-              // 여급 칸은 아래쪽을 편집 컨트롤에 내준다(MAID_CTRL_H 만큼).
-              lr.top=y+22; lr.bottom = m ? y+PORT_H-MAID_CTRL_H : y+PORT_H-3;
+              // 여급/스폰서 칸은 아래쪽을 편집 컨트롤에 내준다.
+              lr.top=y+22;
+              lr.bottom = (m || prow >= 0) ? y+PORT_H-MAID_CTRL_H : y+PORT_H-3;
               UI_Text(dc, lr, nf, g_smallFont, COL_TEXT, DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL);
+              if (!m && prow >= 0) {   // 스폰서 등장연도(관련) — CHARKR_EDIT_PATRON_YEAR 참고
+                  RECT yb = MaidYearRect(x,y);
+                  wchar_t ys[16];
+                  // 실행 중 표를 읽었으면 그쪽 값(고친 게 보이도록), 아니면 구운 값.
+                  int py = Patron_Ready() ? Patron_Year(prow) : 0;
+                  wsprintfW(ys, L"%d년", py ? py : CharDb_PatronAppear(prow));
+                  UI_Text(dc, MaidLabelRect(yb,x), L"등장", g_smallFont, COL_TEXT,
+                          DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+#if CHARKR_EDIT_PATRON_YEAR
+                  UI_Select(dc, yb, ys, g_drop==DROP_PYEAR && g_dropRow==prow);
+#else
+                  yb.left += 6;   // 못 고치는 값이라 상자 없이 글자만
+                  UI_Text(dc, yb, ys, g_smallFont, COL_TEXT,
+                          DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+#endif
+              }
               if (m) {
                   RECT yb = MaidYearRect(x,y);
                   wchar_t ys[16];
@@ -496,6 +589,7 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         UI_CreateFonts();
         Face_Load();
         g_maidsOk = Maid_Load();   // 실패하면 여급도 예전처럼 얼굴코드 단위 + char_info.h 로
+        Patron_Load();             // 실패하면 스폰서 등장연도 상자를 아예 안 띄운다
         RebuildFilter();
 #if CHARKR_SHOW_NAV_TAB
         Nav_Init(h, g_hinst);
@@ -536,8 +630,10 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             } else {
                 CloseDrops();
                 if (i >= 0) {
-                    if (kind == DROP_YEAR) Maid_SetYear(row, MAID_YEAR_MIN + i);
-                    else                   Maid_SetCity(row, i);
+                    if      (kind == DROP_YEAR)  Maid_SetYear(row, MAID_YEAR_MIN + i);
+                    else if (kind == DROP_CITY)  Maid_SetCity(row, i);
+                    else if (kind == DROP_PYEAR) Patron_SetYear(row, PATRON_YEAR_MIN + i);
+                    else    { g_prefFilter = i; RebuildFilter(); }
                 }
             }
             InvalidateRect(h, NULL, FALSE);
@@ -555,6 +651,22 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                 { RECT r=FemaleRect(); if (PtInRect(&r,pt)) { SetGender(h,FACE_FEMALE); return 0; } }
                 { int bi; for (bi=0;bi<CAT_N;bi++){ RECT r=CatRect(bi);
                     if (PtInRect(&r,pt)) { SetCat(h,kCatBtn[bi].cat); return 0; } } }
+                if (g_catFilter == 3) {
+                    { RECT r=PrefRect();
+                      if (PtInRect(&r,pt)) { OpenDrop(h, DROP_PREF, -1, r); return 0; } }
+                    { RECT r=SortRect();
+                      if (PtInRect(&r,pt)) {   // 자금↓ -> 자금↑ -> 번호순 -> 자금↓
+                          g_sponsorSort = (g_sponsorSort + 1) % SORT_N;
+                          RebuildFilter(); InvalidateRect(h,NULL,FALSE); return 0; } }
+                }
+#if CHARKR_EDIT_PATRON_YEAR
+                // 스폰서 칸의 등장연도 상자
+                { int cx, cy, gi = CellHit(pt, &cx, &cy);
+                  if (gi >= 0 && g_filt[gi].patron >= 0) {
+                      RECT r = MaidYearRect(cx, cy);
+                      if (PtInRect(&r, pt)) { OpenDrop(h, DROP_PYEAR, g_filt[gi].patron, r); return 0; }
+                  } }
+#endif
             }
             { RECT sb=SbTrack(); if (PtInRect(&sb,pt)) {   // 트랙 클릭 = 페이지 이동
                 int mid=(sb.top+sb.bottom)/2;
