@@ -15,7 +15,7 @@
 // fb32: [여급] 을 도감의 카테고리 버튼에서 빼내 독립 탭으로 올림. 여급은 얼굴이 아니라
 //   CDS_95.EXE 여급 표의 "행"이 단위다(maids.c) — 얼굴 3개(23·34·77)를 여급 두 명이
 //   나눠 쓰기 때문에 얼굴로 세면 뒤쪽 한 명이 통째로 빠진다. 상세도 char_info.h 대신
-//   그 표에서 바로 뽑고, 등장연도는 select box 로 메모리에 직접 써넣는다.
+//   그 표에서 바로 뽑고, 생년은 select box 로 메모리에 직접 써넣는다.
 //   갤러리 격자/스크롤은 [도감] 과 그대로 공유한다(g_filt 항목 종류만 다르다).
 
 #define ID_CHAR   0xB301
@@ -169,7 +169,7 @@ static int DropMaxScroll(int kind)
 }
 
 // 셀(x,y) 안 정보 패널 아래쪽의 편집 줄.
-//   맨 아랫줄: "등장" 라벨 + 연도 상자 (+ CHARKR_EDIT_LANG 이면 그 오른쪽에 [언어 수정])
+//   맨 아랫줄: "생년" 라벨 + 연도 상자 (+ CHARKR_EDIT_LANG 이면 그 오른쪽에 [언어 수정])
 //   그 윗줄  : CHARKR_EDIT_CITY 일 때만 "도시" 라벨 + 도시 상자
 // 도시 편집이 꺼져 있으면 도시는 본문 글씨로 내려가고 편집 줄이 하나로 줄어, 그만큼
 // 본문(언어 목록)이 넓어진다.
@@ -350,7 +350,7 @@ static void PaintGallery(HDC dc)
     // [여급] 은 성별/카테고리를 고를 게 없어서 필터바 자리에 안내만 둔다.
     if (g_tab == TAB_MAID) {
         ir.left=FRAME+8; ir.right=FRAME+430; ir.top=FILTER_Y; ir.bottom=FILTER_Y+22;
-        UI_Text(dc, ir, L"CDS_95.EXE 여급 표 — 등장연도는 눌러서 바꾸면 메모리에 바로 반영됩니다",
+        UI_Text(dc, ir, L"CDS_95.EXE 여급 표 — 생년은 눌러서 바꾸면 메모리에 바로 반영됩니다",
                 g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     } else {
         UI_Button(dc, MaleRect(),   L"남", g_gender==FACE_MALE);
@@ -417,7 +417,7 @@ static void PaintGallery(HDC dc)
                   UI_Button(dc, MaidLangRect(x,y), L"언어 수정", g_drop==DROP_LANG && g_dropRow==maid);
 #endif
                   wsprintfW(ys, L"%d년", Maid_Year(m));
-                  UI_Text(dc, MaidLabelRect(yb,x), L"등장", g_smallFont, COL_TEXT,
+                  UI_Text(dc, MaidLabelRect(yb,x), L"생년", g_smallFont, COL_TEXT,
                           DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
                   UI_Select(dc, yb, ys, g_drop==DROP_YEAR && g_dropRow==maid);
               } }
@@ -559,7 +559,7 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             { RECT sb=SbTrack(); if (PtInRect(&sb,pt)) {   // 트랙 클릭 = 페이지 이동
                 int mid=(sb.top+sb.bottom)/2;
                 ScrollTo(h, g_scroll + (pt.y<mid?-ROWS_VIS:ROWS_VIS)); return 0; } }
-            // 여급 칸의 도시/등장연도 상자와 [언어 수정] 버튼
+            // 여급 칸의 도시/생년 상자와 [언어 수정] 버튼
             { int cx, cy, gi = CellHit(pt, &cx, &cy);
               if (gi >= 0 && g_filt[gi].maid >= 0) {
                   int maid = g_filt[gi].maid;
