@@ -1,4 +1,4 @@
-#include "ui.h"
+#include "uikit.h"
 
 HFONT g_font = NULL;
 HFONT g_smallFont = NULL;
@@ -79,6 +79,28 @@ void UI_Text(HDC dc, RECT r, const wchar_t* t, HFONT f, COLORREF c, UINT fmt)
     SetTextColor(dc, c);
     DrawTextW(dc, t, -1, &r, fmt);
     SelectObject(dc, of);
+}
+
+void UI_WindowFrame(HDC dc, RECT client, const wchar_t* title, RECT* closeOut)
+{
+    RECT tb, tr, cb;
+    HBRUSH br;
+
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &client, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &client, br); DeleteObject(br);
+
+    tb.left = FRAME; tb.top = FRAME; tb.right = client.right - FRAME; tb.bottom = FRAME + TITLE_H;
+    UI_VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT);
+    UI_Bevel(dc, tb, FALSE);
+    if (title) {
+        tr = tb; tr.left += 8;
+        UI_Text(dc, tr, title, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
+
+    cb.right = client.right - FRAME - 4; cb.left = cb.right - 22;
+    cb.top = FRAME + 4; cb.bottom = cb.top + 18;
+    UI_Button(dc, cb, L"×", FALSE);
+    if (closeOut) *closeOut = cb;
 }
 
 void UI_Scrollbar(HDC dc, RECT track, int scroll, int maxScroll, int visRows, int totalRows)

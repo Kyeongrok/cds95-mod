@@ -7,7 +7,7 @@ add_library(CharacterUtilKR SHARED
     src/maids.c
     src/livechar.c
     src/faces.c
-    src/ui.c
+    src/uikit.c
     src/ls12.c
 )
 

@@ -1,0 +1,1358 @@
+[
+  {
+    "id": 0,
+    "name": "리스본",
+    "latitude": 38.52,
+    "longitude": -9.288
+  },
+  {
+    "id": 1,
+    "name": "오포르트",
+    "latitude": 41.256,
+    "longitude": -8.856
+  },
+  {
+    "id": 2,
+    "name": "라코루냐",
+    "latitude": 43.56,
+    "longitude": -8.568
+  },
+  {
+    "id": 3,
+    "name": "빌바오",
+    "latitude": 43.56,
+    "longitude": -2.952
+  },
+  {
+    "id": 4,
+    "name": "톨레도",
+    "latitude": 40.104,
+    "longitude": -4.392
+  },
+  {
+    "id": 5,
+    "name": "사라고사",
+    "latitude": 41.688,
+    "longitude": -1.224
+  },
+  {
+    "id": 6,
+    "name": "코르도바",
+    "latitude": 38.088,
+    "longitude": -4.968
+  },
+  {
+    "id": 7,
+    "name": "세빌리아",
+    "latitude": 36.936,
+    "longitude": -6.552
+  },
+  {
+    "id": 8,
+    "name": "카디스",
+    "latitude": 36.36,
+    "longitude": -6.408
+  },
+  {
+    "id": 9,
+    "name": "말라가",
+    "latitude": 36.504,
+    "longitude": -4.536
+  },
+  {
+    "id": 10,
+    "name": "그라나다",
+    "latitude": 37.224,
+    "longitude": -3.528
+  },
+  {
+    "id": 11,
+    "name": "발렌시아",
+    "latitude": 39.384,
+    "longitude": -0.216
+  },
+  {
+    "id": 12,
+    "name": "바르셀로나",
+    "latitude": 41.4,
+    "longitude": 2.376
+  },
+  {
+    "id": 13,
+    "name": "마요르카",
+    "latitude": 39.384,
+    "longitude": 2.52
+  },
+  {
+    "id": 14,
+    "name": "파리",
+    "latitude": 48.744,
+    "longitude": 2.52
+  },
+  {
+    "id": 15,
+    "name": "루앙",
+    "latitude": 50.04,
+    "longitude": 0.648
+  },
+  {
+    "id": 16,
+    "name": "투르",
+    "latitude": 47.448,
+    "longitude": 0.792
+  },
+  {
+    "id": 17,
+    "name": "낭트",
+    "latitude": 47.016,
+    "longitude": -2.52
+  },
+  {
+    "id": 18,
+    "name": "보르도",
+    "latitude": 45.144,
+    "longitude": -1.224
+  },
+  {
+    "id": 19,
+    "name": "툴루즈",
+    "latitude": 43.848,
+    "longitude": 1.368
+  },
+  {
+    "id": 20,
+    "name": "리옹",
+    "latitude": 45.864,
+    "longitude": 4.824
+  },
+  {
+    "id": 21,
+    "name": "마르세유",
+    "latitude": 43.128,
+    "longitude": 5.544
+  },
+  {
+    "id": 22,
+    "name": "브뤼즈",
+    "latitude": 51.48,
+    "longitude": 3.096
+  },
+  {
+    "id": 23,
+    "name": "엔트워프",
+    "latitude": 52.2,
+    "longitude": 4.248
+  },
+  {
+    "id": 24,
+    "name": "암스테르담",
+    "latitude": 52.92,
+    "longitude": 4.536
+  },
+  {
+    "id": 25,
+    "name": "브뤼셀",
+    "latitude": 50.904,
+    "longitude": 4.392
+  },
+  {
+    "id": 26,
+    "name": "밀라노",
+    "latitude": 45.144,
+    "longitude": 9.144
+  },
+  {
+    "id": 27,
+    "name": "토리노",
+    "latitude": 45.144,
+    "longitude": 8.136
+  },
+  {
+    "id": 28,
+    "name": "제노바",
+    "latitude": 44.28,
+    "longitude": 8.712
+  },
+  {
+    "id": 29,
+    "name": "베니스",
+    "latitude": 45.288,
+    "longitude": 12.312
+  },
+  {
+    "id": 30,
+    "name": "피렌체",
+    "latitude": 43.848,
+    "longitude": 11.16
+  },
+  {
+    "id": 31,
+    "name": "피사",
+    "latitude": 43.848,
+    "longitude": 10.152
+  },
+  {
+    "id": 32,
+    "name": "안코나",
+    "latitude": 43.848,
+    "longitude": 13.32
+  },
+  {
+    "id": 33,
+    "name": "로마",
+    "latitude": 42.264,
+    "longitude": 12.024
+  },
+  {
+    "id": 34,
+    "name": "나폴리",
+    "latitude": 40.824,
+    "longitude": 14.184
+  },
+  {
+    "id": 35,
+    "name": "칼리아스",
+    "latitude": 39.096,
+    "longitude": 9.144
+  },
+  {
+    "id": 36,
+    "name": "팔레르모",
+    "latitude": 38.376,
+    "longitude": 13.176
+  },
+  {
+    "id": 37,
+    "name": "시라쿠사",
+    "latitude": 37.224,
+    "longitude": 15.336
+  },
+  {
+    "id": 38,
+    "name": "런던",
+    "latitude": 51.624,
+    "longitude": 1.08
+  },
+  {
+    "id": 39,
+    "name": "사우셈프턴",
+    "latitude": 50.76,
+    "longitude": -1.656
+  },
+  {
+    "id": 40,
+    "name": "브리스틀",
+    "latitude": 51.336,
+    "longitude": -3.24
+  },
+  {
+    "id": 41,
+    "name": "요크",
+    "latitude": 54.072,
+    "longitude": -1.08
+  },
+  {
+    "id": 42,
+    "name": "에든버러",
+    "latitude": 56.376,
+    "longitude": -2.664
+  },
+  {
+    "id": 43,
+    "name": "더블린",
+    "latitude": 53.784,
+    "longitude": -6.12
+  },
+  {
+    "id": 44,
+    "name": "함부르크",
+    "latitude": 53.208,
+    "longitude": 9.432
+  },
+  {
+    "id": 45,
+    "name": "뤼베크",
+    "latitude": 54.216,
+    "longitude": 10.584
+  },
+  {
+    "id": 46,
+    "name": "브레멘",
+    "latitude": 53.352,
+    "longitude": 8.136
+  },
+  {
+    "id": 47,
+    "name": "쾰른",
+    "latitude": 51.192,
+    "longitude": 6.264
+  },
+  {
+    "id": 48,
+    "name": "프랑크푸르트",
+    "latitude": 50.184,
+    "longitude": 7.992
+  },
+  {
+    "id": 49,
+    "name": "스트라스부르크",
+    "latitude": 48.6,
+    "longitude": 6.84
+  },
+  {
+    "id": 50,
+    "name": "마그데부르크",
+    "latitude": 52.2,
+    "longitude": 11.736
+  },
+  {
+    "id": 51,
+    "name": "뉘른베르크",
+    "latitude": 49.608,
+    "longitude": 10.872
+  },
+  {
+    "id": 52,
+    "name": "아우크스부르크",
+    "latitude": 48.456,
+    "longitude": 10.728
+  },
+  {
+    "id": 53,
+    "name": "프라하",
+    "latitude": 49.896,
+    "longitude": 14.616
+  },
+  {
+    "id": 54,
+    "name": "비엔나",
+    "latitude": 47.736,
+    "longitude": 16.2
+  },
+  {
+    "id": 55,
+    "name": "베른",
+    "latitude": 46.44,
+    "longitude": 7.416
+  },
+  {
+    "id": 56,
+    "name": "단치히",
+    "latitude": 54.504,
+    "longitude": 18.648
+  },
+  {
+    "id": 57,
+    "name": "쾨니히스베르크",
+    "latitude": 54.792,
+    "longitude": 19.8
+  },
+  {
+    "id": 58,
+    "name": "리가",
+    "latitude": 57.24,
+    "longitude": 23.976
+  },
+  {
+    "id": 59,
+    "name": "노브고르트",
+    "latitude": 58.68,
+    "longitude": 31.176
+  },
+  {
+    "id": 60,
+    "name": "모스크바",
+    "latitude": 56.232,
+    "longitude": 36.792
+  },
+  {
+    "id": 61,
+    "name": "키에프",
+    "latitude": 50.184,
+    "longitude": 30.6
+  },
+  {
+    "id": 62,
+    "name": "바르샤바",
+    "latitude": 52.2,
+    "longitude": 20.952
+  },
+  {
+    "id": 63,
+    "name": "부다페스트",
+    "latitude": 47.448,
+    "longitude": 18.936
+  },
+  {
+    "id": 64,
+    "name": "스톡홀롬",
+    "latitude": 59.4,
+    "longitude": 18.792
+  },
+  {
+    "id": 65,
+    "name": "비즈비",
+    "latitude": 57.96,
+    "longitude": 18.36
+  },
+  {
+    "id": 66,
+    "name": "코펜하겐",
+    "latitude": 55.656,
+    "longitude": 12.6
+  },
+  {
+    "id": 67,
+    "name": "오슬로",
+    "latitude": 59.256,
+    "longitude": 10.584
+  },
+  {
+    "id": 68,
+    "name": "베르겐",
+    "latitude": 60.552,
+    "longitude": 4.968
+  },
+  {
+    "id": 69,
+    "name": "베오그라드",
+    "latitude": 44.568,
+    "longitude": 20.808
+  },
+  {
+    "id": 70,
+    "name": "부쿠레슈티",
+    "latitude": 45.288,
+    "longitude": 26.28
+  },
+  {
+    "id": 71,
+    "name": "라구사",
+    "latitude": 42.552,
+    "longitude": 17.784
+  },
+  {
+    "id": 72,
+    "name": "아테네",
+    "latitude": 37.8,
+    "longitude": 23.4
+  },
+  {
+    "id": 73,
+    "name": "살로니카",
+    "latitude": 40.248,
+    "longitude": 23.112
+  },
+  {
+    "id": 74,
+    "name": "간디아",
+    "latitude": 35.496,
+    "longitude": 25.416
+  },
+  {
+    "id": 75,
+    "name": "파마가스타",
+    "latitude": 35.496,
+    "longitude": 33.768
+  },
+  {
+    "id": 76,
+    "name": "바르나",
+    "latitude": 42.264,
+    "longitude": 29.304
+  },
+  {
+    "id": 77,
+    "name": "몬카스트로",
+    "latitude": 44.136,
+    "longitude": 31.32
+  },
+  {
+    "id": 78,
+    "name": "알렉산드리아",
+    "latitude": 31.608,
+    "longitude": 30.312
+  },
+  {
+    "id": 79,
+    "name": "카이로",
+    "latitude": 30.456,
+    "longitude": 30.744
+  },
+  {
+    "id": 80,
+    "name": "아스완",
+    "latitude": 24.12,
+    "longitude": 32.616
+  },
+  {
+    "id": 81,
+    "name": "트리폴리",
+    "latitude": 33.048,
+    "longitude": 13.176
+  },
+  {
+    "id": 82,
+    "name": "튀니스",
+    "latitude": 37.08,
+    "longitude": 10.296
+  },
+  {
+    "id": 83,
+    "name": "알제",
+    "latitude": 37.08,
+    "longitude": 4.392
+  },
+  {
+    "id": 84,
+    "name": "세우타",
+    "latitude": 35.784,
+    "longitude": -5.688
+  },
+  {
+    "id": 85,
+    "name": "카사블랑카",
+    "latitude": 33.624,
+    "longitude": -7.992
+  },
+  {
+    "id": 86,
+    "name": "아조레스",
+    "latitude": 38.232,
+    "longitude": -28.152
+  },
+  {
+    "id": 87,
+    "name": "마디라",
+    "latitude": 32.904,
+    "longitude": -16.92
+  },
+  {
+    "id": 88,
+    "name": "라스팔마스",
+    "latitude": 28.296,
+    "longitude": -15.48
+  },
+  {
+    "id": 89,
+    "name": "아르킨",
+    "latitude": 27.72,
+    "longitude": -13.32
+  },
+  {
+    "id": 90,
+    "name": "베르덴곶",
+    "latitude": 14.904,
+    "longitude": -17.352
+  },
+  {
+    "id": 91,
+    "name": "시에라리온",
+    "latitude": 8.424,
+    "longitude": -13.464
+  },
+  {
+    "id": 92,
+    "name": "타가자",
+    "latitude": 26.712,
+    "longitude": -3.672
+  },
+  {
+    "id": 93,
+    "name": "통북투",
+    "latitude": 19.512,
+    "longitude": -1.368
+  },
+  {
+    "id": 94,
+    "name": "카노",
+    "latitude": 17.064,
+    "longitude": 3.096
+  },
+  {
+    "id": 95,
+    "name": "젠네",
+    "latitude": 15.624,
+    "longitude": -4.824
+  },
+  {
+    "id": 96,
+    "name": "가노",
+    "latitude": 14.184,
+    "longitude": 14.328
+  },
+  {
+    "id": 97,
+    "name": "산호르해",
+    "latitude": 5.544,
+    "longitude": 0.216
+  },
+  {
+    "id": 98,
+    "name": "아페",
+    "latitude": 6.264,
+    "longitude": 3.384
+  },
+  {
+    "id": 99,
+    "name": "산토메",
+    "latitude": 0.36,
+    "longitude": 6.408
+  },
+  {
+    "id": 100,
+    "name": "르완다",
+    "latitude": -8.568,
+    "longitude": 13.176
+  },
+  {
+    "id": 101,
+    "name": "케이프",
+    "latitude": -33.912,
+    "longitude": 18.216
+  },
+  {
+    "id": 102,
+    "name": "소팔라",
+    "latitude": -19.8,
+    "longitude": 35.064
+  },
+  {
+    "id": 103,
+    "name": "모잠비크",
+    "latitude": -15.624,
+    "longitude": 40.536
+  },
+  {
+    "id": 104,
+    "name": "짐바브웨",
+    "latitude": -18.504,
+    "longitude": 30.024
+  },
+  {
+    "id": 105,
+    "name": "킬와",
+    "latitude": -8.712,
+    "longitude": 39.528
+  },
+  {
+    "id": 106,
+    "name": "잔지바르",
+    "latitude": -7.56,
+    "longitude": 39.816
+  },
+  {
+    "id": 107,
+    "name": "몸바사",
+    "latitude": -4.104,
+    "longitude": 39.816
+  },
+  {
+    "id": 108,
+    "name": "말린디",
+    "latitude": -2.664,
+    "longitude": 40.392
+  },
+  {
+    "id": 109,
+    "name": "모가디슈",
+    "latitude": 1.656,
+    "longitude": 44.856
+  },
+  {
+    "id": 110,
+    "name": "악숨",
+    "latitude": 8.28,
+    "longitude": 38.808
+  },
+  {
+    "id": 111,
+    "name": "하르툼",
+    "latitude": 15.624,
+    "longitude": 33.336
+  },
+  {
+    "id": 112,
+    "name": "이스탄불",
+    "latitude": 40.968,
+    "longitude": 29.304
+  },
+  {
+    "id": 113,
+    "name": "카파",
+    "latitude": 42.696,
+    "longitude": 35.64
+  },
+  {
+    "id": 114,
+    "name": "타나",
+    "latitude": 44.28,
+    "longitude": 38.376
+  },
+  {
+    "id": 115,
+    "name": "시높",
+    "latitude": 39.816,
+    "longitude": 34.488
+  },
+  {
+    "id": 116,
+    "name": "트레비존드",
+    "latitude": 38.952,
+    "longitude": 38.376
+  },
+  {
+    "id": 117,
+    "name": "앙골라",
+    "latitude": 38.376,
+    "longitude": 32.472
+  },
+  {
+    "id": 118,
+    "name": "안티오키아",
+    "latitude": 36.504,
+    "longitude": 35.784
+  },
+  {
+    "id": 119,
+    "name": "다마스쿠스",
+    "latitude": 34.2,
+    "longitude": 36.504
+  },
+  {
+    "id": 120,
+    "name": "예루살렘",
+    "latitude": 32.184,
+    "longitude": 35.064
+  },
+  {
+    "id": 121,
+    "name": "베이루트",
+    "latitude": 34.488,
+    "longitude": 35.64
+  },
+  {
+    "id": 122,
+    "name": "메디아",
+    "latitude": 24.264,
+    "longitude": 39.096
+  },
+  {
+    "id": 123,
+    "name": "메카",
+    "latitude": 20.952,
+    "longitude": 39.384
+  },
+  {
+    "id": 124,
+    "name": "아덴",
+    "latitude": 12.888,
+    "longitude": 45.144
+  },
+  {
+    "id": 125,
+    "name": "무스카트",
+    "latitude": 23.832,
+    "longitude": 58.536
+  },
+  {
+    "id": 126,
+    "name": "바스라",
+    "latitude": 29.736,
+    "longitude": 48.456
+  },
+  {
+    "id": 127,
+    "name": "바그다드",
+    "latitude": 32.472,
+    "longitude": 44.856
+  },
+  {
+    "id": 128,
+    "name": "호르무즈",
+    "latitude": 26.856,
+    "longitude": 56.088
+  },
+  {
+    "id": 129,
+    "name": "시라즈",
+    "latitude": 29.448,
+    "longitude": 52.488
+  },
+  {
+    "id": 130,
+    "name": "이스파한",
+    "latitude": 32.328,
+    "longitude": 51.48
+  },
+  {
+    "id": 131,
+    "name": "타브리즈",
+    "latitude": 36.936,
+    "longitude": 43.416
+  },
+  {
+    "id": 132,
+    "name": "사마르칸트",
+    "latitude": 39.24,
+    "longitude": 66.456
+  },
+  {
+    "id": 133,
+    "name": "타슈겐트",
+    "latitude": 40.824,
+    "longitude": 69.48
+  },
+  {
+    "id": 134,
+    "name": "우르겐치",
+    "latitude": 40.68,
+    "longitude": 58.68
+  },
+  {
+    "id": 135,
+    "name": "헤라트",
+    "latitude": 33.624,
+    "longitude": 63.432
+  },
+  {
+    "id": 136,
+    "name": "카불",
+    "latitude": 33.768,
+    "longitude": 69.912
+  },
+  {
+    "id": 137,
+    "name": "카슈가르",
+    "latitude": 39.24,
+    "longitude": 77.832
+  },
+  {
+    "id": 138,
+    "name": "투르판",
+    "latitude": 43.56,
+    "longitude": 88.776
+  },
+  {
+    "id": 139,
+    "name": "라사",
+    "latitude": 32.328,
+    "longitude": 90.504
+  },
+  {
+    "id": 140,
+    "name": "아스트라한",
+    "latitude": 44.28,
+    "longitude": 44.136
+  },
+  {
+    "id": 141,
+    "name": "카잔",
+    "latitude": 56.088,
+    "longitude": 45.0
+  },
+  {
+    "id": 142,
+    "name": "사빌",
+    "latitude": 57.096,
+    "longitude": 72.936
+  },
+  {
+    "id": 143,
+    "name": "호브드",
+    "latitude": 49.176,
+    "longitude": 90.792
+  },
+  {
+    "id": 144,
+    "name": "카라코룸",
+    "latitude": 49.32,
+    "longitude": 100.152
+  },
+  {
+    "id": 145,
+    "name": "델리",
+    "latitude": 28.584,
+    "longitude": 77.544
+  },
+  {
+    "id": 146,
+    "name": "라호르",
+    "latitude": 31.464,
+    "longitude": 73.8
+  },
+  {
+    "id": 147,
+    "name": "아마다바드",
+    "latitude": 22.968,
+    "longitude": 72.36
+  },
+  {
+    "id": 148,
+    "name": "디우",
+    "latitude": 20.664,
+    "longitude": 71.064
+  },
+  {
+    "id": 149,
+    "name": "비자푸르",
+    "latitude": 16.92,
+    "longitude": 75.96
+  },
+  {
+    "id": 150,
+    "name": "고아",
+    "latitude": 15.48,
+    "longitude": 73.656
+  },
+  {
+    "id": 151,
+    "name": "카나놀",
+    "latitude": 12.168,
+    "longitude": 74.952
+  },
+  {
+    "id": 152,
+    "name": "캘리컷",
+    "latitude": 11.448,
+    "longitude": 75.528
+  },
+  {
+    "id": 153,
+    "name": "비자야나가르",
+    "latitude": 15.48,
+    "longitude": 76.824
+  },
+  {
+    "id": 154,
+    "name": "코친",
+    "latitude": 10.296,
+    "longitude": 75.96
+  },
+  {
+    "id": 155,
+    "name": "콜롬보",
+    "latitude": 7.56,
+    "longitude": 79.56
+  },
+  {
+    "id": 156,
+    "name": "골콘다",
+    "latitude": 17.496,
+    "longitude": 78.408
+  },
+  {
+    "id": 157,
+    "name": "캘커타",
+    "latitude": 21.528,
+    "longitude": 88.632
+  },
+  {
+    "id": 158,
+    "name": "아바",
+    "latitude": 21.528,
+    "longitude": 95.544
+  },
+  {
+    "id": 159,
+    "name": "페구",
+    "latitude": 16.488,
+    "longitude": 96.12
+  },
+  {
+    "id": 160,
+    "name": "말라카",
+    "latitude": 1.368,
+    "longitude": 103.752
+  },
+  {
+    "id": 161,
+    "name": "리콜",
+    "latitude": 8.856,
+    "longitude": 100.008
+  },
+  {
+    "id": 162,
+    "name": "아유타야",
+    "latitude": 13.32,
+    "longitude": 100.44
+  },
+  {
+    "id": 163,
+    "name": "프놈펜",
+    "latitude": 11.016,
+    "longitude": 105.192
+  },
+  {
+    "id": 164,
+    "name": "유에",
+    "latitude": 16.92,
+    "longitude": 107.352
+  },
+  {
+    "id": 165,
+    "name": "교도",
+    "latitude": 20.52,
+    "longitude": 106.632
+  },
+  {
+    "id": 166,
+    "name": "아친",
+    "latitude": 5.688,
+    "longitude": 95.4
+  },
+  {
+    "id": 167,
+    "name": "파렌바",
+    "latitude": -2.376,
+    "longitude": 105.048
+  },
+  {
+    "id": 168,
+    "name": "반탐",
+    "latitude": -5.832,
+    "longitude": 106.056
+  },
+  {
+    "id": 169,
+    "name": "수라바야",
+    "latitude": -7.416,
+    "longitude": 112.968
+  },
+  {
+    "id": 170,
+    "name": "브루나이",
+    "latitude": 5.112,
+    "longitude": 114.84
+  },
+  {
+    "id": 171,
+    "name": "테르나테",
+    "latitude": 0.936,
+    "longitude": 127.224
+  },
+  {
+    "id": 172,
+    "name": "암보이나",
+    "latitude": -3.672,
+    "longitude": 127.8
+  },
+  {
+    "id": 173,
+    "name": "오문",
+    "latitude": 21.96,
+    "longitude": 113.112
+  },
+  {
+    "id": 174,
+    "name": "광주",
+    "latitude": 22.536,
+    "longitude": 113.688
+  },
+  {
+    "id": 175,
+    "name": "천주",
+    "latitude": 24.984,
+    "longitude": 119.16
+  },
+  {
+    "id": 176,
+    "name": "복주",
+    "latitude": 26.424,
+    "longitude": 120.024
+  },
+  {
+    "id": 177,
+    "name": "항주",
+    "latitude": 30.312,
+    "longitude": 120.6
+  },
+  {
+    "id": 178,
+    "name": "남경",
+    "latitude": 31.608,
+    "longitude": 121.896
+  },
+  {
+    "id": 179,
+    "name": "무창",
+    "latitude": 30.168,
+    "longitude": 113.976
+  },
+  {
+    "id": 180,
+    "name": "계림",
+    "latitude": 25.848,
+    "longitude": 109.224
+  },
+  {
+    "id": 181,
+    "name": "운남",
+    "latitude": 24.264,
+    "longitude": 102.456
+  },
+  {
+    "id": 182,
+    "name": "성도",
+    "latitude": 29.592,
+    "longitude": 103.32
+  },
+  {
+    "id": 183,
+    "name": "감주",
+    "latitude": 39.384,
+    "longitude": 98.856
+  },
+  {
+    "id": 184,
+    "name": "서안",
+    "latitude": 33.912,
+    "longitude": 109.224
+  },
+  {
+    "id": 185,
+    "name": "개봉",
+    "latitude": 34.2,
+    "longitude": 114.84
+  },
+  {
+    "id": 186,
+    "name": "제남",
+    "latitude": 37.08,
+    "longitude": 117.576
+  },
+  {
+    "id": 187,
+    "name": "태원",
+    "latitude": 38.088,
+    "longitude": 112.392
+  },
+  {
+    "id": 188,
+    "name": "북경",
+    "latitude": 40.392,
+    "longitude": 116.136
+  },
+  {
+    "id": 189,
+    "name": "요동",
+    "latitude": 40.824,
+    "longitude": 121.32
+  },
+  {
+    "id": 190,
+    "name": "한양",
+    "latitude": 37.656,
+    "longitude": 126.216
+  },
+  {
+    "id": 191,
+    "name": "나가사키",
+    "latitude": 32.904,
+    "longitude": 129.528
+  },
+  {
+    "id": 192,
+    "name": "사카이",
+    "latitude": 34.488,
+    "longitude": 135.288
+  },
+  {
+    "id": 193,
+    "name": "쿄토",
+    "latitude": 35.064,
+    "longitude": 135.576
+  },
+  {
+    "id": 194,
+    "name": "산토도밍고",
+    "latitude": 18.36,
+    "longitude": -69.768
+  },
+  {
+    "id": 195,
+    "name": "산티아고",
+    "latitude": 19.8,
+    "longitude": -76.104
+  },
+  {
+    "id": 196,
+    "name": "아바나",
+    "latitude": 23.256,
+    "longitude": -82.584
+  },
+  {
+    "id": 197,
+    "name": "자메이카",
+    "latitude": 17.784,
+    "longitude": -76.968
+  },
+  {
+    "id": 198,
+    "name": "산후안",
+    "latitude": 18.648,
+    "longitude": -66.024
+  },
+  {
+    "id": 199,
+    "name": "베라클루즈",
+    "latitude": 19.224,
+    "longitude": -95.976
+  },
+  {
+    "id": 200,
+    "name": "테노치티클란",
+    "latitude": 19.512,
+    "longitude": -99.864
+  },
+  {
+    "id": 201,
+    "name": "멕시코",
+    "latitude": 19.512,
+    "longitude": -100.152
+  },
+  {
+    "id": 202,
+    "name": "투라스칼라",
+    "latitude": 19.368,
+    "longitude": -98.424
+  },
+  {
+    "id": 203,
+    "name": "트라파",
+    "latitude": 17.928,
+    "longitude": -98.568
+  },
+  {
+    "id": 204,
+    "name": "미틀라",
+    "latitude": 17.352,
+    "longitude": -95.832
+  },
+  {
+    "id": 205,
+    "name": "아카풀코",
+    "latitude": 16.92,
+    "longitude": -100.296
+  },
+  {
+    "id": 206,
+    "name": "메리다",
+    "latitude": 21.528,
+    "longitude": -88.92
+  },
+  {
+    "id": 207,
+    "name": "과테말라",
+    "latitude": 14.472,
+    "longitude": -90.36
+  },
+  {
+    "id": 208,
+    "name": "투르히요",
+    "latitude": 16.056,
+    "longitude": -86.184
+  },
+  {
+    "id": 209,
+    "name": "레온",
+    "latitude": 11.16,
+    "longitude": -85.896
+  },
+  {
+    "id": 210,
+    "name": "파나마",
+    "latitude": 9.0,
+    "longitude": -79.272
+  },
+  {
+    "id": 211,
+    "name": "산타마르타",
+    "latitude": 11.448,
+    "longitude": -74.232
+  },
+  {
+    "id": 212,
+    "name": "코로",
+    "latitude": 12.024,
+    "longitude": -70.344
+  },
+  {
+    "id": 213,
+    "name": "쿠마나",
+    "latitude": 10.584,
+    "longitude": -64.44
+  },
+  {
+    "id": 214,
+    "name": "페르남부쿠",
+    "latitude": -7.992,
+    "longitude": -34.632
+  },
+  {
+    "id": 215,
+    "name": "바이앙",
+    "latitude": -13.176,
+    "longitude": -38.664
+  },
+  {
+    "id": 216,
+    "name": "리우데자네이루",
+    "latitude": -23.256,
+    "longitude": -44.424
+  },
+  {
+    "id": 217,
+    "name": "부에노스아이레스",
+    "latitude": -34.488,
+    "longitude": -58.392
+  },
+  {
+    "id": 218,
+    "name": "보고타",
+    "latitude": 5.832,
+    "longitude": -73.512
+  },
+  {
+    "id": 219,
+    "name": "키토",
+    "latitude": -0.36,
+    "longitude": -78.696
+  },
+  {
+    "id": 220,
+    "name": "툼베스",
+    "latitude": -3.384,
+    "longitude": -80.136
+  },
+  {
+    "id": 221,
+    "name": "찬찬",
+    "latitude": -6.552,
+    "longitude": -80.424
+  },
+  {
+    "id": 222,
+    "name": "리마",
+    "latitude": -12.456,
+    "longitude": -76.824
+  },
+  {
+    "id": 223,
+    "name": "쿠스코",
+    "latitude": -13.176,
+    "longitude": -71.352
+  },
+  {
+    "id": 224,
+    "name": "나스카",
+    "latitude": -15.336,
+    "longitude": -75.384
+  },
+  {
+    "id": 225,
+    "name": "포토시",
+    "latitude": -19.224,
+    "longitude": -65.592
+  }
+]

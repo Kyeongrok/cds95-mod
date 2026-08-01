@@ -31,7 +31,7 @@ $MinHookDir = Join-Path $PluginsSrc "third_party\minhook"
 
 # 여기서 빌드할 플러그인 타깃과 결과물 파일명을 나열합니다.
 # 새 플러그인을 plugins-src에 추가하면 이 목록에도 추가하세요.
-$PluginTargets = @("CollectionUtilKR", "HotelUtilKR", "TradeUtilKR", "CharacterUtilKR", "ShipSkinKR", "GameApiKR", "AudioFixKR", "PatchUtilKR")
+$PluginTargets = @("CollectionUtilKR", "HotelUtilKR", "TradeUtilKR", "CharacterUtilKR", "WorldMapKR", "ShipSkinKR", "GameApiKR", "AudioFixKR", "PatchUtilKR")
 
 function Write-Step($msg) {
     Write-Host "==> $msg" -ForegroundColor Cyan
@@ -77,8 +77,11 @@ if (-not $GamePath -or -not (Test-Path $GamePath)) {
     # 기본 경로가 없으면 Desktop 하위에서 cds_95.exe 가 있는 폴더를 자동 탐지한다.
     # (build.ps1 기본값이 다른 PC 경로라 배포가 조용히 건너뛰어져 게임 폴더에 구버전이
     #  남는 stale 배포 사고 방지 — fb30 "이스탄불 양모/어육"의 진짜 원인이었음.)
+    # CDS95Util 까지 있어야 진짜 배포 대상이다. cds_95.exe 만 보고 고르면
+    # 플러그인을 안 쓰는 사본(예: 통합정정판 원본 폴더)을 집어 배포가 통째로 건너뛰어진다.
     $detected = Get-ChildItem "$env:USERPROFILE\Desktop" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { Test-Path (Join-Path $_.FullName "cds_95.exe") } |
+        Where-Object { (Test-Path (Join-Path $_.FullName "cds_95.exe")) -and
+                       (Test-Path (Join-Path $_.FullName "CDS95Util")) } |
         Select-Object -First 1
     if ($detected) {
         $GamePath = $detected.FullName
@@ -99,9 +102,55 @@ if (-not (Test-Path $TargetDir)) {
 }
 
 Write-Step "배포 대상: $TargetDir"
+
+# 게임이 켜져 있으면 .plugin 은 프로세스에 매핑돼 있어 덮어쓸 수 없다.
+# 하지만 이름 바꾸기는 된다(로더가 FILE_SHARE_DELETE 로 열어 둔다).
+# 그래서 낡은 것을 옆으로 밀어내고 새 것을 제자리에 둔다 —
+# 실행 중인 게임은 밀려난 파일을 그대로 쓰고, 다음에 게임을 켜면 새 것이 로드된다.
+# 덕분에 배포하려고 게임을 끌 필요가 없다(반영은 다음 실행부터).
+$staged = @()
 foreach ($plugin in $BuiltPlugins) {
-    Copy-Item $plugin -Destination $TargetDir -Force
-    Write-Host "복사 완료: $TargetDir\$(Split-Path $plugin -Leaf)" -ForegroundColor Green
+    $name = Split-Path $plugin -Leaf
+    $dst  = Join-Path $TargetDir $name
+    try {
+        Copy-Item $plugin -Destination $dst -Force -ErrorAction Stop
+        Write-Host "복사 완료: $dst" -ForegroundColor Green
+    } catch {
+        try {
+            $old = "$name.old-" + (Get-Date -Format "yyyyMMddHHmmss")
+            Rename-Item -Path $dst -NewName $old -ErrorAction Stop
+            Copy-Item $plugin -Destination $dst -Force -ErrorAction Stop
+            $staged += $name
+            Write-Host "교체 예약: $dst  (실행 중이라 낡은 것은 $old 로 밀어냄)" -ForegroundColor Yellow
+        } catch {
+            Write-Host "복사 실패: $dst  ($($_.Exception.Message))" -ForegroundColor Red
+        }
+    }
+}
+
+# 플러그인이 옆에서 읽는 데이터 파일. 이미 있으면 사용자가 고쳐 놨을 수 있으므로 덮지 않는다.
+$DataFiles = @(
+    (Join-Path $PluginsSrc "WorldMapKR\cities.json"),
+    (Join-Path $PluginsSrc "PatchUtilKR\patches.json")
+)
+foreach ($data in $DataFiles) {
+    if (-not (Test-Path $data)) { continue }
+    $dst = Join-Path $TargetDir (Split-Path $data -Leaf)
+    if (Test-Path $dst) {
+        Write-Host "그대로 둠: $dst (이미 있음 — 고쳐 쓴 것을 덮지 않는다)" -ForegroundColor DarkGray
+    } else {
+        Copy-Item $data -Destination $dst -Force
+        Write-Host "복사 완료: $dst" -ForegroundColor Green
+    }
+}
+
+# 지난번에 밀어낸 파일 중 이제 안 잡혀 있는 것들을 치운다.
+Get-ChildItem $TargetDir -Filter "*.old-*" -ErrorAction SilentlyContinue | ForEach-Object {
+    try { Remove-Item $_.FullName -Force -ErrorAction Stop } catch { }
+}
+
+if ($staged.Count -gt 0) {
+    Write-Host "`n게임이 실행 중이라 다음 실행부터 반영됩니다: $($staged -join ', ')" -ForegroundColor Cyan
 }
 
 Write-Host "`n게임을 실행하고 DebugView로 로그를 확인하세요. (plugins-src/DebugView.md 참고)" -ForegroundColor Cyan
