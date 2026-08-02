@@ -11,6 +11,7 @@
 #define MAX_PATCHES 256
 #define MAX_REGIONS 8
 #define MAX_REGION_LEN 512
+#define MAX_CHOICES 24              // 값 선택형 항목의 후보 개수 상한
 
 // 바이트열 패치 한 구간. 값 하나를 쓰는 기존 방식으로는 자리마다 값이 다른
 // 코드 덩어리를 표현할 수 없어서(Addresses[] 는 전부 같은 값을 받는다) 따로 뒀다.
@@ -36,6 +37,13 @@ typedef struct {
     int          byteSize;           // 1/2/4
     long long    value;              // number형 기록값
     int          isToggle;           // Type=="toggle"
+    int          autoApply;          // AutoApply==true — 창을 열기 전, 플러그인 로드 때 바로 적용
+    // Type=="choice" — 켜고 끄는 게 아니라 정해진 값 중 하나를 골라 쓰는 항목.
+    // (입출항 일수처럼 "몇 일" 같은 수치는 토글로는 표현이 안 된다.)
+    int          isChoice;
+    int          choices[MAX_CHOICES];
+    int          nchoice;
+    int          vmin, vmax;         // 허용 범위. Choices 가 없으면 이 범위에서 목록을 만든다
     long long    originalValue;      // toggle OFF 기록값
     long long    patchedValue;       // toggle ON 기록값
     unsigned char snap[MAX_ADDRS][4];// 로드 시 원본 메모리 바이트
@@ -176,6 +184,52 @@ static BOOL ToggleTargetsLookRight(const Patch* p, int* badIdx)
         if (!okA && !okB) { if (badIdx) *badIdx = i; return FALSE; }
     }
     return TRUE;
+}
+
+// ---- 값 선택형(choice) ----
+// 지금 메모리에 들어 있는 값. 못 읽으면 -1.
+static int Patch_ReadValue(const Patch* p)
+{
+    BYTE* m;
+    int v = 0, k;
+    if (!p->naddr || !p->mapped[0]) return -1;
+    m = OffToMem(p->addrs[0]);
+    if (!m) return -1;
+    for (k = 0; k < p->byteSize; k++) v |= (int)m[k] << (8 * k);
+    return v;
+}
+
+// 고른 값을 모든 주소에 쓴다. 범위 밖이면 거절.
+static BOOL Patch_SetValue(Patch* p, int v)
+{
+    int i;
+    if (v < p->vmin || v > p->vmax) return FALSE;
+    for (i = 0; i < p->naddr; i++) {
+        BYTE* m;
+        BYTE bytes[4];
+        if (!p->mapped[i]) continue;
+        m = OffToMem(p->addrs[i]);
+        if (!m) continue;
+        ValueBytes(v, p->byteSize, bytes);
+        WriteMem(m, bytes, p->byteSize);
+    }
+    LogW(L"[PatchUtilKR] %s = %d", p->name[0] ? p->name : L"(무명)", v);
+    return TRUE;
+}
+
+// 고를 값 목록. Choices 를 적었으면 그대로, 없으면 vmin~vmax 를 고르게 나눠 만든다.
+static int Patch_BuildChoices(const Patch* p, int* out)
+{
+    int n = 0, i, step, v;
+    if (p->nchoice > 0) {
+        for (i = 0; i < p->nchoice; i++)
+            if (p->choices[i] >= p->vmin && p->choices[i] <= p->vmax) out[n++] = p->choices[i];
+        return n;
+    }
+    step = (p->vmax - p->vmin) / (MAX_CHOICES - 1);
+    if (step < 1) step = 1;
+    for (v = p->vmin; v <= p->vmax && n < MAX_CHOICES; v += step) out[n++] = v;
+    return n;
 }
 
 BOOL Patch_SetApplied(int idx, BOOL on)
@@ -448,7 +502,28 @@ static BOOL ParseObject(const char** pp, Patch* pt)
         else if (lstrcmpA(key, "Value") == 0)        { pt->value = ParseNumber(pp); }
         else if (lstrcmpA(key, "OriginalValue") == 0){ pt->originalValue = ParseNumber(pp); }
         else if (lstrcmpA(key, "PatchedValue") == 0) { pt->patchedValue = ParseNumber(pp); }
-        else if (lstrcmpA(key, "Type") == 0)         { char t[16]; ParseStringInto(pp, t, sizeof(t)); pt->isToggle = (lstrcmpA(t, "toggle") == 0); }
+        else if (lstrcmpA(key, "Type") == 0)         { char t[16]; ParseStringInto(pp, t, sizeof(t));
+                                                       pt->isToggle = (lstrcmpA(t, "toggle") == 0);
+                                                       pt->isChoice = (lstrcmpA(t, "choice") == 0); }
+        else if (lstrcmpA(key, "Min") == 0)          { pt->vmin = (int)ParseNumber(pp); }
+        else if (lstrcmpA(key, "Max") == 0)          { pt->vmax = (int)ParseNumber(pp); }
+        else if (lstrcmpA(key, "Choices") == 0)      {   // [1, 3, 5, 10] — 고를 값 목록
+            SkipWS(pp);
+            if (**pp != '[') { SkipValue(pp); }
+            else {
+                (*pp)++;
+                for (;;) {
+                    SkipWS(pp);
+                    if (**pp == ']') { (*pp)++; break; }
+                    if (!**pp) break;
+                    if (pt->nchoice < MAX_CHOICES) pt->choices[pt->nchoice++] = (int)ParseNumber(pp);
+                    else SkipValue(pp);
+                    SkipWS(pp);
+                    if (**pp == ',') (*pp)++;
+                }
+            }
+        }
+        else if (lstrcmpA(key, "AutoApply") == 0)    { SkipWS(pp); pt->autoApply = (**pp == 't'); SkipValue(pp); }
         else                                         { SkipValue(pp); }
         SkipWS(pp);
         if (**pp == ',') { (*pp)++; continue; }
@@ -460,6 +535,20 @@ static BOOL ParseObject(const char** pp, Patch* pt)
         if (ParseHex(single, &off)) { pt->addrs[0] = off; pt->naddr = 1; }
     }
     if (pt->byteSize != 1 && pt->byteSize != 2 && pt->byteSize != 4) pt->byteSize = 1;
+    // 값 선택형인데 Min/Max 를 안 적었으면 Choices 범위, 그것도 없으면 바이트 폭 전체로 잡는다.
+    if (pt->isChoice && pt->vmin == 0 && pt->vmax == 0) {
+        if (pt->nchoice > 0) {
+            int i;
+            pt->vmin = pt->vmax = pt->choices[0];
+            for (i = 1; i < pt->nchoice; i++) {
+                if (pt->choices[i] < pt->vmin) pt->vmin = pt->choices[i];
+                if (pt->choices[i] > pt->vmax) pt->vmax = pt->choices[i];
+            }
+        } else {
+            pt->vmin = 0;
+            pt->vmax = (pt->byteSize >= 4) ? 0x7FFFFFFF : (1 << (8 * (pt->byteSize ? pt->byteSize : 1))) - 1;
+        }
+    }
     return pt->naddr > 0 || pt->nreg > 0;
 }
 
@@ -529,7 +618,9 @@ void PatchCore_Load(void)
         SnapshotPatch(p);
         // 로드 시 현재 메모리가 이미 적용값(toggle=PatchedValue, number=Value)과 같으면
         // 체크(ON)로 표시해 창이 실제 상태를 반영하게 한다. (snap[0]=로드시점 현재 메모리)
-        if (p->nreg > 0) {                     // 바이트열 패치: 첫 구간이 패치본과 같으면 ON
+        if (p->isChoice) {
+            p->applied = 0;                    // 선택형은 ON/OFF 가 아니라 값 하나다
+        } else if (p->nreg > 0) {              // 바이트열 패치: 첫 구간이 패치본과 같으면 ON
             BYTE* m = p->regs[0].mapped ? OffToMem(p->regs[0].off) : NULL;
             BOOL match = FALSE;
             if (m) {
@@ -551,6 +642,17 @@ void PatchCore_Load(void)
              p->isToggle ? L"toggle" : L"value",
              (unsigned int)(UINT_PTR)m0, p->naddr ? p->mapped[0] : 0,
              (m0 && p->mapped[0]) ? m0[0] : 0, p->applied);
+    }
+    // AutoApply 항목은 여기서 바로 적용한다. 게임이 시작하면서 한 번만 읽고 마는 값
+    // (화면 크기 선택지처럼)은 창을 열어 체크할 때쯤이면 이미 늦기 때문이다.
+    // 이 함수는 플러그인 DllMain(DLL_PROCESS_ATTACH)에서 불리므로 게임 코드보다 앞선다.
+    for (i = 0; i < g_npatch; i++) {
+        Patch* p = &g_patches[i];
+        if (!p->autoApply || p->applied || p->isChoice) continue;
+        if (Patch_SetApplied(i, TRUE))
+            LogW(L"[PatchUtilKR] 자동 적용: %s", p->name[0] ? p->name : L"(무명)");
+        else
+            LogW(L"[PatchUtilKR] 자동 적용 실패(주소 불일치): %s", p->name[0] ? p->name : L"(무명)");
     }
 }
 
@@ -591,7 +693,14 @@ static BOOL g_populating = FALSE;
 
 static void StateText(Patch* p, wchar_t* buf)
 {
-    if (p->isToggle)
+    if (p->isChoice) {
+        int v = Patch_ReadValue(p);
+        if (v < 0) wsprintfW(buf, L"(못 읽음)");
+        else       wsprintfW(buf, L"%d  (%d~%d)", v, p->vmin, p->vmax);
+    }
+    else if (p->isToggle && !p->naddr && p->nreg)
+        lstrcpyW(buf, p->applied ? L"ON (바이트열)" : L"OFF (바이트열)");   // 값이 아니라 코드 덩어리다
+    else if (p->isToggle)
         wsprintfW(buf, p->applied ? L"ON=%d" : L"OFF=%d", (int)(p->applied ? p->patchedValue : p->originalValue));
     else
         wsprintfW(buf, p->applied ? L"적용 %d" : L"원본", (int)p->value);
@@ -612,17 +721,26 @@ static void FillList(void)
         it.pszText = p->name[0] ? p->name : L"(무명)";
         it.lParam = i;
         ListView_InsertItem(g_list, &it);
-        if (p->naddr > 1) wsprintfW(a, L"0x%X 외%d", p->addrs[0], p->naddr - 1);
-        else              wsprintfW(a, L"0x%X", p->naddr ? p->addrs[0] : 0);
+        // Regions[] 만 있는 패치는 주소/바이트수를 그쪽에서 가져온다(예전엔 0x0 / 0 으로 나왔다).
+        if (p->naddr > 1)      wsprintfW(a, L"0x%X 외%d", p->addrs[0], p->naddr - 1);
+        else if (p->naddr)     wsprintfW(a, L"0x%X", p->addrs[0]);
+        else if (p->nreg > 1)  wsprintfW(a, L"0x%X 외%d", p->regs[0].off, p->nreg - 1);
+        else if (p->nreg)      wsprintfW(a, L"0x%X", p->regs[0].off);
+        else                   wsprintfW(a, L"-");
         if (p->naddr && !p->mapped[0]) lstrcatW(a, L" (X)");
+        if (!p->naddr && p->nreg && !p->regs[0].mapped) lstrcatW(a, L" (X)");
         ListView_SetItemText(g_list, i, 1, a);
-        wsprintfW(bs, L"%d", p->byteSize);
+        if (!p->naddr && p->nreg) {
+            int k, tot = 0;
+            for (k = 0; k < p->nreg; k++) tot += p->regs[k].len;
+            wsprintfW(bs, L"%d", tot);
+        } else wsprintfW(bs, L"%d", p->byteSize);
         ListView_SetItemText(g_list, i, 2, bs);
-        ListView_SetItemText(g_list, i, 3, p->isToggle ? L"토글" : L"값");
+        ListView_SetItemText(g_list, i, 3, p->isChoice ? L"선택" : (p->isToggle ? L"토글" : L"값"));
         StateText(p, st);
         ListView_SetItemText(g_list, i, 4, st);
         ListView_SetItemText(g_list, i, 5, p->desc);
-        ListView_SetCheckState(g_list, i, p->applied);
+        if (!p->isChoice) ListView_SetCheckState(g_list, i, p->applied);   // 선택형은 체크 개념이 없다
     }
     g_populating = FALSE;
 }
@@ -667,6 +785,33 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
             return 0;
         case WM_NOTIFY: {
             NMHDR* nh = (NMHDR*)l;
+            // 값 선택형: 줄을 두 번 누르면 고를 값 목록이 뜬다.
+            // (창 안에 콤보박스를 두는 대신 팝업 메뉴를 쓴다 — 새 창도, 포커스 다툼도 없다.)
+            if (nh->idFrom == ID_LIST && (nh->code == NM_DBLCLK || nh->code == NM_RCLICK)) {
+                int row = ((LPNMITEMACTIVATE)l)->iItem;
+                if (row >= 0 && row < g_npatch && g_patches[row].isChoice) {
+                    Patch* p = &g_patches[row];
+                    int vals[MAX_CHOICES], n = Patch_BuildChoices(p, vals);
+                    int cur = Patch_ReadValue(p), i, pick;
+                    HMENU menu = CreatePopupMenu();
+                    POINT pt;
+                    for (i = 0; i < n; i++) {
+                        wchar_t t[32];
+                        wsprintfW(t, L"%d", vals[i]);
+                        AppendMenuW(menu, MF_STRING | (vals[i] == cur ? MF_CHECKED : 0), (UINT_PTR)(i + 1), t);
+                    }
+                    GetCursorPos(&pt);
+                    pick = (int)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
+                                               pt.x, pt.y, 0, h, NULL);
+                    DestroyMenu(menu);
+                    if (pick >= 1 && pick <= n && Patch_SetValue(p, vals[pick - 1])) {
+                        wchar_t st[48];
+                        StateText(p, st);
+                        ListView_SetItemText(g_list, row, 4, st);
+                    }
+                }
+                return 0;
+            }
             if (nh->idFrom == ID_LIST && nh->code == LVN_ITEMCHANGED && !g_populating) {
                 NMLISTVIEW* nm = (NMLISTVIEW*)l;
                 if (nm->uChanged & LVIF_STATE) {
@@ -674,7 +819,19 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
                     BOOL is  = ((nm->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK(2));
                     if (was != is && nm->iItem >= 0 && nm->iItem < g_npatch) {
                         Patch* p = &g_patches[nm->iItem];
-                        if (is && (p->naddr == 0 || !p->mapped[0])) {
+                        if (p->isChoice) {          // 선택형은 체크로 켜고 끄는 게 아니다
+                            g_populating = TRUE;
+                            ListView_SetCheckState(g_list, nm->iItem, FALSE);
+                            g_populating = FALSE;
+                            return 0;
+                        }
+                        // Regions[] 만 있는 패치는 naddr 가 0 이라, 예전처럼 naddr/mapped[0] 만
+                        // 보면 늘 거부됐다(해적·화면크기 항목이 켜지지 않던 이유).
+                        // 주소든 바이트열이든 메모리에 잡힌 대상이 하나라도 있으면 적용을 시도한다.
+                        int usable = 0, k;
+                        for (k = 0; k < p->naddr && !usable; k++) if (p->mapped[k]) usable = 1;
+                        for (k = 0; k < p->nreg  && !usable; k++) if (p->regs[k].mapped) usable = 1;
+                        if (is && !usable) {
                             MessageBeep(MB_ICONWARNING);        // 매핑 실패 패치는 적용 불가
                             g_populating = TRUE;
                             ListView_SetCheckState(g_list, nm->iItem, FALSE);

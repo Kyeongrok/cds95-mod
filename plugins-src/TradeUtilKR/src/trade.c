@@ -130,6 +130,11 @@ static HWND    g_subHwnd = NULL;
 static WNDPROC g_origProc = NULL;
 static HWND    g_siseWnd = NULL;   // 시세 일람 창
 static HWND    g_list = NULL;
+// 문화권 고르기 — 콤보박스를 쓰지 않는다. 게임 DirectDraw 화면 위에서는 자식 컨트롤이
+// 불안정한데(CharacterUtilKR 이 위젯을 전부 직접 그리는 이유가 이것이다), 특히 COMBOBOX 는
+// 펼칠 때 별도 최상위 창을 띄우고 캡처·포커스를 가져가 몇 초 뒤 게임이 죽었다.
+// 그래서 닫힌 상자는 창에 직접 그리고, 펼친 목록만 우리 클래스의 자식 창으로 띄운다.
+static HWND    g_sphereDrop = NULL; // 펼친 목록(우리가 그리는 자식 창). 닫혀 있으면 NULL
 static HWND    g_hdr = NULL;       // 리스트뷰 헤더(오너드로우용 서브클래스)
 static WNDPROC g_origHdr = NULL;
 static HFONT   g_titleFont = NULL;
@@ -143,6 +148,7 @@ static HFONT   g_listFont = NULL;
 #define WIN_H    560
 #define FRAME    3        // 갈색 외곽 프레임 두께
 #define TITLE_H  26       // 커스텀 타이틀바 높이
+#define SISE_FILTER_H 30  // 타이틀바 아래 필터줄(문화권 고르기). 교역품 창 FILTER_H 와는 별개다
 
 // 팔레트 (dialog.c 와 동일 계열)
 #define COL_BG        RGB(150,130,105)
@@ -203,6 +209,112 @@ static const wchar_t* kCols[COL_COUNT] = {
 };
 static const int kColW[COL_COUNT] = { 40, 104, 78, 40, 46, 52, 40, 52, 52, 44, 240 };
 
+// ---- 필터 + 정렬 ----
+// 줄마다 라이브 값(규모/시세/건물비트/시장아이템)을 한 번만 읽어 담아 둔다. 정렬할 때마다
+// 게임 메모리를 다시 읽으면 비교 중에 값이 바뀔 수 있고 느리기도 하다.
+typedef struct {
+    int     id, scale, sise, trade, market, lib, yard, guild;
+    wchar_t mkt[256];
+} SiseRow;
+
+static SiseRow g_sise[CITY_COUNT];      // 도시 번호 순서 그대로
+static int     g_view[CITY_COUNT];      // 걸러 내고 정렬한 결과(g_sise 색인)
+static int     g_viewN = 0;
+
+static int  g_sortCol = -1;             // 정렬 기준 컬럼. -1 이면 정렬 안 함(도시 번호순)
+static int  g_sortDir = 0;              // 1 오름차순 / -1 내림차순 / 0 안 함
+
+// 문화권 목록 — kCities 에 나온 순서대로 모은다. 0번은 "전체".
+#define SPHERE_MAX 24
+static const wchar_t* g_sphere[SPHERE_MAX];
+static int  g_sphereN = 0;
+static int  g_sphereSel = 0;
+
+static void BuildSpheres(void)
+{
+    int i, k;
+    g_sphereN = 0;
+    for (i = 0; i < CITY_COUNT && g_sphereN < SPHERE_MAX; i++) {
+        const wchar_t* s = kCities[i].sphere;
+        if (!s || !s[0]) continue;
+        for (k = 0; k < g_sphereN; k++) if (lstrcmpW(g_sphere[k], s) == 0) break;
+        if (k == g_sphereN) g_sphere[g_sphereN++] = s;
+    }
+}
+
+// 라이브 값을 한 바퀴 읽어 담는다.
+static void ReadRows(void)
+{
+    int i;
+    for (i = 0; i < CITY_COUNT; i++) {
+        SiseRow* r = &g_sise[i];
+        r->id     = i;
+        r->scale  = ReadScale(i);
+        r->sise   = ReadSise(i);
+        r->trade  = ReadBuildingBit(i, BIT_TRADE);
+        r->lib    = ReadBuildingBit(i, BIT_LIBRARY);
+        r->yard   = ReadBuildingBit(i, BIT_SHIPYARD);
+        r->guild  = ReadBuildingBit(i, BIT_GUILD);
+        r->market = BuildMarketItems(i, r->mkt, 256) > 0 ? 1 : 0;
+    }
+}
+
+// 컬럼별 비교. 값이 같으면 도시 번호로 갈라 순서가 흔들리지 않게 한다.
+static int __cdecl SiseCmp(const void* pa, const void* pb)
+{
+    const SiseRow* a = &g_sise[*(const int*)pa];
+    const SiseRow* b = &g_sise[*(const int*)pb];
+    int r = 0;
+    switch (g_sortCol) {
+    case 0:  r = a->id - b->id; break;
+    case 1:  r = lstrcmpW(kCities[a->id].name, kCities[b->id].name); break;
+    case 2:  r = lstrcmpW(kCities[a->id].sphere, kCities[b->id].sphere); break;
+    case 3:  r = a->scale - b->scale; break;
+    case 4:  r = a->sise - b->sise; break;
+    case 5:  r = a->trade - b->trade; break;
+    case 6:  r = a->market - b->market; break;
+    case 7:  r = a->lib - b->lib; break;
+    case 8:  r = a->yard - b->yard; break;
+    case 9:  r = a->guild - b->guild; break;
+    case 10: r = lstrcmpW(a->mkt, b->mkt); break;
+    default: break;
+    }
+    if (r == 0) return a->id - b->id;
+    return g_sortDir < 0 ? -r : r;
+}
+
+// 고른 문화권 이름(0 = 전체)
+static const wchar_t* SphereLabel(void)
+{
+    if (g_sphereSel <= 0 || g_sphereSel > g_sphereN) return L"전체";
+    return g_sphere[g_sphereSel - 1];
+}
+
+// 닫힌 상자 자리. 펼친 목록은 이 바로 아래에 붙는다.
+#define SPH_BOX_W  150
+#define SPH_ITEM_H 20
+static RECT SphereBoxRect(void)
+{
+    RECT r;
+    r.left = FRAME + 70; r.right = r.left + SPH_BOX_W;
+    r.top  = FRAME + TITLE_H + 4; r.bottom = r.top + 22;
+    return r;
+}
+
+// 문화권으로 거르고, 정렬 기준이 있으면 정렬한다.
+static void RebuildView(void)
+{
+    int i;
+    g_viewN = 0;
+    for (i = 0; i < CITY_COUNT; i++) {
+        if (g_sphereSel > 0 && g_sphereSel <= g_sphereN &&
+            lstrcmpW(kCities[i].sphere, g_sphere[g_sphereSel - 1]) != 0) continue;
+        g_view[g_viewN++] = i;
+    }
+    if (g_sortCol >= 0 && g_sortDir != 0)
+        qsort(g_view, (size_t)g_viewN, sizeof(int), SiseCmp);
+}
+
 // 헤더 오너드로우 서브클래스 — 세피아 그라데이션 + serif 제목
 static LRESULT CALLBACK HdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
@@ -221,7 +333,12 @@ static LRESULT CALLBACK HdrProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             Bevel(dc, rc, FALSE);
             tr = rc; tr.left += 6;
             SetTextColor(dc, COL_TEXT);
-            if (i < COL_COUNT) DrawTextW(dc, kCols[i], -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            if (i < COL_COUNT) {
+                wchar_t t[32];
+                wsprintfW(t, L"%s%s", kCols[i],
+                          (i == g_sortCol && g_sortDir) ? (g_sortDir > 0 ? L" ▲" : L" ▼") : L"");
+                DrawTextW(dc, t, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
         }
         SelectObject(dc, of);
         EndPaint(h, &ps);
@@ -244,33 +361,35 @@ static void SetText(HWND lv, int item, int sub, const wchar_t* t)
     SendMessageW(lv, LVM_SETITEMTEXTW, item, (LPARAM)&it);
 }
 
+// g_view 에 담긴 순서대로 다시 채운다(필터·정렬이 바뀔 때마다 호출).
 static void PopulateList(HWND lv)
 {
-    int i;
-    for (i = 0; i < CITY_COUNT; i++)
+    int row;
+    SendMessageW(lv, WM_SETREDRAW, FALSE, 0);
+    SendMessageW(lv, LVM_DELETEALLITEMS, 0, 0);
+    for (row = 0; row < g_viewN; row++)
     {
-        LVITEMW it; wchar_t num[8], sbuf[12], mkt[256];
-        int sise, scale, nItem;
-        wsprintfW(num, L"%d", i);
-        it.mask = LVIF_TEXT; it.iItem = i; it.iSubItem = 0; it.pszText = num;
+        const SiseRow* r = &g_sise[g_view[row]];
+        LVITEMW it; wchar_t num[8], sbuf[12];
+        wsprintfW(num, L"%d", r->id);
+        it.mask = LVIF_TEXT; it.iItem = row; it.iSubItem = 0; it.pszText = num;
         SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
-        SetText(lv, i, 1, kCities[i].name);
-        SetText(lv, i, 2, kCities[i].sphere);
-        scale = ReadScale(i);
-        if (scale < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", scale);
-        SetText(lv, i, 3, sbuf);
-        sise = ReadSise(i);
-        if (sise < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", sise);
-        SetText(lv, i, 4, sbuf);
+        SetText(lv, row, 1, kCities[r->id].name);
+        SetText(lv, row, 2, kCities[r->id].sphere);
+        if (r->scale < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", r->scale);
+        SetText(lv, row, 3, sbuf);
+        if (r->sise < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", r->sise);
+        SetText(lv, row, 4, sbuf);
         // 건물: 건물수치(bit) 로 확정. 미로드시 -1 → "-"
-        SetText(lv, i, 5, BitMark(ReadBuildingBit(i, BIT_TRADE)));     // 교역소(fb21)
-        nItem = BuildMarketItems(i, mkt, 256);                          // 시장아이템 목록 + 유무 판정
-        SetText(lv, i, 6, nItem > 0 ? L"○" : L"×");                    // 시장 유무
-        SetText(lv, i, 7, BitMark(ReadBuildingBit(i, BIT_LIBRARY)));   // 도서관
-        SetText(lv, i, 8, BitMark(ReadBuildingBit(i, BIT_SHIPYARD)));  // 조선소
-        SetText(lv, i, 9, BitMark(ReadBuildingBit(i, BIT_GUILD)));     // 조합(fb22로 bit7 확정)
-        SetText(lv, i, 10, mkt);                                        // 시장아이템 이름 나열
+        SetText(lv, row, 5, BitMark(r->trade));                        // 교역소(fb21)
+        SetText(lv, row, 6, r->market ? L"○" : L"×");                 // 시장 유무
+        SetText(lv, row, 7, BitMark(r->lib));                          // 도서관
+        SetText(lv, row, 8, BitMark(r->yard));                         // 조선소
+        SetText(lv, row, 9, BitMark(r->guild));                        // 조합(fb22로 bit7 확정)
+        SetText(lv, row, 10, r->mkt);                                   // 시장아이템 이름 나열
     }
+    SendMessageW(lv, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(lv, NULL, TRUE);
 }
 
 static void PaintFrame(HWND h)
@@ -294,8 +413,129 @@ static void PaintFrame(HWND h)
     br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &cb, br); DeleteObject(br);
     cf = cb; InflateRect(&cf, -2, -2); VGradient(dc, cf, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, cf, FALSE);
     DrawTextW(dc, L"×", -1, &cb, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    // 필터줄 — 문화권 라벨 + 오른쪽에 보이는 개수/정렬 상태
+    SelectObject(dc, g_listFont);
+    {
+        RECT fr, sb, tr2;
+        wchar_t info[96];
+        fr.left = FRAME + 8; fr.right = FRAME + 70;
+        fr.top = FRAME + TITLE_H; fr.bottom = fr.top + SISE_FILTER_H;
+        DrawTextW(dc, L"문화권", -1, &fr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        // 고르는 상자(콤보박스 대신 직접 그린다)
+        sb = SphereBoxRect();
+        VGradient(dc, sb, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, sb, FALSE);
+        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &sb, br); DeleteObject(br);
+        tr2 = sb; tr2.left += 6; tr2.right -= 18;
+        DrawTextW(dc, SphereLabel(), -1, &tr2, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        tr2 = sb; tr2.left = sb.right - 18;
+        DrawTextW(dc, L"▼", -1, &tr2, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        fr.left = FRAME + 230; fr.right = rc.right - FRAME - 8;
+        if (g_sortCol >= 0 && g_sortDir)
+            wsprintfW(info, L"%d개 · %s %s (제목을 누르면 오름차순 → 내림차순 → 안 함)",
+                      g_viewN, kCols[g_sortCol], g_sortDir > 0 ? L"오름차순" : L"내림차순");
+        else
+            wsprintfW(info, L"%d개 · 정렬 안 함(도시 번호순) — 제목을 누르면 정렬합니다", g_viewN);
+        DrawTextW(dc, info, -1, &fr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
     SelectObject(dc, of);
     EndPaint(h, &ps);
+}
+
+// ---- 문화권 펼친 목록 (우리 클래스의 자식 창. 콤보박스를 대신한다) ----
+#define WC_SPHERE L"TradeUtilKR_Sphere"
+
+static void SphereApply(HWND parent, int sel)
+{
+    g_sphereSel = sel;
+    RebuildView();
+    PopulateList(g_list);
+    InvalidateRect(parent, NULL, FALSE);
+}
+
+static LRESULT CALLBACK SphereProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        RECT rc, ir; HBRUSH br; HFONT of; int k;
+        GetClientRect(h, &rc);
+        br = CreateSolidBrush(COL_FACE_TOP); FillRect(dc, &rc, br); DeleteObject(br);
+        br = CreateSolidBrush(COL_DARK);     FrameRect(dc, &rc, br); DeleteObject(br);
+        SetBkMode(dc, TRANSPARENT);
+        of = (HFONT)SelectObject(dc, g_listFont);
+        for (k = 0; k <= g_sphereN; k++)
+        {
+            ir.left = 1; ir.right = rc.right - 1;
+            ir.top = 1 + k * SPH_ITEM_H; ir.bottom = ir.top + SPH_ITEM_H;
+            if (k == g_sphereSel) {
+                br = CreateSolidBrush(COL_SEL_BG); FillRect(dc, &ir, br); DeleteObject(br);
+                SetTextColor(dc, COL_SEL_TX);
+            } else {
+                SetTextColor(dc, COL_TEXT);
+            }
+            ir.left += 6;
+            DrawTextW(dc, k == 0 ? L"전체" : g_sphere[k - 1], -1, &ir,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+        SelectObject(dc, of);
+        EndPaint(h, &ps);
+        return 0;
+    }
+
+    case WM_LBUTTONDOWN:
+    {
+        int k = (GET_Y_LPARAM(lp) - 1) / SPH_ITEM_H;
+        HWND parent = GetParent(h);
+        if (k >= 0 && k <= g_sphereN) SphereApply(parent, k);
+        PostMessageW(h, WM_CLOSE, 0, 0);
+        return 0;
+    }
+
+    case WM_KILLFOCUS:            // 다른 곳을 누르면 그냥 접는다
+        PostMessageW(h, WM_CLOSE, 0, 0);
+        return 0;
+
+    case WM_CLOSE:
+        DestroyWindow(h);
+        return 0;
+
+    case WM_DESTROY:
+        g_sphereDrop = NULL;
+        return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+// 펼치기/접기. 이미 펼쳐져 있으면 접는다.
+static void SphereToggle(HWND parent, HINSTANCE hinst)
+{
+    static BOOL reg = FALSE;
+    RECT box = SphereBoxRect();
+    int hgt = (g_sphereN + 1) * SPH_ITEM_H + 2;
+
+    if (g_sphereDrop) { DestroyWindow(g_sphereDrop); g_sphereDrop = NULL; return; }
+    if (!reg) {
+        WNDCLASSW wc;
+        ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = SphereProc;
+        wc.hInstance = hinst;
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+        wc.lpszClassName = WC_SPHERE;
+        RegisterClassW(&wc);
+        reg = TRUE;
+    }
+    g_sphereDrop = CreateWindowExW(0, WC_SPHERE, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                                   box.left, box.bottom, SPH_BOX_W, hgt,
+                                   parent, (HMENU)3, hinst, NULL);
+    if (g_sphereDrop) {
+        SetWindowPos(g_sphereDrop, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        SetFocus(g_sphereDrop);
+    }
 }
 
 static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
@@ -309,10 +549,17 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                                   DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
         g_listFont  = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                   DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+        // 문화권 고르기 — 목록에 나온 문화권만 담는다(0번은 "전체"). 상자는 직접 그린다.
+        BuildSpheres();
+        g_sphereSel = 0;
+
+        // 제목 클릭으로 정렬해야 하므로 LVS_NOSORTHEADER 를 빼서 LVN_COLUMNCLICK 을 받는다
+        // (헤더 모양은 어차피 HdrProc 에서 직접 그린다).
+        // WS_CLIPSIBLINGS 는 펼친 문화권 목록을 리스트뷰가 덮어 그리지 않게 한다.
         g_list = CreateWindowExW(0, L"SysListView32", L"",
-                                 WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_NOSORTHEADER,
-                                 FRAME, FRAME + TITLE_H,
-                                 WIN_W - 2 * FRAME, WIN_H - 2 * FRAME - TITLE_H,
+                                 WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | LVS_REPORT | LVS_SINGLESEL,
+                                 FRAME, FRAME + TITLE_H + SISE_FILTER_H,
+                                 WIN_W - 2 * FRAME, WIN_H - 2 * FRAME - TITLE_H - SISE_FILTER_H,
                                  h, (HMENU)1, g_hinst, NULL);
         SendMessageW(g_list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
         SendMessageW(g_list, WM_SETFONT, (WPARAM)g_listFont, TRUE);
@@ -322,6 +569,9 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             int c;
             for (c = 0; c < COL_COUNT; c++) AddCol(g_list, c, kCols[c], kColW[c]);
         }
+        g_sortCol = -1; g_sortDir = 0;
+        ReadRows();
+        RebuildView();
         PopulateList(g_list);
         // 헤더 오너드로우 서브클래스
         g_hdr = (HWND)SendMessageW(g_list, LVM_GETHEADER, 0, 0);
@@ -361,15 +611,35 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             }
             return CDRF_DODEFAULT;
         }
+        // 제목 클릭 — 오름차순 → 내림차순 → 안 함 순으로 돈다.
+        if (nh->idFrom == 1 && nh->code == LVN_COLUMNCLICK)
+        {
+            int col = ((LPNMLISTVIEW)lp)->iSubItem;
+            if (col < 0 || col >= COL_COUNT) return 0;
+            if (col == g_sortCol) {
+                if      (g_sortDir > 0) g_sortDir = -1;
+                else if (g_sortDir < 0) { g_sortDir = 0; g_sortCol = -1; }
+                else                    g_sortDir = 1;
+            } else {
+                g_sortCol = col; g_sortDir = 1;
+            }
+            RebuildView();
+            PopulateList(g_list);
+            if (g_hdr) InvalidateRect(g_hdr, NULL, TRUE);
+            InvalidateRect(h, NULL, FALSE);
+            return 0;
+        }
         return 0;
     }
 
     case WM_LBUTTONDOWN:
     {
-        POINT pt; RECT rc, cb;
+        POINT pt; RECT rc, cb, sb;
         pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
         GetClientRect(h, &rc); cb = CloseRect(rc);
         if (PtInRect(&cb, pt)) { DestroyWindow(h); return 0; }
+        sb = SphereBoxRect();
+        if (PtInRect(&sb, pt)) { SphereToggle(h, g_hinst); return 0; }
         if (pt.y < FRAME + TITLE_H)   // 타이틀바 드래그로 창 이동
         {
             ReleaseCapture();
@@ -388,6 +658,7 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (g_hdrFont)   { DeleteObject(g_hdrFont);   g_hdrFont = NULL; }
         if (g_listFont)  { DeleteObject(g_listFont);  g_listFont = NULL; }
         g_hdr = NULL; g_origHdr = NULL; g_siseWnd = NULL; g_list = NULL;
+        g_sphereDrop = NULL; g_sphereSel = 0; g_sortCol = -1; g_sortDir = 0;
         return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
