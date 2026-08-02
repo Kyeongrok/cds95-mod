@@ -70,6 +70,7 @@ static HCURSOR g_hand = NULL, g_arrow = NULL;   // 클릭 요소 위 손가락 �
 static int     g_sel = -1;            // 선택된 형태(gid) — 없으면 -1
 static int     g_tab = 0;             // 0 = 스킨, 1 = 성능
 static int     g_stShip = -1, g_stField = -1, g_stHi = 0;   // 성능표에서 고른 칸
+static wchar_t g_yardMsg[64] = L"";   // [조선소 갱신] 결과 한 줄
 
 // %TEMP%\cds_shiptype.txt 에 형태 type write (getter 리다이렉트가 읽어 즉시 반영)
 static void WriteShipType(int type)
@@ -258,7 +259,7 @@ static void OnPaint(HWND h)
     { RECT tr=tb; tr.left+=8;
       DrawTextW(dc, g_tab == 0
                 ? L"함선 스프라이트 — [변경]=스킨 선택/추가/원본, 아래=편집(내보내기·불러오기)"
-                : L"함선 성능 — 칸을 누르고 휠(왼쪽=현재/오른쪽=최대). 등장은 눌러서 연도를 고릅니다",
+                : L"함선 성능 — 칸+휠(왼쪽=현재/오른쪽=최대). 등장 고친 뒤엔 [조선소 갱신]을 눌러야 반영",
                 -1, &tr, DT_LEFT|DT_VCENTER|DT_SINGLELINE); }
     cb = CloseRect(); DrawBtn(dc, cb, L"×");
     { RECT t0 = TabRect(0), t1 = TabRect(1);
@@ -274,6 +275,13 @@ static void OnPaint(HWND h)
     if (g_tab == 1) {
         PaintStats(dc);
         DrawBtn(dc, BtnRect(0), L"원래대로");
+        DrawBtn(dc, BtnRect(1), L"조선소 갱신");
+        if (g_yardMsg[0]) {
+            RECT mr; mr.left = BtnRect(2).left; mr.top = BTN_Y; mr.right = WIN_W - WFRAME; mr.bottom = BTN_Y + BTN_H;
+            SetTextColor(dc, COL_SEL);
+            DrawTextW(dc, g_yardMsg, -1, &mr, DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+            SetTextColor(dc, COL_TEXT);
+        }
         SelectObject(dc, of);
         EndPaint(h, &ps);
         return;
@@ -744,7 +752,14 @@ static LRESULT CALLBACK ShipProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (ShipStat_Ready()) {
                 RECT b0 = BtnRect(0);
                 int row, col;
-                if (PtInRect(&b0, pt)) { ShipStat_Restore(); InvalidateRect(h,NULL,FALSE); return 0; }
+                if (PtInRect(&b0, pt)) { ShipStat_Restore(); g_yardMsg[0]=0; InvalidateRect(h,NULL,FALSE); return 0; }
+                { RECT b1 = BtnRect(1);
+                  if (PtInRect(&b1, pt)) {
+                      int n = ShipStat_RefreshYards();
+                      if (n > 0) wsprintfW(g_yardMsg, L"조선소 %d곳 다시 계산했습니다.", n);
+                      else       wsprintfW(g_yardMsg, L"게임에 들어간 뒤에 눌러 주세요.");
+                      InvalidateRect(h,NULL,FALSE); return 0;
+                  } }
                 for (row = 0; row < SHIPSTAT_N; row++)
                     for (col = 0; col < SHIPSTAT_FIELD_N; col++) {
                         RECT r = StCell(row, col);

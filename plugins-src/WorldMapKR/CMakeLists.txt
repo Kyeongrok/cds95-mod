@@ -4,6 +4,7 @@ add_library(WorldMapKR SHARED
     src/mapwin.c
     src/world.c
     src/citydb.c
+    src/discdb.c
     ../CharacterUtilKR/src/uikit.c
 )
 

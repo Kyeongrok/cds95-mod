@@ -146,6 +146,39 @@ int ShipStat_Set(int ship, int field, int hi, int v)
     return 1;
 }
 
+// ---- 조선소 목록 즉시 갱신 ----
+// 0x44B420~0x44B437 의 루프를 그대로 옮긴 것:
+//     push i; call 0x429950; add esp,4;  mov ecx,eax;  call 0x42A340
+#define YEAR_RVA      0x1A4D20u
+#define CITY_GET_RVA  0x29950u    // __cdecl   도시객체* (int idx). 도시배열 0x5863A8, 92바이트 x 226
+#define CITY_SHIP_RVA 0x2A340u    // __thiscall void (도시객체*)  — 스택 인자 없음
+#define CITY_N        226
+
+typedef void* (__cdecl    *CityGetFn)(int);
+typedef void  (__fastcall *CityShipFn)(void* self, void* unused);   // ecx 만 쓰므로 thiscall 대용
+
+int ShipStat_RefreshYards(void)
+{
+    const unsigned char* base = (const unsigned char*)GetModuleHandleW(NULL);
+    CityGetFn  get;
+    CityShipFn calc;
+    int year, i, n = 0;
+
+    if (!g_tbl || !base) return 0;
+    if (!Readable(base + YEAR_RVA, sizeof(int))) return 0;
+    year = *(const int*)(base + YEAR_RVA);
+    if (year < 1400 || year > 1700) return 0;   // 아직 세이브를 안 불러왔다
+
+    get  = (CityGetFn)(UINT_PTR)(base + CITY_GET_RVA);
+    calc = (CityShipFn)(UINT_PTR)(base + CITY_SHIP_RVA);
+    for (i = 0; i < CITY_N; i++) {
+        void* c = get(i);
+        // 0x42A340 은 첫머리에서 [this+0x1C] 의 0x40 비트(조선소 있음)를 보고 없으면 바로 빠진다.
+        if (c) { calc(c, NULL); n++; }
+    }
+    return n;
+}
+
 void ShipStat_Restore(void)
 {
     int i, k;

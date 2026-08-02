@@ -131,6 +131,7 @@ foreach ($plugin in $BuiltPlugins) {
 # 플러그인이 옆에서 읽는 데이터 파일. 이미 있으면 사용자가 고쳐 놨을 수 있으므로 덮지 않는다.
 $DataFiles = @(
     (Join-Path $PluginsSrc "WorldMapKR\cities.json"),
+    (Join-Path $PluginsSrc "WorldMapKR\discoveries.json"),
     (Join-Path $PluginsSrc "PatchUtilKR\patches.json")
 )
 foreach ($data in $DataFiles) {

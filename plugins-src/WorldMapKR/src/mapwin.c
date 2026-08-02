@@ -2,6 +2,7 @@
 #include "world.h"
 #include "uikit.h"
 #include "citydb.h"        // 도시 좌표/이름 (CDS95Util\cities.json, 없으면 내장 표)
+#include "discdb.h"        // 발견물 좌표/이름 (CDS95Util\discoveries.json, 없으면 내장 표)
 #include <windowsx.h>
 
 // WorldMapKR — WORLD.CDS 를 그린 세계지도 위에 지금 함대 위치를 찍어 보여주는 창.
@@ -44,6 +45,7 @@ static int       g_lon = -1, g_lat = -1;   // 마지막으로 읽은 원본값. 
 static int  g_zi = 0;                      // kZoom 색인
 static int  g_vx = 0, g_vy = 0;            // 보이는 영역의 좌상단(셀 좌표)
 static int  g_cities = 1;                  // 도시 표시 켜짐
+static int  g_discs  = 1;                  // 발견물 표시 켜짐
 static int  g_drag = 0;                    // 지도를 끌고 있는 중인지
 static POINT g_dragPt;                     // 끌기 시작점(클라이언트 좌표)
 static int  g_dragVx, g_dragVy;            // 끌기 시작 시점의 g_vx/g_vy
@@ -193,6 +195,50 @@ static void DrawCities(HDC dc)
     }
 }
 
+// 발견물 표시 — 노란 사각형(넓은 것)이나 마름모(좁은 것). 도시(크림/초록)·함대(빨강)와 안 겹치는 색이다.
+// 좌표가 없는 발견물(항로·인물·비보 등 127개)은 건너뛴다.
+// 범위가 넓은 것은 DiscDb_DrawBox 가 300칸으로 줄여 준다 — 안 그러면 남극대륙(2500x150)과
+// 신대륙(481x751)이 지도를 덮어 다른 마커를 다 가린다.
+static void DrawDiscoveries(HDC dc)
+{
+    int i, sx1, sy1, sx2, sy2;
+    int labels = (kZoom[g_zi] >= 4);           // 도시보다 한 단계 더 확대해야 이름을 붙인다
+    HPEN pen = CreatePen(PS_SOLID, 1, RGB(235, 190, 70));
+    HPEN old = (HPEN)SelectObject(dc, pen);
+    HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+
+    for (i = 0; i < DISCDB_MAX; i++) {
+        int x1, y1, x2, y2, w, hgt;
+        if (!DiscDb_DrawBox(i, &x1, &y1, &x2, &y2)) continue;
+        // 양 끝을 각각 화면으로 옮긴다. 둘 다 화면 밖이면 건너뛴다(가운데만 걸친 큰 범위는
+        // 어차피 300칸으로 줄어 있어 이 판정으로 충분하다).
+        if (!CellToScreen(x1, y1, &sx1, &sy1) && !CellToScreen(x2, y2, &sx2, &sy2)) continue;
+        if (!CellToScreen(x1, y1, &sx1, &sy1)) { sx1 = MAP_X; sy1 = MAP_Y; }
+        if (!CellToScreen(x2, y2, &sx2, &sy2)) { sx2 = MAP_X + MAP_W - 1; sy2 = MAP_Y + MAP_H - 1; }
+
+        w = sx2 - sx1; hgt = sy2 - sy1;
+        if (w >= 6 || hgt >= 6) {
+            Rectangle(dc, sx1, sy1, sx2 + 1, sy2 + 1);        // 넓은 범위는 테두리만
+        } else {
+            int cx = (sx1 + sx2) / 2, cy = (sy1 + sy2) / 2;   // 좁으면 마름모 한 개
+            POINT p[4];
+            p[0].x = cx;     p[0].y = cy - 4;
+            p[1].x = cx + 4; p[1].y = cy;
+            p[2].x = cx;     p[2].y = cy + 4;
+            p[3].x = cx - 4; p[3].y = cy;
+            Polygon(dc, p, 4);
+        }
+        if (labels) {
+            const DiscPt* d = DiscDb_At(i);
+            if (d->name[0]) ShadowText(dc, sx2 + 5, (sy1 + sy2) / 2 - 7, d->name);
+        }
+    }
+
+    SelectObject(dc, ob);
+    SelectObject(dc, old);
+    DeleteObject(pen);
+}
+
 // 지도 위 함대 표시 — 빨간 동그라미 + 십자선. 보이는 영역 밖이면 그리지 않는다.
 static void DrawMarker(HDC dc, int lon, int lat)
 {
@@ -252,8 +298,9 @@ static void OnPaint(HWND h)
     { HBRUSH br = CreateSolidBrush(COL_DARK); FrameRect(dc, &mr, br); DeleteObject(br); }
 
     if (World_Pixels()) {
-        if (g_cities) DrawCities(dc);
-        if (g_lon >= 0) DrawMarker(dc, g_lon, g_lat);   // 함대는 도시 위에 얹는다
+        if (g_discs)  DrawDiscoveries(dc);              // 발견물을 깔고
+        if (g_cities) DrawCities(dc);                   // 도시를 얹고
+        if (g_lon >= 0) DrawMarker(dc, g_lon, g_lat);   // 함대를 맨 위에
     }
 
     ir.left = MAP_X; ir.right = MAP_X + MAP_W;
@@ -262,8 +309,9 @@ static void OnPaint(HWND h)
     else            lstrcpyW(buf, L"항해 중이 아닙니다(좌표를 읽지 못했습니다).");
     UI_Text(dc, ir, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
-    wsprintfW(buf, L"x%d · 도시 %d%s (초록=도서관) · 휠 확대 / 끌기 이동 / 우클릭 전체 / C 도시 / R 다시읽기",
-              kZoom[g_zi], CityDb_Marked(), CityDb_FromFile() ? L"" : L"(내장)");
+    wsprintfW(buf, L"x%d · 도시 %d%s (초록=도서관) · 발견물 %d%s (노랑) · 휠 확대 / 끌기 / 우클릭 전체 / C 도시 / D 발견물 / R 다시읽기",
+              kZoom[g_zi], CityDb_Marked(), CityDb_FromFile() ? L"" : L"(내장)",
+              DiscDb_Marked(), DiscDb_FromFile() ? L"" : L"(내장)");
     UI_Text(dc, ir, buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
     UI_BufEnd(&ub);
@@ -277,6 +325,7 @@ static LRESULT CALLBACK MapProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         UI_CreateFonts();
         g_zi = ZOOM_START; g_drag = 0;
         CityDb_Load(g_hinst);
+        DiscDb_Load(g_hinst);
         if (!ReadPos(&g_lon, &g_lat)) { g_lon = -1; g_lat = -1; }
         // 확대한 채로 여니 어디를 보여줄지가 중요하다. 함대 자리를 가운데 놓고,
         // 좌표를 못 읽었으면(항해 전) 지도 한복판을 보여준다.
@@ -337,8 +386,9 @@ static LRESULT CALLBACK MapProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE) { DestroyWindow(h); return 0; }
         if (wp == 'C') { g_cities = !g_cities; InvalidateRect(h, NULL, FALSE); return 0; }
+        if (wp == 'D') { g_discs  = !g_discs;  InvalidateRect(h, NULL, FALSE); return 0; }
         // cities.json 을 고치고 창을 닫았다 열 것 없이 여기서 바로 다시 읽는다.
-        if (wp == 'R') { CityDb_Load(g_hinst); InvalidateRect(h, NULL, FALSE); return 0; }
+        if (wp == 'R') { CityDb_Load(g_hinst); DiscDb_Load(g_hinst); InvalidateRect(h, NULL, FALSE); return 0; }
         return 0;
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY:
