@@ -599,6 +599,102 @@ static void PatchesPath(wchar_t* out, int cch)
     lstrcatW(out, L"patches.json");
 }
 
+// ------------------------------------------------------------------ 고른 상태 기억하기
+// 이 플러그인은 메모리만 고치므로 게임을 끄면 전부 원래대로 돌아간다.
+// 그래서 창에서 켜고 끈 것, 고른 값을 patches.state 에 적어 두고 다음 실행 때 그대로 다시 적용한다.
+// 형식은 줄마다 "항목이름<탭>값" (UTF-8). 값은 토글/값형이면 on, 선택형이면 숫자다.
+// 항목은 이름으로 맞춘다 — patches.json 의 순서가 바뀌어도 따라간다.
+static void StatePath(wchar_t* out, int cch)
+{
+    wchar_t* q;
+    wchar_t* slash = out;
+    GetModuleFileNameW(g_hinst, out, cch);
+    for (q = out; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
+    slash[1] = 0;
+    lstrcatW(out, L"patches.state");
+}
+
+static void SaveState(void)
+{
+    wchar_t path[MAX_PATH];
+    char line[512];
+    HANDLE f;
+    DWORD wr;
+    int i;
+    // /utf-8 로 컴파일하므로 좁은 문자열 리터럴이 그대로 UTF-8 이다.
+    static const char hdr[] =
+        "# PatchUtilKR — 창에서 고른 상태. 게임을 다시 켜면 이대로 다시 적용한다.\r\n"
+        "# 이 파일을 지우면 다음 실행부터 patches.json 기본값으로 돌아간다.\r\n";
+
+    StatePath(path, MAX_PATH);
+    f = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, NULL);
+    if (f == INVALID_HANDLE_VALUE) { LogW(L"[PatchUtilKR] patches.state 쓰기 실패"); return; }
+    WriteFile(f, hdr, (DWORD)(sizeof(hdr) - 1), &wr, NULL);
+    for (i = 0; i < g_npatch; i++) {
+        Patch* p = &g_patches[i];
+        char nm[256];
+        int n;
+        if (!p->name[0]) continue;
+        if (p->isChoice) {
+            int v = Patch_ReadValue(p);
+            if (v < 0) continue;
+            if (WideCharToMultiByte(CP_UTF8, 0, p->name, -1, nm, sizeof(nm), NULL, NULL) <= 0) continue;
+            n = wsprintfA(line, "%s\t%d\r\n", nm, v);
+        } else {
+            if (!p->applied) continue;                 // 적힌 것만 다시 켠다 — 없으면 꺼진 것
+            if (WideCharToMultiByte(CP_UTF8, 0, p->name, -1, nm, sizeof(nm), NULL, NULL) <= 0) continue;
+            n = wsprintfA(line, "%s\ton\r\n", nm);
+        }
+        WriteFile(f, line, (DWORD)n, &wr, NULL);
+    }
+    CloseHandle(f);
+}
+
+// patches.state 를 읽어 그대로 다시 적용한다. PatchCore_Load 끝에서 부른다.
+static void ApplySavedState(void)
+{
+    wchar_t path[MAX_PATH];
+    char* buf;
+    char* p;
+    int nOn = 0, nVal = 0;
+
+    StatePath(path, MAX_PATH);
+    buf = ReadWholeFile(path);
+    if (!buf) return;
+
+    p = buf;
+    if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) p += 3;
+    while (*p) {
+        char* line = p;
+        char* tab;
+        wchar_t wname[256];
+        int i;
+        while (*p && *p != '\n') p++;
+        if (*p) *p++ = 0;
+        { char* e = line + lstrlenA(line); while (e > line && (e[-1] == '\r' || e[-1] == ' ')) *--e = 0; }
+        if (!line[0] || line[0] == '#') continue;
+        tab = line;
+        while (*tab && *tab != '\t') tab++;
+        if (!*tab) continue;
+        *tab++ = 0;
+        if (MultiByteToWideChar(CP_UTF8, 0, line, -1, wname, 256) <= 0) continue;
+        for (i = 0; i < g_npatch; i++) {
+            Patch* q = &g_patches[i];
+            if (lstrcmpW(q->name, wname) != 0) continue;
+            if (q->isChoice) {
+                int v = 0, k;
+                for (k = 0; tab[k] >= '0' && tab[k] <= '9'; k++) v = v * 10 + (tab[k] - '0');
+                if (k && Patch_SetValue(q, v)) nVal++;
+            } else if (tab[0] == 'o' && tab[1] == 'n') {
+                if (!q->applied && Patch_SetApplied(i, TRUE)) nOn++;
+            }
+            break;
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, buf);
+    if (nOn || nVal) LogW(L"[PatchUtilKR] 지난번 상태 복원: 켠 것 %d개, 값 %d개", nOn, nVal);
+}
+
 void PatchCore_Load(void)
 {
     wchar_t path[MAX_PATH];
@@ -654,6 +750,9 @@ void PatchCore_Load(void)
         else
             LogW(L"[PatchUtilKR] 자동 적용 실패(주소 불일치): %s", p->name[0] ? p->name : L"(무명)");
     }
+    // 지난번에 창에서 고른 상태를 그대로 되살린다. 메모리 패치라 게임을 끄면 다 날아가므로
+    // 이걸 안 하면 켤 때마다 다시 눌러야 한다. AutoApply 와 같은 시점(DllMain)이다.
+    ApplySavedState();
 }
 
 // ================================================================== UI (ListView 창)
@@ -808,6 +907,7 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
                         wchar_t st[48];
                         StateText(p, st);
                         ListView_SetItemText(g_list, row, 4, st);
+                        SaveState();          // 다음 실행 때 그대로 되살리도록 적어 둔다
                     }
                 }
                 return 0;
@@ -846,6 +946,7 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
                             StateText(p, st);
                             ListView_SetItemText(g_list, nm->iItem, 4, st);
                             LogW(L"[PatchUtilKR] %s %s", p->name[0] ? p->name : L"(무명)", is ? L"적용" : L"해제");
+                            SaveState();      // 다음 실행 때 그대로 되살리도록 적어 둔다
                         }
                     }
                 }
