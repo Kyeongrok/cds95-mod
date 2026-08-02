@@ -10,6 +10,8 @@
 //   배(행) 클릭 = 그 형태를 해상 스킨으로 선택(스탯 불변). [내보내기]/[불러오기] 버튼으로 파일 편집 루프.
 // 렌더: 아틀라스 0x5D68C8(48×48 팔레트인덱스) → kFacePalette 로 24bpp 변환 → StretchDIBits.
 
+#include "ship_stats.h"
+
 #define WC_SHIP   L"ShipSkinKR_Window"
 
 #define ATLAS_RVA  0x1D68C8u
@@ -26,11 +28,22 @@
 #define CGAP       4
 #define PITCH      (DISP + CGAP)
 #define GX         (WFRAME + LBL_W)
-#define GY         (WFRAME + TITLE_H + 6)
+#define TAB_H      22
+#define GY         (WFRAME + TITLE_H + TAB_H + 6)
+
+// ---- [성능] 탭: 함선 성능표 ----
+#define ST_NAME_W  88
+#define ST_COL_W   64
+#define ST_ROW_H   22
+#define ST_X       (WFRAME + 4)
+#define ST_Y       GY
 #define GRID_H     (NGID * PITCH)
 #define BTN_Y      (GY + GRID_H + 8)
 #define BTN_H      24
-#define WIN_W      (GX + NDIR*PITCH + WFRAME + 4)
+// 창 폭은 두 탭 중 넓은 쪽에 맞춘다(성능표가 더 넓어서 스킨 탭 오른쪽에 여백이 좀 남는다).
+#define SKIN_W     (GX + NDIR*PITCH + WFRAME + 4)
+#define STATS_W    (ST_X + ST_NAME_W + SHIPSTAT_FIELD_N*ST_COL_W + WFRAME + 4)
+#define WIN_W      (SKIN_W > STATS_W ? SKIN_W : STATS_W)
 #define WIN_H      (BTN_Y + BTN_H + WFRAME + 6)
 
 #define COL_BG      RGB(38,48,66)
@@ -55,6 +68,8 @@ static HWND    g_wnd = NULL;
 static HFONT   g_font = NULL;
 static HCURSOR g_hand = NULL, g_arrow = NULL;   // 클릭 요소 위 손가락 커서
 static int     g_sel = -1;            // 선택된 형태(gid) — 없으면 -1
+static int     g_tab = 0;             // 0 = 스킨, 1 = 성능
+static int     g_stShip = -1, g_stField = -1, g_stHi = 0;   // 성능표에서 고른 칸
 
 // %TEMP%\cds_shiptype.txt 에 형태 type write (getter 리다이렉트가 읽어 즉시 반영)
 static void WriteShipType(int type)
@@ -74,6 +89,50 @@ static RECT BtnRect(int i)   { RECT r; int w=120; r.left=GX + i*(w+8); r.right=r
 static RECT RowRect(int gid) { RECT r; r.left=WFRAME+2; r.right=GX-2; r.top=GY+gid*PITCH; r.bottom=r.top+DISP; return r; }
 static RECT RowChangeRect(int gid) { RECT r; int t=GY+gid*PITCH; r.left=WFRAME+8; r.right=GX-6; r.top=t+30; r.bottom=t+48; return r; }  // sp5-10 배별 [변경]
 static const wchar_t* kBtn[NBTN] = { L"내보내기", L"불러오기", L"원래대로(전체)" };
+
+static RECT TabRect(int i) { RECT r; r.left=WFRAME+4+i*66; r.right=r.left+62;
+                             r.top=WFRAME+TITLE_H+1; r.bottom=r.top+TAB_H-2; return r; }
+// 성능표 칸. col<0 이면 이름 칸.
+static RECT StCell(int row, int col)
+{
+    RECT r;
+    r.left  = (col < 0) ? ST_X : ST_X + ST_NAME_W + col * ST_COL_W;
+    r.right = (col < 0) ? ST_X + ST_NAME_W : r.left + ST_COL_W;
+    r.top = ST_Y + (row + 1) * ST_ROW_H;    // 0행은 머리글
+    r.bottom = r.top + ST_ROW_H;
+    return r;
+}
+
+// ---- 등장시기 선택 상자 ----
+// 등장 칸은 값 범위가 좁고 뜻이 분명해서 휠보다 목록에서 고르는 편이 낫다.
+// 1480(게임 시작) ~ 1535(갤리온) 를 8칸 x 7줄로 펼친다.
+#define YR_MIN  1480
+#define YR_MAX  1535
+#define YR_N    (YR_MAX - YR_MIN + 1)
+#define YR_COLS 8
+#define YR_ROWS ((YR_N + YR_COLS - 1) / YR_COLS)
+#define YR_CW   56
+#define YR_CH   18
+
+static int g_yrOpen = -1;     // 목록이 열린 배(row). -1 이면 닫힘
+
+static RECT YrPanel(void)
+{
+    RECT c = StCell(g_yrOpen < 0 ? 0 : g_yrOpen, SF_YEAR), r;
+    int w = YR_COLS*YR_CW + 2, hgt = YR_ROWS*YR_CH + 2;
+    r.right = c.right; r.left = r.right - w;
+    r.top = c.bottom;  r.bottom = r.top + hgt;
+    if (r.bottom > WIN_H - WFRAME) { r.bottom = c.top; r.top = r.bottom - hgt; }  // 아래가 모자라면 위로
+    if (r.left < WFRAME) { r.left = WFRAME; r.right = r.left + w; }
+    return r;
+}
+static RECT YrItem(int i)
+{
+    RECT p = YrPanel(), r;
+    r.left = p.left + 1 + (i % YR_COLS) * YR_CW; r.right  = r.left + YR_CW;
+    r.top  = p.top  + 1 + (i / YR_COLS) * YR_CH; r.bottom = r.top  + YR_CH;
+    return r;
+}
 
 // 미리보기용 아틀라스 캐시: 오버레이 ship_atlas.bin(=반영될 스킨) 우선, 없으면 라이브 0x5D68C8.
 // (라이브는 타이틀/비-해상 상태에서 비어있을 수 있어 창이 검게 나오는 것 방지.)
@@ -119,6 +178,71 @@ static void DrawBtn(HDC dc, RECT r, const wchar_t* t)
     DrawTextW(dc, t, -1, &r, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
 }
 
+// [성능] 탭 — 8종 x 7칸. 현재/최대가 있는 칸은 "80/100" 으로 붙여 쓰고,
+// 왼쪽 절반을 누르면 현재, 오른쪽 절반을 누르면 최대가 잡힌다. 휠로 값을 바꾼다.
+static void PaintStats(HDC dc)
+{
+    HBRUSH b;
+    int row, col;
+    wchar_t buf[48];
+
+    if (!ShipStat_Ready()) {
+        RECT e; e.left=ST_X; e.top=ST_Y+40; e.right=WIN_W-WFRAME; e.bottom=e.top+30;
+        SetTextColor(dc, COL_TEXT);
+        DrawTextW(dc, L"함선 성능표를 찾지 못했습니다(다른 판본의 실행 파일인 듯합니다).",
+                  -1, &e, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        return;
+    }
+
+    // 머리글
+    SetTextColor(dc, COL_SEL);
+    for (col = 0; col < SHIPSTAT_FIELD_N; col++) {
+        RECT r = StCell(-1, col);
+        DrawTextW(dc, ShipStat_FieldName(col), -1, &r, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    }
+
+    for (row = 0; row < SHIPSTAT_N; row++) {
+        RECT nr = StCell(row, -1);
+        if (row & 1) { b = CreateSolidBrush(COL_PANEL);
+                       { RECT rr = nr; rr.right = ST_X + ST_NAME_W + SHIPSTAT_FIELD_N*ST_COL_W;
+                         FillRect(dc, &rr, b); } DeleteObject(b); }
+        SetTextColor(dc, COL_TEXT);
+        { RECT r = nr; r.left += 4; DrawTextW(dc, ShipStat_Name(row), -1, &r, DT_LEFT|DT_VCENTER|DT_SINGLELINE); }
+
+        for (col = 0; col < SHIPSTAT_FIELD_N; col++) {
+            RECT r = StCell(row, col);
+            int sel = (row == g_stShip && col == g_stField);
+            if (sel) { b = CreateSolidBrush(COL_BTN); FillRect(dc, &r, b); DeleteObject(b);
+                       b = CreateSolidBrush(COL_SEL); FrameRect(dc, &r, b); DeleteObject(b); }
+            if (col == SF_YEAR)
+                wsprintfW(buf, L"%d \x25BC", ShipStat_Get(row, col, 0));   // 선택 상자
+            else if (ShipStat_HasMax(col))
+                wsprintfW(buf, L"%d/%d", ShipStat_Get(row, col, 0), ShipStat_Get(row, col, 1));
+            else
+                wsprintfW(buf, L"%d", ShipStat_Get(row, col, 0));
+            SetTextColor(dc, sel ? COL_SEL : COL_TEXT);
+            DrawTextW(dc, buf, -1, &r, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        }
+    }
+
+    // 열려 있으면 표 위에 덮어 그린다.
+    if (g_yrOpen >= 0) {
+        RECT p = YrPanel();
+        int cur = ShipStat_Get(g_yrOpen, SF_YEAR, 0), i;
+        b = CreateSolidBrush(COL_PANEL); FillRect(dc, &p, b); DeleteObject(b);
+        b = CreateSolidBrush(COL_SEL);   FrameRect(dc, &p, b); DeleteObject(b);
+        for (i = 0; i < YR_N; i++) {
+            RECT r = YrItem(i);
+            int y = YR_MIN + i;
+            if (y == cur) { b = CreateSolidBrush(COL_BTN); FillRect(dc, &r, b); DeleteObject(b); }
+            SetTextColor(dc, y == cur ? COL_SEL : COL_TEXT);
+            wsprintfW(buf, L"%d", y);
+            DrawTextW(dc, buf, -1, &r, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        }
+        SetTextColor(dc, COL_TEXT);
+    }
+}
+
 static void OnPaint(HWND h)
 {
     PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
@@ -131,8 +255,29 @@ static void OnPaint(HWND h)
     b = CreateSolidBrush(COL_TITLE); FillRect(dc, &tb, b); DeleteObject(b);
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
     of = (HFONT)SelectObject(dc, g_font);
-    { RECT tr=tb; tr.left+=8; DrawTextW(dc, L"함선 스프라이트 — [변경]=스킨 선택/추가/원본, 아래=편집(내보내기·불러오기)", -1, &tr, DT_LEFT|DT_VCENTER|DT_SINGLELINE); }
+    { RECT tr=tb; tr.left+=8;
+      DrawTextW(dc, g_tab == 0
+                ? L"함선 스프라이트 — [변경]=스킨 선택/추가/원본, 아래=편집(내보내기·불러오기)"
+                : L"함선 성능 — 칸을 누르고 휠(왼쪽=현재/오른쪽=최대). 등장은 눌러서 연도를 고릅니다",
+                -1, &tr, DT_LEFT|DT_VCENTER|DT_SINGLELINE); }
     cb = CloseRect(); DrawBtn(dc, cb, L"×");
+    { RECT t0 = TabRect(0), t1 = TabRect(1);
+      HBRUSH sb = CreateSolidBrush(g_tab==0 ? COL_BTN : COL_PANEL); FillRect(dc,&t0,sb); DeleteObject(sb);
+      sb = CreateSolidBrush(g_tab==1 ? COL_BTN : COL_PANEL); FillRect(dc,&t1,sb); DeleteObject(sb);
+      sb = CreateSolidBrush(COL_LINE); FrameRect(dc,&t0,sb); FrameRect(dc,&t1,sb); DeleteObject(sb);
+      SetTextColor(dc, g_tab==0 ? COL_SEL : COL_TEXT);
+      DrawTextW(dc, L"스킨", -1, &t0, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+      SetTextColor(dc, g_tab==1 ? COL_SEL : COL_TEXT);
+      DrawTextW(dc, L"성능", -1, &t1, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+      SetTextColor(dc, COL_TEXT); }
+
+    if (g_tab == 1) {
+        PaintStats(dc);
+        DrawBtn(dc, BtnRect(0), L"원래대로");
+        SelectObject(dc, of);
+        EndPaint(h, &ps);
+        return;
+    }
     // 그리드 배경
     { RECT gr; gr.left=GX-1; gr.top=GY-1; gr.right=GX+NDIR*PITCH; gr.bottom=GY+GRID_H;
       b=CreateSolidBrush(COL_PANEL); FillRect(dc,&gr,b); DeleteObject(b); }
@@ -560,15 +705,66 @@ static LRESULT CALLBACK ShipProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         g_hand  = LoadCursorW(NULL, (LPCWSTR)IDC_HAND);
         g_arrow = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
         LoadAtlasCache();
+        ShipStat_Load();
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) { SetCursor(OverClickable(h) ? g_hand : g_arrow); return TRUE; }
         return DefWindowProcW(h, m, wp, lp);
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: OnPaint(h); return 0;
+    case WM_MOUSEWHEEL: {
+        // 고른 칸의 값을 휠로 바꾼다. 성능표에서만 쓴다.
+        int notches = GET_WHEEL_DELTA_WPARAM(wp) / 120;
+        if (g_tab == 1 && g_yrOpen < 0 && g_stShip >= 0 && g_stField >= 0) {
+            int cur = ShipStat_Get(g_stShip, g_stField, g_stHi);
+            int v = cur + notches * ShipStat_Step(g_stField);
+            if (v < 0) v = 0;
+            ShipStat_Set(g_stShip, g_stField, g_stHi, v);
+            InvalidateRect(h, NULL, FALSE);
+        }
+        return 0;
+    }
     case WM_LBUTTONDOWN: {
         POINT pt; int gid; pt.x=GET_X_LPARAM(lp); pt.y=GET_Y_LPARAM(lp);
+        // 등장시기 목록이 열려 있으면 그것부터. 목록 밖을 누르면 그냥 닫는다.
+        if (g_yrOpen >= 0) {
+            int i, row = g_yrOpen;
+            for (i = 0; i < YR_N; i++) {          // YrItem 은 g_yrOpen 을 쓰므로 먼저 훑고 닫는다
+                RECT r = YrItem(i);
+                if (PtInRect(&r, pt)) { ShipStat_Set(row, SF_YEAR, 0, YR_MIN + i); break; }
+            }
+            g_yrOpen = -1;
+            InvalidateRect(h, NULL, FALSE);
+            return 0;
+        }
         { RECT cb=CloseRect(); if (PtInRect(&cb,pt)) { DestroyWindow(h); return 0; } }
+        { int i; for (i=0;i<2;i++) { RECT tr=TabRect(i);
+            if (PtInRect(&tr,pt)) { g_tab=i; g_yrOpen=-1; InvalidateRect(h,NULL,FALSE); return 0; } } }
+        if (g_tab == 1) {
+            if (ShipStat_Ready()) {
+                RECT b0 = BtnRect(0);
+                int row, col;
+                if (PtInRect(&b0, pt)) { ShipStat_Restore(); InvalidateRect(h,NULL,FALSE); return 0; }
+                for (row = 0; row < SHIPSTAT_N; row++)
+                    for (col = 0; col < SHIPSTAT_FIELD_N; col++) {
+                        RECT r = StCell(row, col);
+                        if (!PtInRect(&r, pt)) continue;
+                        if (col == SF_YEAR) {          // 등장시기는 목록에서 고른다
+                            g_stShip = row; g_stField = col; g_stHi = 0;
+                            g_yrOpen = row;
+                            InvalidateRect(h, NULL, FALSE);
+                            return 0;
+                        }
+                        g_stShip = row; g_stField = col;
+                        // 현재/최대가 있는 칸은 누른 쪽으로 갈린다.
+                        g_stHi = ShipStat_HasMax(col) && pt.x > (r.left + r.right) / 2;
+                        InvalidateRect(h, NULL, FALSE);
+                        return 0;
+                    }
+            }
+            if (pt.y < WFRAME+TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
+            return 0;
+        }
         { RECT b0=BtnRect(0); if (PtInRect(&b0,pt)) { if (g_sel<0) NeedSelect(h); else DoExport(h, g_sel); return 0; } }
         { RECT b1=BtnRect(1); if (PtInRect(&b1,pt)) { if (g_sel<0) NeedSelect(h); else { DoImport(h, g_sel); LoadAtlasCache(); InvalidateRect(h,NULL,FALSE); } return 0; } }
         { RECT b2=BtnRect(2); if (PtInRect(&b2,pt)) { DoRevert(h); LoadAtlasCache(); InvalidateRect(h,NULL,FALSE); return 0; } }
@@ -584,7 +780,12 @@ static LRESULT CALLBACK ShipProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (pt.y < WFRAME+TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
         return 0;
     }
-    case WM_KEYDOWN: if (wp == VK_ESCAPE) { DestroyWindow(h); } return 0;
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE) {
+            if (g_yrOpen >= 0) { g_yrOpen = -1; InvalidateRect(h, NULL, FALSE); }   // 목록부터 닫는다
+            else DestroyWindow(h);
+        }
+        return 0;
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY:
         if (g_font) { DeleteObject(g_font); g_font = NULL; }

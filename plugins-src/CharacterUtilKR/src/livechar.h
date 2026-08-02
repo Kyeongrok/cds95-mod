@@ -59,3 +59,26 @@ int LiveChar_SetBirthYear(int slot, int year);   // 나이 = 지금연도 - 생�
 #define LIVECHAR_SKILL_MAX 3
 int LiveChar_Skill(int slot, int id);            // 못 읽으면 -1
 int LiveChar_SetSkill(int slot, int id, int lv); // 성공 1
+
+void LiveChar_NameAt(int slot, wchar_t* out, int cap);   // 그 칸의 인물 이름
+
+// 고용상태(1=대화만 2=고용가능 3=고용중). 세이브에는 +0x62 에 있는데 실행 중 배열에서는
+// CE 표에 라벨이 없어(레코드 +0xDA 뒤가 통째로 미상) 자리를 직접 찾아내야 한다.
+// 세이브의 같은 값과 대조해 딱 맞는 오프셋을 고른다 — 한 번 찾으면 기억한다.
+//   hire[i] = 세이브의 고용상태, slot[i] = 그 인물의 배열 칸(-1 이면 건너뛴다), n = 개수
+#define LIVECHAR_HIRE_TALK  1
+#define LIVECHAR_HIRE_FREE  2
+#define LIVECHAR_HIRE_TAKEN 3
+int LiveChar_CalibrateHire(const int* hire, const int* slot, int n);
+int LiveChar_HireOffset(void);            // 못 찾았으면 -1 (진단용)
+int LiveChar_Hire(int slot);              // 못 읽으면 -1
+int LiveChar_SetHire(int slot, int v);    // 성공 1
+
+// 주인공이 데리고 다니는 네 자리(부관/항해사/측량사/통역).
+// 0x1B61A0 부터 4바이트씩 넷이고, 값은 4096 + 인물 배열 칸 번호, 0xFFFFFFFF 면 비어 있다.
+// CE 표의 드롭다운이 276줄(275명 + "없음")인 것이 인물 배열 크기와 정확히 맞는다.
+// (그 뒤 0x1B61B0 은 "부인" 인데 목록이 128줄로 달라서 여기 넣지 않았다.)
+#define LIVECHAR_CREW_N 4
+const wchar_t* LiveChar_CrewLabel(int which);    // 0 -> "부관" … 3 -> "통역"
+int  LiveChar_Crew(int which);                   // 그 자리의 인물 칸 번호. 비었으면 -1
+int  LiveChar_SetCrew(int which, int slot);      // slot < 0 이면 비운다. 성공 1

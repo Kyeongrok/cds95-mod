@@ -5,14 +5,17 @@
 #include "livechar.h"
 
 // ---- 목록 레이아웃 ----
+// NAV_Y / NAV_ROW_H / NAV_ROWS / NAV_H / CREW_* 는 ui.h 에 있다 — 창 높이가 그 값에 딸려 있어서다.
 #define NAV_X      (FRAME + GAP)                            // 13
-#define NAV_Y      (FRAME + TITLE_H + TAB_H + FILTER_H + 6) // 91
-#define NAV_ROW_H  64
-#define NAV_ROWS   8
-#define NAV_H      (NAV_ROW_H * NAV_ROWS)                   // 512
 #define NAV_W      (WIN_W - NAV_X - GAP - SB_W - FRAME)     // 722
 #define ROW_PORT_W 40
 #define ROW_PORT_H 48
+
+// 승무원 네 자리 줄 — 275명 + "없음" 중에서 고른다. 목록이 길어 휠로 굴린다.
+#define CR_COLS    2
+#define CR_ROWS    14
+#define CR_ITEM_W  200
+#define CR_BOX_W   140
 
 // 드롭다운(직접 그림)
 #define DD_ITEM_H  22
@@ -58,6 +61,10 @@ static int   g_yrChar = -1;
 static RECT  g_yrPanel;
 static int   g_skChar = -1;
 static RECT  g_skPanel;
+// 승무원 자리 목록(g_open==5). g_crWhich = 고르는 중인 자리(0~3), g_crScroll = 맨 위 행.
+static int   g_crWhich = -1;
+static RECT  g_crPanel;
+static int   g_crScroll = 0;
 
 // g_save.chars 색인 -> 실행 중 인물 배열의 칸 번호.
 // 0 = 아직 안 찾음 / -1 = 못 찾음 / 그 외 = 칸 번호 + 1.
@@ -81,6 +88,23 @@ static int LiveSlotOf(int ci)
         g_liveSlot[ci] = (s >= 0) ? s + 1 : -1;
     }
     return g_liveSlot[ci] > 0 ? g_liveSlot[ci] - 1 : -1;
+}
+
+// 실행 중 배열에서 고용상태 자리를 찾아낸다(세이브의 같은 값과 대조).
+// 짝을 찾은 인물이 있어야 대조가 되므로 목록을 만든 뒤에 부른다.
+static void CalibrateHire(void)
+{
+    static int hire[512], slot[512];
+    int i, n = 0;
+    if (!LiveChar_Ready() || LiveChar_HireOffset() >= 0) return;
+    for (i = 0; i < g_save.count && n < 512; i++) {
+        int s = LiveSlotOf(i);
+        if (s < 0) continue;
+        hire[n] = g_save.chars[i].hire;
+        slot[n] = s;
+        n++;
+    }
+    LiveChar_CalibrateHire(hire, slot, n);
 }
 
 // 목록에 있는 인물 중 실행 중 배열에서 짝을 찾은 수. 진단 표시용.
@@ -125,6 +149,24 @@ static RECT RcSkill(void)   { return Rc(307, 120); }
 static RECT RcLvLbl(void)   { return Rc(433, 22); }
 static RECT RcLv(void)      { return Rc(459, 70); }
 static RECT RcInfo(void)    { return Rc(541, WIN_W - FRAME - 8 - 541); }
+// 승무원 네 자리 줄. [부관 ...][항해사 ...][측량사 ...][통역 ...] 을 나란히 놓는다.
+static RECT RcCrewBox(int which)
+{
+    RECT r;
+    int w = (NAV_W - 8) / LIVECHAR_CREW_N;
+    r.left  = NAV_X + which * w + 44;
+    r.right = NAV_X + which * w + w - 8;
+    r.top = CREW_Y; r.bottom = CREW_Y + 22;
+    return r;
+}
+static RECT RcCrewLabel(int which)
+{
+    RECT r = RcCrewBox(which);
+    r.right = r.left - 4;
+    r.left  = r.right - 44;
+    return r;
+}
+
 static RECT RcTrack(void)
 {
     RECT r;
@@ -199,6 +241,7 @@ static void Rebuild(void)
 
     g_scroll = 0;
     g_sel = -1;
+    CalibrateHire();
 }
 
 static void Reload(HWND h)
@@ -338,6 +381,87 @@ static void DrawSkillPanel(HDC dc)
     }
 }
 
+// ---- 승무원 자리 ----
+
+static int CrewItemCount(void) { return LIVECHAR_COUNT + 1; }   // "없음" + 275명
+static int CrewMaxScroll(void)
+{
+    int m = (CrewItemCount() + CR_COLS - 1) / CR_COLS - CR_ROWS;
+    return m < 0 ? 0 : m;
+}
+// 목록의 i 번째: 0 = 없음, 그 밖은 인물 칸 (i-1).
+static void CrewItemText(int i, wchar_t* out, int cap)
+{
+    if (i == 0) { lstrcpynW(out, L"(없음)", cap); return; }
+    LiveChar_NameAt(i - 1, out, cap);
+    if (!out[0]) wsprintfW(out, L"#%d", i - 1);
+}
+
+static void OpenCrewPanel(int which, RECT anchor)
+{
+    int w = CR_COLS * CR_ITEM_W + SB_W, hgt = CR_ROWS * DD_ITEM_H;
+    RECT p;
+    int cur = LiveChar_Crew(which), want, mx;
+    p.left = anchor.left; p.right = p.left + w;
+    p.top  = anchor.bottom; p.bottom = p.top + hgt;
+    if (p.right > WIN_W - FRAME) { int d = p.right - (WIN_W - FRAME); p.left -= d; p.right -= d; }
+    if (p.left < FRAME)          { p.left = FRAME; p.right = p.left + w; }
+    if (p.bottom > WIN_H - FRAME) { p.top = anchor.top - hgt; p.bottom = p.top + hgt; }
+    if (p.top < FRAME)            { p.top = FRAME; p.bottom = p.top + hgt; }
+    g_crPanel = p;
+    g_crWhich = which;
+    g_open    = 5;
+    // 지금 앉아 있는 사람이 보이는 자리에서 연다(275명을 처음부터 훑지 않도록).
+    want = (cur + 1) / CR_COLS - CR_ROWS / 2;
+    mx = CrewMaxScroll();
+    g_crScroll = want < 0 ? 0 : (want > mx ? mx : want);
+}
+
+static void DrawCrewPanel(HDC dc)
+{
+    RECT p = g_crPanel, it;
+    HBRUSH br;
+    int i, n, first, cur;
+
+    if (g_open != 5 || g_crWhich < 0) return;
+    n = CrewItemCount();
+    cur = LiveChar_Crew(g_crWhich) + 1;      // 없음 = 0
+    first = g_crScroll * CR_COLS;
+
+    br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK);    FrameRect(dc, &p, br); DeleteObject(br);
+
+    for (i = first; i < n && i - first < CR_COLS * CR_ROWS; i++) {
+        int k = i - first;
+        wchar_t nm[64];
+        it.left   = p.left + (k % CR_COLS) * CR_ITEM_W + 1;
+        it.right  = it.left + CR_ITEM_W - 2;
+        it.top    = p.top  + (k / CR_COLS) * DD_ITEM_H + 1;
+        it.bottom = it.top + DD_ITEM_H - 1;
+        if (i == cur) { br = CreateSolidBrush(COL_SEL_BG); FillRect(dc, &it, br); DeleteObject(br); }
+        CrewItemText(i, nm, 64);
+        it.left += 6;
+        UI_Text(dc, it, nm, g_smallFont, i == cur ? RGB(250,244,228) : COL_TEXT,
+                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+    }
+    { RECT tr = p;
+      tr.left = p.left + CR_COLS * CR_ITEM_W; tr.right = p.right;
+      UI_Scrollbar(dc, tr, g_crScroll, CrewMaxScroll(), CR_ROWS,
+                   (n + CR_COLS - 1) / CR_COLS); }
+}
+
+// 승무원 목록에서 클릭 지점의 항목 번호(0 = 없음). 밖이면 -1.
+static int CrewPanelHit(POINT pt)
+{
+    int col, row, i;
+    if (g_open != 5 || !PtInRect(&g_crPanel, pt)) return -1;
+    col = (pt.x - g_crPanel.left) / CR_ITEM_W;
+    row = (pt.y - g_crPanel.top)  / DD_ITEM_H;
+    if (col < 0 || col >= CR_COLS || row < 0 || row >= CR_ROWS) return -1;
+    i = (g_crScroll + row) * CR_COLS + col;
+    return (i >= 0 && i < CrewItemCount()) ? i : -1;
+}
+
 // 특기 패널에서 클릭 지점의 (특기 id, 레벨). 못 맞히면 id 0.
 static void SkillPanelHit(POINT pt, int* id, int* lv)
 {
@@ -454,10 +578,27 @@ void Nav_Paint(HDC dc)
     else {
         int m = MatchedCount();
         if (m < g_count) wsprintfW(buf, L"%d년 · %d명 · 짝 %d", NowYear(), g_count, m);
+        else if (LiveChar_HireOffset() < 0)
+                         wsprintfW(buf, L"%d년 · 내명성 %d · %d명 · 고용상태자리X",
+                                   NowYear(), MyFame(), g_count);
         else             wsprintfW(buf, L"%d년 · 내명성 %d · %d명",
                                    NowYear(), MyFame(), g_count);
     }
     UI_Text(dc, RcInfo(), buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+
+    // 주인공이 데리고 다니는 네 자리. 실행 중 인물 배열을 못 읽으면 고를 것도 없어 감춘다.
+    if (LiveChar_Ready()) {
+        int w;
+        for (w = 0; w < LIVECHAR_CREW_N; w++) {
+            int cur = LiveChar_Crew(w);
+            wchar_t nm[64];
+            if (cur < 0) lstrcpyW(nm, L"(없음)");
+            else { LiveChar_NameAt(cur, nm, 64); if (!nm[0]) wsprintfW(nm, L"#%d", cur); }
+            UI_Text(dc, RcCrewLabel(w), LiveChar_CrewLabel(w), g_smallFont, COL_TEXT,
+                    DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            UI_Select(dc, RcCrewBox(w), nm, g_open == 5 && g_crWhich == w);
+        }
+    }
 
     if (!g_save.loaded || g_count == 0) {
         RECT e;
@@ -479,6 +620,7 @@ void Nav_Paint(HDC dc)
     UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), NAV_ROWS, g_count);
     DrawPanel(dc);        // 목록 위에 덮어 그린다
     DrawSkillPanel(dc);
+    DrawCrewPanel(dc);
 }
 
 // ---- 입력 ----
@@ -540,6 +682,24 @@ int Nav_Click(HWND h, POINT pt)
 {
     RECT r;
 
+    // 승무원 목록은 하나 고르면 닫는다.
+    if (g_open == 5) {
+        int i = CrewPanelHit(pt), which = g_crWhich;
+        g_open = 0; g_crWhich = -1;
+        if (i >= 0) {
+            // 자리만 비우면 그 인물은 "고용중인데 아무 데도 없는" 상태로 남아 술집에도
+            // 안 나온다. 자리에서 내릴 땐 고용가능으로, 태울 땐 고용중으로 같이 맞춘다.
+            int prev = LiveChar_Crew(which);
+            int now  = i - 1;                          // 0 = 없음 -> -1
+            if (LiveChar_SetCrew(which, now)) {
+                if (prev >= 0 && prev != now) LiveChar_SetHire(prev, LIVECHAR_HIRE_FREE);
+                if (now  >= 0)                LiveChar_SetHire(now,  LIVECHAR_HIRE_TAKEN);
+            }
+        }
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
+
     // 특기 편집 패널은 여러 개를 잇달아 고치는 판이라 열어 둔 채 값만 바꾼다(바깥 = 닫기).
     if (g_open == 4) {
         int id, lv;
@@ -567,6 +727,14 @@ int Nav_Click(HWND h, POINT pt)
         }
         InvalidateRect(h, NULL, FALSE);
         return 1;
+    }
+
+    if (LiveChar_Ready()) {
+        int w;
+        for (w = 0; w < LIVECHAR_CREW_N; w++) {
+            RECT cb = RcCrewBox(w);
+            if (PtInRect(&cb, pt)) { OpenCrewPanel(w, cb); InvalidateRect(h,NULL,FALSE); return 1; }
+        }
     }
 
     r = RcReload();  if (PtInRect(&r, pt)) { Reload(h); return 1; }
@@ -605,7 +773,7 @@ int Nav_Click(HWND h, POINT pt)
 int Nav_Key(HWND h, WPARAM wp)
 {
     if (g_open) {   // 패널이 열려 있을 땐 ESC 로 닫기만 받는다
-        if (wp == VK_ESCAPE) { g_open = 0; g_yrChar = -1; g_skChar = -1; InvalidateRect(h, NULL, FALSE); return 1; }
+        if (wp == VK_ESCAPE) { g_open = 0; g_yrChar = -1; g_skChar = -1; g_crWhich = -1; InvalidateRect(h, NULL, FALSE); return 1; }
         return 1;
     }
     switch (wp) {
@@ -622,6 +790,13 @@ int Nav_Key(HWND h, WPARAM wp)
 
 void Nav_Wheel(HWND h, int notches)
 {
+    if (g_open == 5) {   // 275명짜리 목록은 휠로 굴린다
+        int mx = CrewMaxScroll(), s = g_crScroll - notches;
+        if (s < 0) s = 0;
+        if (s > mx) s = mx;
+        if (s != g_crScroll) { g_crScroll = s; InvalidateRect(h, NULL, FALSE); }
+        return;
+    }
     if (g_open) return;
     ScrollTo(h, g_scroll - notches);
 }
@@ -643,7 +818,7 @@ void Nav_Init(HWND parent, HINSTANCE hinst)
 void Nav_Activate(HWND h, int active)
 {
     (void)h;
-    if (!active) { g_open = 0; g_yrChar = -1; g_skChar = -1; return; }
+    if (!active) { g_open = 0; g_yrChar = -1; g_skChar = -1; g_crWhich = -1; return; }
     // 인물 배열은 게임이 세이브를 불러온 뒤에야 채워진다. 탭에 들어올 때마다 다시 확인한다.
     if (!LiveChar_Ready() && LiveChar_Load()) { ClearLiveCache(); Rebuild(); }
     if (!g_save.loaded) {
@@ -659,4 +834,5 @@ void Nav_Destroy(void)
     g_open = 0;
     g_yrChar = -1;
     g_skChar = -1;
+    g_crWhich = -1;
 }

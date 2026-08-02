@@ -3,6 +3,7 @@ add_library(ShipSkinKR SHARED
     src/hook.c
     src/menu.c
     src/ship_window.c
+    src/ship_stats.c
 )
 
 target_link_libraries(ShipSkinKR PRIVATE minhook user32 shell32 gdi32 comdlg32)

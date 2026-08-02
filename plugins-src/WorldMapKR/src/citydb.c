@@ -13,7 +13,7 @@ int CityDb_FromFile(void) { return g_fromFile; }
 
 const CityPt* CityDb_At(int i)
 {
-    static const CityPt empty = { CITYDB_NONE, CITYDB_NONE, { 0 } };
+    static const CityPt empty = { CITYDB_NONE, CITYDB_NONE, 0, { 0 } };
     if (i < 0 || i >= CITYDB_MAX) return &empty;
     return &g_city[i];
 }
@@ -114,8 +114,8 @@ static int ReadInt(const char** pp, int* out)
 static void ParseCity(const char** pp)
 {
     char key[32], name[64];
-    int id = -1, lat = NOVAL, lon = NOVAL;   // 1/100 도 단위
-    int haveName = 0;
+    int id = -1, lat = NOVAL, lon = NOVAL;   // 1/1000 도 단위
+    int haveName = 0, lib = -1;
 
     name[0] = 0;
     if (**pp != '{') { SkipValue(pp); return; }
@@ -133,6 +133,12 @@ static void ParseCity(const char** pp)
         else if (lstrcmpA(key, "latitude") == 0)  { int v; if (ReadFixed3(pp, &v)) lat = v; else SkipValue(pp); }
         else if (lstrcmpA(key, "longitude") == 0) { int v; if (ReadFixed3(pp, &v)) lon = v; else SkipValue(pp); }
         else if (lstrcmpA(key, "name") == 0)      { ReadString(pp, name, sizeof(name)); haveName = name[0] != 0; }
+        else if (lstrcmpA(key, "hasLibrary") == 0) {
+            SkipWS(pp);
+            if      (**pp == 't') { lib = 1; SkipValue(pp); }
+            else if (**pp == 'f') { lib = 0; SkipValue(pp); }
+            else { int v; if (ReadFixed3(pp, &v)) lib = v ? 1 : 0; else SkipValue(pp); }
+        }
         else SkipValue(pp);
 
         SkipWS(pp);
@@ -150,6 +156,7 @@ static void ParseCity(const char** pp)
         g_city[id].lonRaw = 20000 + lon / 9;
         g_city[id].latRaw = 10000 - lat / 9;
     }
+    if (lib >= 0) g_city[id].lib = lib;
     if (haveName)
         MultiByteToWideChar(CP_UTF8, 0, name, -1, g_city[id].name,
                             (int)(sizeof(g_city[id].name) / sizeof(wchar_t)));
@@ -195,6 +202,7 @@ void CityDb_Load(HINSTANCE hinst)
     for (i = 0; i < CITYDB_MAX; i++) {
         g_city[i].lonRaw = kCityLonRaw[i];
         g_city[i].latRaw = kCityLatRaw[i];
+        g_city[i].lib    = kCities[i].lib ? 1 : 0;
         lstrcpynW(g_city[i].name, kCities[i].name,
                   (int)(sizeof(g_city[i].name) / sizeof(wchar_t)));
     }

@@ -33,7 +33,8 @@
 
 // 휠로 오갈 배율. 1 = 세계 전체. 8 배면 한 칸이 화면 3픽셀쯤이라 더 키워 봐야 계단만 커진다.
 static const int kZoom[] = { 1, 2, 3, 4, 6, 8 };
-#define ZOOM_N ((int)(sizeof(kZoom)/sizeof(kZoom[0])))
+#define ZOOM_N     ((int)(sizeof(kZoom)/sizeof(kZoom[0])))
+#define ZOOM_START 3       // 창을 열 때 배율(kZoom[3] = 4배). 함대 자리를 가운데 놓고 연다
 
 static HINSTANCE g_hinst = NULL;
 static HWND      g_wnd = NULL;
@@ -66,6 +67,14 @@ static void Redraw(HWND h)
     ClampView();
     World_RenderView(MAP_W, MAP_H, g_vx, g_vy, ViewW(), ViewH());
     InvalidateRect(h, NULL, FALSE);
+}
+
+// 그 셀이 화면 한가운데 오도록 보이는 영역을 맞춘다.
+static void CenterOn(int cellX, int cellY)
+{
+    g_vx = cellX - ViewW() / 2;
+    g_vy = cellY - ViewH() / 2;
+    ClampView();
 }
 
 // 커서 밑에 있던 지점이 제자리에 남도록 배율을 바꾼다(지도 프로그램의 기본 동작).
@@ -170,13 +179,17 @@ static void DrawCities(HDC dc)
         if (!CellToScreen((int)((long long)c->lonRaw * WORLD_UNFOLD_W / LON_RAW_MAX),
                           (int)((long long)c->latRaw * WORLD_CELL_H  / LAT_RAW_MAX), &sx, &sy)) continue;
 
-        r.left = sx - 2; r.top = sy - 2; r.right = sx + 3; r.bottom = sy + 3;
+        // 도서관이 있는 도시는 한 칸 크게, 초록으로 찍는다. 색만 다르게 하면 3px 짜리
+        // 점에서는 갈색과 잘 안 갈려서 크기도 같이 바꾼다.
+        // 함대 표시(빨강)와는 어느 쪽도 헷갈리지 않는다.
+        { int rad = c->lib ? 3 : 2;
+          r.left = sx - rad; r.top = sy - rad; r.right = sx + rad + 1; r.bottom = sy + rad + 1; }
         { HBRUSH b = CreateSolidBrush(RGB(245, 238, 220)); FillRect(dc, &r, b); DeleteObject(b); }
         InflateRect(&r, -1, -1);
-        // 함대 표시(빨강)와 헷갈리지 않게 도시는 지도 색과 어울리는 어두운 갈색으로 둔다.
-        { HBRUSH b = CreateSolidBrush(RGB(60, 45, 35)); FillRect(dc, &r, b); DeleteObject(b); }
+        { HBRUSH b = CreateSolidBrush(c->lib ? RGB(25, 95, 55) : RGB(60, 45, 35));
+          FillRect(dc, &r, b); DeleteObject(b); }
 
-        if (labels && c->name[0]) ShadowText(dc, sx + 5, sy - 7, c->name);
+        if (labels && c->name[0]) ShadowText(dc, sx + (c->lib ? 6 : 5), sy - 7, c->name);
     }
 }
 
@@ -208,11 +221,14 @@ static void DrawMarker(HDC dc, int lon, int lat)
 static void OnPaint(HWND h)
 {
     PAINTSTRUCT ps;
-    HDC dc = BeginPaint(h, &ps);
+    HDC hdc = BeginPaint(h, &ps);
     RECT rc, mr, ir;
     wchar_t buf[96];
+    UiBuf ub; HDC dc;
 
     GetClientRect(h, &rc);
+    // 메모리에 다 그린 뒤 한 번에 옮긴다. 끌어서 움직일 때 깜빡이지 않도록.
+    dc = UI_BufBegin(&ub, hdc, rc.right, rc.bottom);
     UI_WindowFrame(dc, rc, L"세계지도", &g_closeRect);
 
     mr.left = MAP_X; mr.top = MAP_Y; mr.right = MAP_X + MAP_W; mr.bottom = MAP_Y + MAP_H;
@@ -246,10 +262,11 @@ static void OnPaint(HWND h)
     else            lstrcpyW(buf, L"항해 중이 아닙니다(좌표를 읽지 못했습니다).");
     UI_Text(dc, ir, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
-    wsprintfW(buf, L"x%d · 도시 %d%s · 휠 확대 / 끌기 이동 / 우클릭 전체 / C 도시 / R 다시읽기",
+    wsprintfW(buf, L"x%d · 도시 %d%s (초록=도서관) · 휠 확대 / 끌기 이동 / 우클릭 전체 / C 도시 / R 다시읽기",
               kZoom[g_zi], CityDb_Marked(), CityDb_FromFile() ? L"" : L"(내장)");
     UI_Text(dc, ir, buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
+    UI_BufEnd(&ub);
     EndPaint(h, &ps);
 }
 
@@ -258,10 +275,17 @@ static LRESULT CALLBACK MapProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     switch (m) {
     case WM_CREATE:
         UI_CreateFonts();
-        g_zi = 0; g_vx = 0; g_vy = 0; g_drag = 0;
+        g_zi = ZOOM_START; g_drag = 0;
         CityDb_Load(g_hinst);
-        if (World_Load()) World_RenderView(MAP_W, MAP_H, 0, 0, ViewW(), ViewH());
         if (!ReadPos(&g_lon, &g_lat)) { g_lon = -1; g_lat = -1; }
+        // 확대한 채로 여니 어디를 보여줄지가 중요하다. 함대 자리를 가운데 놓고,
+        // 좌표를 못 읽었으면(항해 전) 지도 한복판을 보여준다.
+        if (g_lon >= 0)
+            CenterOn((int)((long long)g_lon * WORLD_UNFOLD_W / LON_RAW_MAX),
+                     (int)((long long)g_lat * WORLD_CELL_H  / LAT_RAW_MAX));
+        else
+            CenterOn(WORLD_UNFOLD_W / 2, WORLD_CELL_H / 2);
+        if (World_Load()) World_RenderView(MAP_W, MAP_H, g_vx, g_vy, ViewW(), ViewH());
         SetTimer(h, TIMER_ID, TIMER_MS, NULL);
         return 0;
     case WM_ERASEBKGND: return 1;

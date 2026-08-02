@@ -29,6 +29,17 @@ extern HFONT g_smallFont;   // 12px (상세)
 void UI_CreateFonts(void);
 void UI_DestroyFonts(void);
 
+// 깜빡임 없는 그리기. 화면에 바로 그리면 지웠다 그리는 사이가 눈에 보여서,
+// 메모리 비트맵에 다 그린 뒤 한 번에 옮긴다.
+//   PAINTSTRUCT ps; HDC hdc = BeginPaint(h, &ps);
+//   UiBuf b; HDC dc = UI_BufBegin(&b, hdc, rc.right, rc.bottom);
+//   ... dc 에 그린다 ...
+//   UI_BufEnd(&b); EndPaint(h, &ps);
+// 메모리 DC 를 못 만들면 화면 DC 를 그대로 돌려주므로 그리는 쪽 코드는 그대로 두면 된다.
+typedef struct { HDC target; HDC mem; int w, h; } UiBuf;
+HDC  UI_BufBegin(UiBuf* b, HDC target, int w, int h);
+void UI_BufEnd(UiBuf* b);
+
 void UI_VGradient(HDC dc, RECT r, COLORREF top, COLORREF bot);
 void UI_Bevel(HDC dc, RECT r, BOOL sunken);
 void UI_Button(HDC dc, RECT r, const wchar_t* t, BOOL active);

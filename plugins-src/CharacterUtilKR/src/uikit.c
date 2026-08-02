@@ -11,10 +11,51 @@ void UI_CreateFonts(void)
         g_smallFont = CreateFontW(-12,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,0,0,L"바탕");
 }
 
+// 이중 버퍼용 메모리 DC. 크기가 그대로면 계속 다시 쓴다 —
+// 끌어서 움직이는 동안 매 프레임 비트맵을 새로 만들면 그 자체가 부담이다.
+static HDC     g_bufDc = NULL;
+static HBITMAP g_bufBmp = NULL, g_bufOld = NULL;
+static int     g_bufW = 0, g_bufH = 0;
+
+static void FreeBuffer(void)
+{
+    if (g_bufDc) {
+        if (g_bufOld) SelectObject(g_bufDc, g_bufOld);
+        DeleteDC(g_bufDc);
+        g_bufDc = NULL; g_bufOld = NULL;
+    }
+    if (g_bufBmp) { DeleteObject(g_bufBmp); g_bufBmp = NULL; }
+    g_bufW = g_bufH = 0;
+}
+
+HDC UI_BufBegin(UiBuf* b, HDC target, int w, int h)
+{
+    b->target = target; b->mem = NULL; b->w = w; b->h = h;
+    if (w <= 0 || h <= 0) return target;
+
+    if (!g_bufDc || g_bufW != w || g_bufH != h) {
+        FreeBuffer();
+        g_bufDc = CreateCompatibleDC(target);
+        if (!g_bufDc) return target;
+        g_bufBmp = CreateCompatibleBitmap(target, w, h);
+        if (!g_bufBmp) { DeleteDC(g_bufDc); g_bufDc = NULL; return target; }
+        g_bufOld = (HBITMAP)SelectObject(g_bufDc, g_bufBmp);
+        g_bufW = w; g_bufH = h;
+    }
+    b->mem = g_bufDc;
+    return g_bufDc;
+}
+
+void UI_BufEnd(UiBuf* b)
+{
+    if (b->mem) BitBlt(b->target, 0, 0, b->w, b->h, b->mem, 0, 0, SRCCOPY);
+}
+
 void UI_DestroyFonts(void)
 {
     if (g_font)      { DeleteObject(g_font);      g_font = NULL; }
     if (g_smallFont) { DeleteObject(g_smallFont); g_smallFont = NULL; }
+    FreeBuffer();
 }
 
 void UI_VGradient(HDC dc, RECT r, COLORREF top, COLORREF bot)

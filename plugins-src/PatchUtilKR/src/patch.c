@@ -9,6 +9,18 @@
 
 #define MAX_ADDRS   32
 #define MAX_PATCHES 256
+#define MAX_REGIONS 8
+#define MAX_REGION_LEN 512
+
+// 바이트열 패치 한 구간. 값 하나를 쓰는 기존 방식으로는 자리마다 값이 다른
+// 코드 덩어리를 표현할 수 없어서(Addresses[] 는 전부 같은 값을 받는다) 따로 뒀다.
+typedef struct {
+    unsigned int  off;                       // 파일 오프셋
+    int           len;
+    unsigned char orig[MAX_REGION_LEN];
+    unsigned char patched[MAX_REGION_LEN];
+    int           mapped;
+} Region;
 #define ID_PATCH_OPEN 0xB500u     // "파일>패치" 메뉴 커맨드 (KR 예약대역 0xB000~0xCFFF)
 
 // "파일" 드롭다운의 "패치" 항목 노출 스위치.
@@ -29,6 +41,8 @@ typedef struct {
     unsigned char snap[MAX_ADDRS][4];// 로드 시 원본 메모리 바이트
     int          mapped[MAX_ADDRS];  // 오프셋→메모리 변환 성공 여부
     int          applied;            // 현재 적용 상태
+    Region       regs[MAX_REGIONS];  // Regions[] 로 적은 바이트열 패치
+    int          nreg;
 } Patch;
 
 static HINSTANCE g_hinst = NULL;
@@ -90,6 +104,22 @@ static BOOL WriteMem(BYTE* mem, const BYTE* bytes, int n)
     return TRUE;
 }
 
+// "81 BC 24" / "81BC24" 를 바이트열로. 담은 개수를 돌려준다.
+static int HexBytes(const char* s, unsigned char* out, int cap)
+{
+    int n = 0, hi = -1;
+    for (; *s && n < cap; s++) {
+        int v;
+        if (*s >= '0' && *s <= '9') v = *s - '0';
+        else if (*s >= 'a' && *s <= 'f') v = *s - 'a' + 10;
+        else if (*s >= 'A' && *s <= 'F') v = *s - 'A' + 10;
+        else continue;                       // 공백/구분자는 건너뛴다
+        if (hi < 0) hi = v;
+        else { out[n++] = (unsigned char)((hi << 4) | v); hi = -1; }
+    }
+    return n;
+}
+
 static void ValueBytes(long long v, int n, BYTE* out)   // 리틀엔디안 (cds-helper BitConverter 와 동일)
 {
     int i;
@@ -99,6 +129,7 @@ static void ValueBytes(long long v, int n, BYTE* out)   // 리틀엔디안 (cds-
 static void SnapshotPatch(Patch* p)
 {
     int i, b;
+    for (i = 0; i < p->nreg; i++) p->regs[i].mapped = OffToMem(p->regs[i].off) ? 1 : 0;
     for (i = 0; i < p->naddr; i++) {
         BYTE* m = OffToMem(p->addrs[i]);
         if (m) { for (b = 0; b < p->byteSize; b++) p->snap[i][b] = m[b]; p->mapped[i] = 1; }
@@ -115,6 +146,20 @@ static BOOL ToggleTargetsLookRight(const Patch* p, int* badIdx)
 {
     BYTE a[4], b[4];
     int i, k;
+    // 바이트열 구간: 지금 바이트가 원본이거나 패치본이어야 한다.
+    for (i = 0; i < p->nreg; i++) {
+        const Region* r = &p->regs[i];
+        BYTE* m;
+        int k, okA = 1, okB = 1;
+        if (!r->mapped) continue;
+        m = OffToMem(r->off);
+        if (!m) continue;
+        for (k = 0; k < r->len; k++) {
+            if (m[k] != r->orig[k])    okA = 0;
+            if (m[k] != r->patched[k]) okB = 0;
+        }
+        if (!okA && !okB) { if (badIdx) *badIdx = -(i + 1); return FALSE; }
+    }
     if (!p->isToggle) return TRUE;
     ValueBytes(p->originalValue, p->byteSize, a);
     ValueBytes(p->patchedValue,  p->byteSize, b);
@@ -150,6 +195,14 @@ BOOL Patch_SetApplied(int idx, BOOL on)
             p->name[0] ? p->name : L"(무명)", p->addrs[bad]);
         MessageBoxW(NULL, msg, L"PatchUtilKR — 주소가 맞지 않습니다", MB_OK | MB_ICONWARNING);
         return FALSE;
+    }
+
+    for (i = 0; i < p->nreg; i++) {
+        Region* r = &p->regs[i];
+        BYTE* m;
+        if (!r->mapped) continue;
+        m = OffToMem(r->off);
+        if (m) WriteMem(m, on ? r->patched : r->orig, r->len);
     }
 
     for (i = 0; i < p->naddr; i++) {
@@ -317,6 +370,57 @@ static void ParseAddresses(const char** pp, Patch* pt)
     pt->hasArray = 1;
 }
 
+// "Regions": [ { "Address": "0x8BFA9", "OriginalBytes": "81 BC ..", "PatchedBytes": "81 3D .." }, ... ]
+static void ParseRegions(const char** pp, Patch* pt)
+{
+    if (**pp != '[') { SkipValue(pp); return; }
+    (*pp)++;
+    for (;;) {
+        SkipWS(pp);
+        if (**pp == ']') { (*pp)++; break; }
+        if (**pp == '{') {
+            Region r;
+            char addr[64];
+            int no = 0, np = 0;
+            ZeroMemory(&r, sizeof(r));
+            addr[0] = 0;
+            (*pp)++;
+            for (;;) {
+                char key[48];
+                SkipWS(pp);
+                if (**pp == '}') { (*pp)++; break; }
+                if (**pp != '"') { if (!**pp) return; (*pp)++; continue; }
+                ParseStringInto(pp, key, sizeof(key));
+                SkipWS(pp);
+                if (**pp == ':') (*pp)++;
+                SkipWS(pp);
+                if (lstrcmpA(key, "Address") == 0) ParseStringInto(pp, addr, sizeof(addr));
+                else if (lstrcmpA(key, "OriginalBytes") == 0) {
+                    char h[MAX_REGION_LEN * 3 + 8];
+                    ParseStringInto(pp, h, sizeof(h));
+                    no = HexBytes(h, r.orig, MAX_REGION_LEN);
+                } else if (lstrcmpA(key, "PatchedBytes") == 0) {
+                    char h[MAX_REGION_LEN * 3 + 8];
+                    ParseStringInto(pp, h, sizeof(h));
+                    np = HexBytes(h, r.patched, MAX_REGION_LEN);
+                } else SkipValue(pp);
+                SkipWS(pp);
+                if (**pp == ',') { (*pp)++; continue; }
+            }
+            // 두 바이트열 길이가 다르면 어느 쪽이 맞는지 알 수 없어 통째로 버린다.
+            if (addr[0] && no > 0 && no == np && pt->nreg < MAX_REGIONS &&
+                ParseHex(addr, &r.off)) {
+                r.len = no;
+                pt->regs[pt->nreg++] = r;
+            }
+        } else SkipValue(pp);
+        SkipWS(pp);
+        if (**pp == ',') { (*pp)++; continue; }
+        if (**pp == ']') { (*pp)++; break; }
+        break;
+    }
+}
+
 static BOOL ParseObject(const char** pp, Patch* pt)
 {
     char single[64];
@@ -339,6 +443,7 @@ static BOOL ParseObject(const char** pp, Patch* pt)
         else if (lstrcmpA(key, "Description") == 0)  { char u[512]; ParseStringInto(pp, u, sizeof(u)); Utf8ToW(u, pt->desc, 256); }
         else if (lstrcmpA(key, "Address") == 0)      { ParseStringInto(pp, single, sizeof(single)); }
         else if (lstrcmpA(key, "Addresses") == 0)    { ParseAddresses(pp, pt); }
+        else if (lstrcmpA(key, "Regions") == 0)      { ParseRegions(pp, pt); }
         else if (lstrcmpA(key, "ByteSize") == 0)     { pt->byteSize = (int)ParseNumber(pp); }
         else if (lstrcmpA(key, "Value") == 0)        { pt->value = ParseNumber(pp); }
         else if (lstrcmpA(key, "OriginalValue") == 0){ pt->originalValue = ParseNumber(pp); }
@@ -355,7 +460,7 @@ static BOOL ParseObject(const char** pp, Patch* pt)
         if (ParseHex(single, &off)) { pt->addrs[0] = off; pt->naddr = 1; }
     }
     if (pt->byteSize != 1 && pt->byteSize != 2 && pt->byteSize != 4) pt->byteSize = 1;
-    return pt->naddr > 0;
+    return pt->naddr > 0 || pt->nreg > 0;
 }
 
 static void ParseJson(const char* buf)
@@ -424,7 +529,16 @@ void PatchCore_Load(void)
         SnapshotPatch(p);
         // 로드 시 현재 메모리가 이미 적용값(toggle=PatchedValue, number=Value)과 같으면
         // 체크(ON)로 표시해 창이 실제 상태를 반영하게 한다. (snap[0]=로드시점 현재 메모리)
-        if (p->mapped[0]) {
+        if (p->nreg > 0) {                     // 바이트열 패치: 첫 구간이 패치본과 같으면 ON
+            BYTE* m = p->regs[0].mapped ? OffToMem(p->regs[0].off) : NULL;
+            BOOL match = FALSE;
+            if (m) {
+                int k; match = TRUE;
+                for (k = 0; k < p->regs[0].len; k++)
+                    if (m[k] != p->regs[0].patched[k]) { match = FALSE; break; }
+            }
+            p->applied = match;
+        } else if (p->mapped[0]) {
             BYTE tb[4]; int b; BOOL match = TRUE;
             ValueBytes(p->isToggle ? p->patchedValue : p->value, p->byteSize, tb);
             for (b = 0; b < p->byteSize; b++) if (p->snap[0][b] != tb[b]) { match = FALSE; break; }

@@ -236,6 +236,132 @@ int LiveChar_SetSkill(int slot, int id, int lv)
     return 1;
 }
 
+void LiveChar_NameAt(int slot, wchar_t* out, int cap)
+{
+    out[0] = 0;
+    if (!g_ready || slot < 0 || slot >= LIVECHAR_COUNT || cap <= 0) return;
+    SlotName(slot, out, cap);
+}
+
+// ---- 고용상태 ----
+// CE 표가 이 필드를 안 짚어 줘서 레코드 안에서 직접 찾는다.
+// 후보 오프셋마다 "세이브의 고용상태와 같은가"를 전부 세어 보고, 거의 다 맞는 자리를 고른다.
+// 잘못 짚으면 엉뚱한 값을 덮어쓰게 되므로 조건을 빡빡하게 건다:
+//   1) 275칸 전부 값이 0~3 안에 있어야 하고
+//   2) 대조한 인물의 95% 이상이 맞아야 하며
+//   3) 값이 두 가지 이상 나와야 한다(전부 0 인 빈 구역에 걸리지 않도록)
+
+#define HIRE_SCAN_FROM 0xDA        /* 이름/성이 끝나는 자리 */
+#define HIRE_MAX       3
+
+static int g_hireOff = -1;
+
+int LiveChar_HireOffset(void) { return g_hireOff; }
+
+static int HireFieldSane(int off)
+{
+    int i;
+    for (i = 0; i < LIVECHAR_COUNT; i++) {
+        int v = *(const int*)(g_tbl + i * LIVECHAR_SIZE + off);
+        if (v < 0 || v > HIRE_MAX) return 0;
+    }
+    return 1;
+}
+
+int LiveChar_CalibrateHire(const int* hire, const int* slot, int n)
+{
+    int off, bestOff = -1, bestHit = 0;
+
+    if (!g_ready) return 0;
+    if (g_hireOff >= 0) return 1;
+
+    for (off = HIRE_SCAN_FROM; off + 4 <= LIVECHAR_SIZE; off++) {
+        int i, hit = 0, tot = 0, first = -1, varied = 0;
+        if (!HireFieldSane(off)) continue;
+        for (i = 0; i < n; i++) {
+            int v;
+            if (slot[i] < 0) continue;
+            v = *(const int*)(g_tbl + slot[i] * LIVECHAR_SIZE + off);
+            tot++;
+            if (v == hire[i]) hit++;
+            if (first < 0) first = hire[i];
+            else if (hire[i] != first) varied = 1;
+        }
+        if (tot < 20 || !varied) continue;
+        if (hit * 100 < tot * 95) continue;
+        if (hit > bestHit) { bestHit = hit; bestOff = off; }
+    }
+    if (bestOff < 0) return 0;
+    g_hireOff = bestOff;
+    return 1;
+}
+
+int LiveChar_Hire(int slot)
+{
+    if (!g_ready || g_hireOff < 0 || slot < 0 || slot >= LIVECHAR_COUNT) return -1;
+    return *(const int*)(g_tbl + slot * LIVECHAR_SIZE + g_hireOff);
+}
+
+int LiveChar_SetHire(int slot, int v)
+{
+    unsigned char* p;
+    DWORD old = 0;
+    if (!g_ready || g_hireOff < 0 || slot < 0 || slot >= LIVECHAR_COUNT) return 0;
+    if (v < 0 || v > HIRE_MAX) return 0;
+    p = g_tbl + slot * LIVECHAR_SIZE + g_hireOff;
+    if (!VirtualProtect(p, sizeof(int), PAGE_READWRITE, &old)) return 0;
+    *(int*)p = v;
+    VirtualProtect(p, sizeof(int), old, &old);
+    return 1;
+}
+
+// ---- 부관/항해사/측량사/통역 ----
+
+#define CREW_RVA  0x1B61A0u
+#define CREW_BASE 4096            /* 값 = CREW_BASE + 인물 칸 번호 */
+#define CREW_NONE 0xFFFFFFFFu
+
+const wchar_t* LiveChar_CrewLabel(int which)
+{
+    static const wchar_t* kLabel[LIVECHAR_CREW_N] = { L"부관", L"항해사", L"측량사", L"통역" };
+    return (which >= 0 && which < LIVECHAR_CREW_N) ? kLabel[which] : L"";
+}
+
+static unsigned* CrewPtr(int which)
+{
+    const unsigned char* base = (const unsigned char*)GetModuleHandleW(NULL);
+    unsigned char* p;
+    if (!base || which < 0 || which >= LIVECHAR_CREW_N) return NULL;
+    p = (unsigned char*)base + CREW_RVA + which * 4;
+    if (!Readable(p, sizeof(unsigned))) return NULL;
+    return (unsigned*)p;
+}
+
+int LiveChar_Crew(int which)
+{
+    const unsigned* p = CrewPtr(which);
+    unsigned v;
+    if (!p) return -1;
+    v = *p;
+    if (v == CREW_NONE || v < CREW_BASE) return -1;
+    v -= CREW_BASE;
+    return (v < LIVECHAR_COUNT) ? (int)v : -1;
+}
+
+int LiveChar_SetCrew(int which, int slot)
+{
+    unsigned* p = CrewPtr(which);
+    DWORD old = 0;
+    unsigned v;
+    if (!p) return 0;
+    if (slot >= LIVECHAR_COUNT) return 0;
+    v = (slot < 0) ? CREW_NONE : (unsigned)(CREW_BASE + slot);
+    if (!VirtualProtect(p, sizeof(unsigned), PAGE_READWRITE, &old)) return 0;
+    *p = v;
+    VirtualProtect(p, sizeof(unsigned), old, &old);
+    return 1;
+}
+
 int LiveChar_SetBirthYear(int slot, int year)
 {
     unsigned char* p;
