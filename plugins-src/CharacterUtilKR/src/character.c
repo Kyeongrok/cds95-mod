@@ -4,6 +4,7 @@
 #include "chardb.h"
 #include "maids.h"
 #include "patrons.h"
+#include "charstate.h"
 #include "navview.h"
 #include <windowsx.h>
 
@@ -628,14 +629,15 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (AnyDropOpen()) {
             int i = PanelHit(pt), kind = g_drop, row = g_dropRow;
             if (kind == DROP_LANG) {
-                if (i >= 0) Maid_ToggleLang(row, i);
+                if (i >= 0) { Maid_ToggleLang(row, i); CharState_Save(g_hinst); }
                 else        CloseDrops();
             } else {
                 CloseDrops();
                 if (i >= 0) {
-                    if      (kind == DROP_YEAR)  Maid_SetYear(row, MAID_YEAR_MIN + i);
-                    else if (kind == DROP_CITY)  Maid_SetCity(row, i);
-                    else if (kind == DROP_PYEAR) Patron_SetYear(row, PATRON_YEAR_MIN + i);
+                    // 여급·스폰서는 EXE 표를 고치는 것이라 다음 실행 때 되살릴 수 있다.
+                    if      (kind == DROP_YEAR)  { Maid_SetYear(row, MAID_YEAR_MIN + i);        CharState_Save(g_hinst); }
+                    else if (kind == DROP_CITY)  { Maid_SetCity(row, i);                        CharState_Save(g_hinst); }
+                    else if (kind == DROP_PYEAR) { Patron_SetYear(row, PATRON_YEAR_MIN + i);    CharState_Save(g_hinst); }
                     else    { g_prefFilter = i; RebuildFilter(); }
                 }
             }
@@ -829,6 +831,13 @@ static DWORD WINAPI MonitorThread(LPVOID param)
 {
     (void)param;
     OutputDebugStringW(L"[CharacterUtilKR] monitor thread started.");
+    // 지난번에 고친 여급·스폰서 값을 되살린다. 창을 열지 않아도 반영되도록 여기서 한다
+    // (표를 읽으려면 얼굴 개수가 필요해 Face_Load 가 먼저다. DllMain 에서 파일을 읽지 않으려고
+    //  이 스레드로 미뤘고, 게임이 그 표를 보는 시점보다는 한참 앞선다).
+    Face_Load();
+    Maid_Load();
+    Patron_Load();
+    CharState_Apply(g_hinst);
     for (;;) {
         HMENU bar;
         g_gameHwnd = NULL;
