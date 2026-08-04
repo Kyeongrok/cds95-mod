@@ -137,9 +137,27 @@ static HWND    g_list = NULL;
 static HWND    g_sphereDrop = NULL; // 펼친 목록(우리가 그리는 자식 창). 닫혀 있으면 NULL
 static HWND    g_hdr = NULL;       // 리스트뷰 헤더(오너드로우용 서브클래스)
 static WNDPROC g_origHdr = NULL;
+// 세 폰트는 시세 창과 교역품 창이 같이 쓴다. 예전에는 시세 창이 WM_CREATE 에서 만들고
+// WM_DESTROY 에서 지웠는데, 그러면 두 가지가 어긋났다:
+//   - 교역품 창을 시세 창보다 먼저 열면 셋 다 NULL 이라 시스템 기본 글꼴로 그려졌다.
+//   - 두 창을 같이 띄우고 시세 창을 먼저 닫으면, 교역품 창의 컨트롤들이 WM_SETFONT 로
+//     받아 둔 핸들이 그 순간 삭제돼 매달린 핸들이 됐다.
+// 그래서 창 소유가 아니라 모듈 소유로 바꿨다 — 처음 쓸 때 한 번 만들고 지우지 않는다
+// (프로세스가 끝나면 OS 가 회수한다. 셋뿐이라 들고 있어도 부담이 없다).
 static HFONT   g_titleFont = NULL;
 static HFONT   g_hdrFont = NULL;
 static HFONT   g_listFont = NULL;
+
+static void EnsureFonts(void)
+{
+    if (g_titleFont) return;
+    g_titleFont = CreateFontW(-16, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+    g_hdrFont   = CreateFontW(-13, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+    g_listFont  = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+}
 
 // ---------------- 시세 일람 창 (여관 다이얼로그와 같은 세피아/브론즈 오너드로우) ----------------
 
@@ -543,12 +561,7 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     switch (m)
     {
     case WM_CREATE:
-        g_titleFont = CreateFontW(-16, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
-                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
-        g_hdrFont   = CreateFontW(-13, 0, 0, 0, FW_BOLD,   FALSE, FALSE, FALSE,
-                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
-        g_listFont  = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                  DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
+        EnsureFonts();
         // 문화권 고르기 — 목록에 나온 문화권만 담는다(0번은 "전체"). 상자는 직접 그린다.
         BuildSpheres();
         g_sphereSel = 0;
@@ -654,9 +667,7 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 
     case WM_DESTROY:
         if (g_hdr && g_origHdr) { SetWindowLongPtrW(g_hdr, GWLP_WNDPROC, (LONG_PTR)g_origHdr); }
-        if (g_titleFont) { DeleteObject(g_titleFont); g_titleFont = NULL; }
-        if (g_hdrFont)   { DeleteObject(g_hdrFont);   g_hdrFont = NULL; }
-        if (g_listFont)  { DeleteObject(g_listFont);  g_listFont = NULL; }
+        // 폰트는 여기서 지우지 않는다 — 교역품 창이 같은 것을 쓰고 있을 수 있다(EnsureFonts 참고).
         g_hdr = NULL; g_origHdr = NULL; g_siseWnd = NULL; g_list = NULL;
         g_sphereDrop = NULL; g_sphereSel = 0; g_sortCol = -1; g_sortDir = 0;
         return 0;
@@ -1073,6 +1084,7 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_CREATE:
     {
         int c;
+        EnsureFonts();          // 교역품 창을 시세 창보다 먼저 열어도 글꼴이 제대로 나오도록
         g_goodsFilterText[0] = 0;
         // 상단 검색창 (도시명/교역품명/문화권/구분 실시간 필터)
         g_goodsFilter = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
