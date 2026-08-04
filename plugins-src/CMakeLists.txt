@@ -29,12 +29,10 @@ target_include_directories(minhook PUBLIC
     ${MINHOOK_DIR}/src
 )
 
-add_subdirectory(CollectionUtilKR)
 add_subdirectory(HotelUtilKR)
 add_subdirectory(TradeUtilKR)
 add_subdirectory(CharacterUtilKR)
 add_subdirectory(WorldMapKR)
 add_subdirectory(ShipSkinKR)
 add_subdirectory(PatchUtilKR)
-add_subdirectory(GameApiKR)
-add_subdirectory(AudioFixKR)
+add_subdirectory(ModUtilKR)

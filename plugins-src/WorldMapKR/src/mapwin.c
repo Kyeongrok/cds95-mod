@@ -3,7 +3,9 @@
 #include "uikit.h"
 #include "citydb.h"        // 도시 좌표/이름 (CDS95Util\cities.json, 없으면 내장 표)
 #include "discdb.h"        // 발견물 좌표/이름 (CDS95Util\discoveries.json, 없으면 내장 표)
+#include "warp_data.h"     // TradeUtilKR 의 kWarps[226] — 도시 ID 순서. 우클릭 워프에 그대로 쓴다
 #include <windowsx.h>
+#include <string.h>
 
 // WorldMapKR — WORLD.CDS 를 그린 세계지도 위에 지금 함대 위치를 찍어 보여주는 창.
 // 읽기만 한다(게임 메모리에 쓰지 않는다).
@@ -239,6 +241,81 @@ static void DrawDiscoveries(HDC dc)
     DeleteObject(pen);
 }
 
+// ---- 도시 마커 우클릭 메뉴 ----
+// 화면 한 점에 걸리는 도시. 없으면 -1. 여러 개가 겹치면 제일 가까운 것.
+#define CITY_HIT_R 7
+static int CityAtPoint(POINT pt)
+{
+    int i, best = -1, bestD = CITY_HIT_R * CITY_HIT_R + 1;
+    if (!g_cities || !World_Pixels()) return -1;
+    for (i = 0; i < CITYDB_MAX; i++) {
+        const CityPt* c = CityDb_At(i);
+        int sx, sy, dx, dy, d;
+        if (c->lonRaw == CITYDB_NONE) continue;
+        if (!CellToScreen((int)((long long)c->lonRaw * WORLD_UNFOLD_W / LON_RAW_MAX),
+                          (int)((long long)c->latRaw * WORLD_CELL_H  / LAT_RAW_MAX), &sx, &sy)) continue;
+        dx = sx - pt.x; dy = sy - pt.y;
+        d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+// 순간이동 — kWarps 의 16바이트를 0x5B63A8 에 그대로 쓴다(TradeUtilKR 의 워프 메뉴와 같은 방식).
+// 그 16바이트 안에 경도(+8)·위도(+12)가 들어 있어서, 함대 마커도 다음 갱신 때 따라온다.
+// kWarps 는 도시 ID 순서(0~225)라 색인을 그대로 쓴다.
+#define WARP_RVA 0x1B63A8u
+static int WarpTo(int city)
+{
+    unsigned char* base = (unsigned char*)GetModuleHandleW(NULL);
+    void* dst;
+    DWORD old;
+    if (city < 0 || city >= (int)(sizeof(kWarps) / sizeof(kWarps[0]))) return 0;
+    if (!base) return 0;
+    dst = base + WARP_RVA;
+    if (!VirtualProtect(dst, 16, PAGE_READWRITE, &old)) return 0;
+    memcpy(dst, kWarps[city].b, 16);
+    VirtualProtect(dst, 16, old, &old);
+    return 1;
+}
+
+static void CityMenu(HWND h, int city)
+{
+    const CityPt* c = CityDb_At(city);
+    HMENU m = CreatePopupMenu();
+    wchar_t t[96];
+    POINT sp;
+    int pick;
+
+    wsprintfW(t, L"%s 로 워프", c->name[0] ? c->name : kWarps[city].city);
+    AppendMenuW(m, MF_STRING, 1, t);
+    wsprintfW(t, L"가운데로 보기");
+    AppendMenuW(m, MF_STRING, 2, t);
+    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    wsprintfW(t, L"#%d  %s%s", city, c->name, c->lib ? L"  (도서관)" : L"");
+    AppendMenuW(m, MF_STRING | MF_GRAYED, 3, t);
+
+    GetCursorPos(&sp);
+    pick = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, sp.x, sp.y, 0, h, NULL);
+    DestroyMenu(m);
+
+    if (pick == 1) {
+        if (WarpTo(city)) {
+            // 다음 타이머에 위치를 다시 읽지만, 바로 보이도록 여기서도 갱신한다.
+            if (ReadPos(&g_lon, &g_lat))
+                CenterOn((int)((long long)g_lon * WORLD_UNFOLD_W / LON_RAW_MAX),
+                         (int)((long long)g_lat * WORLD_CELL_H  / LAT_RAW_MAX));
+            Redraw(h);
+        } else {
+            MessageBoxW(h, L"워프에 실패했습니다(주소를 쓸 수 없습니다).", L"세계지도", MB_OK | MB_ICONWARNING);
+        }
+    } else if (pick == 2) {
+        CenterOn((int)((long long)c->lonRaw * WORLD_UNFOLD_W / LON_RAW_MAX),
+                 (int)((long long)c->latRaw * WORLD_CELL_H  / LAT_RAW_MAX));
+        Redraw(h);
+    }
+}
+
 // 지도 위 함대 표시 — 빨간 동그라미 + 십자선. 보이는 영역 밖이면 그리지 않는다.
 static void DrawMarker(HDC dc, int lon, int lat)
 {
@@ -380,9 +457,16 @@ static LRESULT CALLBACK MapProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_LBUTTONUP:
         if (g_drag) { g_drag = 0; ReleaseCapture(); }
         return 0;
-    case WM_RBUTTONDOWN:                     // 전체보기로 되돌리기
+    case WM_RBUTTONDOWN: {
+        // 도시 마커 위에서 누르면 그 도시 메뉴, 빈 곳에서 누르면 전체보기로 되돌리기.
+        POINT pt;
+        int city;
+        pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
+        city = CityAtPoint(pt);
+        if (city >= 0) { CityMenu(h, city); return 0; }
         if (World_Pixels() && g_zi != 0) { g_zi = 0; g_vx = 0; g_vy = 0; Redraw(h); }
         return 0;
+    }
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE) { DestroyWindow(h); return 0; }
         if (wp == 'C') { g_cities = !g_cities; InvalidateRect(h, NULL, FALSE); return 0; }

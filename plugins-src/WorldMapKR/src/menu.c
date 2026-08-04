@@ -4,7 +4,7 @@
 // 다른 KR 플러그인(CharacterUtilKR/ShipSkinKR)과 같은 방식이다:
 // 1초 폴링으로 게임 창을 찾아 AppendMenu → 서브클래싱해서 WM_COMMAND 를 ID 로 가로챈다.
 
-#define ID_MAP_OPEN 0xB600u   // Trade=0xB10x/0xC0xx, Char=0xB301, Ship=0xB410, Patch=0xB500 과 비충돌
+#define ID_MAP_OPEN 0xB600u   // Trade=0xB10x/0xC0xx, Char=0xB301, Ship=0xB410, Patch=0xB500, Mod=0xB700 과 비충돌
 
 static HINSTANCE g_hinst = NULL;
 static HWND      g_hwnd = NULL, g_subHwnd = NULL;

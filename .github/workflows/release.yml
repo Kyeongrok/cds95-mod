@@ -26,8 +26,9 @@ jobs:
           # 발견물 좌표도 같이 넣는다(없으면 소스에 구워 둔 표를 쓴다).
           cp plugins-src/WorldMapKR/discoveries.json dist/CDS95Util/
           cp CDS95Util/ShipSkinKR.plugin dist/CDS95Util/
-          cp CDS95Util/AudioFixKR.plugin dist/CDS95Util/
           cp CDS95Util/PatchUtilKR.plugin dist/CDS95Util/
+          # 어떤 플러그인을 쓸지 고르는 창. 설정 파일 없이 CDS95Util 폴더를 훑는다.
+          cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
           # patches.json 이 없으면 PatchUtilKR 은 아무것도 하지 않으므로 목록도 같이 넣는다.
           cp plugins-src/PatchUtilKR/patches.json dist/CDS95Util/
           cp plugins-src/PatchUtilKR/patches.json.example dist/CDS95Util/
@@ -125,11 +126,6 @@ jobs:
               하단 **[내보내기]**(선택 배를 `ship_g{n}.bmp` 384×48로) → 그림판 편집 → **[불러오기]**(그 배만 반영, 다른 배 유지).
               **[원래대로(전체)]** 는 편집 전 원본으로 복원. 스킨은 `CDS95Util\shipskin\skins\` 에 모여 재사용됩니다.
               (내보낸 BMP 색 = 게임 실제 색과 일치하도록 해상 팔레트를 캘리브레이션으로 역산해 반영.)
-            - **AudioFixKR** — 시작 시 뜨는 **"CD 에러"** 원천 차단. (원인: CD-ROM이 없으면 CD음악을
-              `_inmm.dll`이 mp3로 에뮬하는데, MCI 드라이버 로드 실패 시 `CDAudioOpen`이 -1을 반환해
-              게임이 막힘.) `CDAudioOpen` 실패를 성공 처리해 **재부팅 없이 게임이 항상 실행**됩니다
-              (MCI가 정상일 땐 음악도 정상 재생, 스탯/데이터 불변).
-
             ### 설치
             `CDS95Util-${{ github.ref_name }}.zip` 을 풀어 나오는 `CDS95Util\` 폴더의 플러그인
             파일들을 게임 폴더의 `CDS95Util\` 안에 넣으세요(폴더째 게임 루트에 덮어써도 됩니다).
@@ -156,5 +152,12 @@ jobs:
               목록을 직접 만들려면 `patches.json.example` 의 스키마를 참고하세요.
               창 아래 **[patches.json 열기]** 로 편집하고 **[다시 읽기]** 로 반영할 수 있습니다.
 
-            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `AudioFixKR.plugin`, `PatchUtilKR.plugin` 만 포함됩니다.
+            - **ModUtilKR** — "파일" 메뉴에 "모드"를 추가. **어떤 플러그인을 쓸지 체크박스로 고릅니다.**
+              플러그인은 `ddraw.dll` 이 게임을 켤 때 `CDS95Util\*.plugin` 을 훑어 불러오고 내리는 길이
+              없으므로, 끄기는 확장자를 `.plugin.off` 로 바꿔 다음 실행 때 로더 눈에 안 띄게 하는 것입니다
+              (**반영은 항상 다음 실행부터**). 게임이 켜져 있어도 됩니다.
+              설정 파일은 없습니다 — `CDS95Util` 폴더에 있는 파일이 곧 목록이고, 아는 플러그인은 설명도
+              함께 보여줍니다. 로더인 `DDrawWrapper` 와 이 창 자신은 끌 수 없게 잠겨 있습니다.
+
+            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin` 만 포함됩니다.
             > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
