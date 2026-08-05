@@ -24,3 +24,19 @@ void Ls12_Close(Ls12File* f);
 
 // index 얼굴을 out(>=7680바이트)에 8bpp 인덱스로 디코드한다. 성공 1.
 int  Ls12_DecodeFace(Ls12File* f, int index, unsigned char* out);
+
+// 파트 하나를 있는 그대로 푼다(얼굴 크기로 자르지 않는다). 쓴 바이트 수, 실패 0.
+// 이벤트 스크립트(퀘스트/HIST_EV 등)를 읽는 데 쓴다.
+int  Ls12_DecodePart(Ls12File* f, int index, unsigned char* out, unsigned outcap);
+
+// 파트의 원본(압축 해제) 크기. 버퍼를 잡을 때 쓴다.
+unsigned Ls12_PartSize(Ls12File* f, int index);
+
+// 푼 파트들을 다시 LS12 파일로 묶는다. 만들어진 바이트 수, 실패 0.
+// 원본 인코더(天翔記 LS11Archiever)와 똑같이 실제 압축은 하지 않는다 — 사전이 항등이고
+// LZ 매치를 찾지 않아 바이트 하나가 가변길이 코드 하나가 된다. 그래서 결과가 원본보다
+// 2배 남짓 커지지만 게임은 그대로 읽는다(백동수 모드의 HIST_EV.CDS 가 같은 방식이다).
+// 필요한 버퍼 크기는 Ls12_BuildCap 으로 미리 잡는다.
+unsigned Ls12_BuildCap(const unsigned* lens, int count);
+unsigned Ls12_Build(unsigned char* const* parts, const unsigned* lens, int count,
+                    unsigned char* out, unsigned outcap);

@@ -19,3 +19,6 @@
 
 # Cheat Engine 테이블(26MB 참조 덤프, 로컬 보관 — 버전관리 제외)
 /ce/
+
+# Python 캐시 (plugins-src/tools 스크립트를 돌리면 생긴다)
+__pycache__/

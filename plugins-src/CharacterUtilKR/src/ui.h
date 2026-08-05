@@ -35,10 +35,22 @@
 #define NAV_H     (NAV_ROW_H * NAV_ROWS)                                   // 512
 #define NAV_Y     (FRAME + TITLE_H + TAB_H + FILTER_H + CREW_H + 6)        // 119
 
+// ---- 퀘스트 탭 ----
+// 한 줄에 [상태 배지][장소·조건 / 소문 한 줄 / 요구·보수] 세 줄을 넣는다.
+#define Q_ROW_H   62
+#define Q_ROWS    8
+#define Q_Y       (FRAME + TITLE_H + TAB_H + FILTER_H + 6)   // 91
+#define Q_LIST_H  (Q_ROW_H * Q_ROWS)                         // 496
+
 #define WIN_W     (GX + COLS*CELL_W + (COLS-1)*GAP + GAP + SB_W + FRAME)   // 760
 #define GAL_WIN_H (GY + GAL_H + FRAME)                                     // 618
 #define NAV_WIN_H (NAV_Y + NAV_H + FRAME)                                  // 634
+#define Q_WIN_H   (Q_Y + Q_LIST_H + FRAME)                                 // 590
 #define WIN_H     (GAL_WIN_H > NAV_WIN_H ? GAL_WIN_H : NAV_WIN_H)
+
+// 퀘스트 목록 폭은 창이 정해진 뒤에야 잴 수 있다(WIN_W 가 갤러리 기준으로 정해진다).
+#define Q_X       (FRAME + GAP)                             // 13
+#define Q_W       (WIN_W - Q_X - GAP - SB_W - FRAME)        // 722
 
 // 탭바 / 필터바 기준선
 #define TAB_Y     (FRAME + TITLE_H)

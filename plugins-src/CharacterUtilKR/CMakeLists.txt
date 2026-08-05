@@ -2,6 +2,9 @@ add_library(CharacterUtilKR SHARED
     src/dllmain.c
     src/character.c
     src/navview.c
+    src/questview.c
+    src/questjson.c
+    src/questdb.c
     src/savedata.c
     src/chardb.c
     src/maids.c

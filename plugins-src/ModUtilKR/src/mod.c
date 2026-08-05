@@ -22,7 +22,7 @@ static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"ModUtilKR",       L"이 창. 어떤 플러그인을 쓸지 고른다." },
     { L"HotelUtilKR",     L"여관 숙박 일수를 직접 입력한다." },
     { L"TradeUtilKR",     L"교역 메뉴 — 시세 일람 / 교역품 관리 / 워프." },
-    { L"CharacterUtilKR", L"인물 창 — 항해사 찾기 / 여급 / 스폰서 / 도감." },
+    { L"CharacterUtilKR", L"인물 창 — 항해사 찾기 / 퀘스트 / 여급 / 스폰서 / 도감." },
     { L"WorldMapKR",      L"세계지도 — 도시·발견물 마커, 우클릭 워프." },
     { L"ShipSkinKR",      L"함선 스킨 + 성능(등장시기 포함) 편집." },
     { L"PatchUtilKR",     L"patches.json 의 메모리 패치를 켜고 끈다." },

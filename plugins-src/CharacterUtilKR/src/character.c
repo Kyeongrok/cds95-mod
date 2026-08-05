@@ -6,6 +6,8 @@
 #include "patrons.h"
 #include "charstate.h"
 #include "navview.h"
+#include "questview.h"
+#include "questdb.h"     // Quest_Init — 창을 열기 전에 quests.json 을 반영해야 한다
 #include <windowsx.h>
 
 // fb15/fb16: 인물(얼굴) 코드 브라우저 — 갤러리(2열, 스크롤) + 남/여/카테고리 필터.
@@ -27,6 +29,7 @@
 #define TAB_NAV     1
 #define TAB_MAID    2
 #define TAB_PATRON  3
+#define TAB_QUEST   4
 
 static HINSTANCE g_hinst = NULL;
 static HWND    g_gameHwnd = NULL;
@@ -132,6 +135,7 @@ static const struct { int id; const wchar_t* label; int w; } kTabs[] = {
 #if CHARKR_SHOW_NAV_TAB
     { TAB_NAV,     L"항해사 찾기", 110 },
 #endif
+    { TAB_QUEST,   L"퀘스트",       70 },
     { TAB_MAID,    L"여급",         60 },
     { TAB_PATRON,  L"스폰서",       70 },
     { TAB_GALLERY, L"도감",         70 },
@@ -543,8 +547,9 @@ static void OnPaint(HWND h)
     { int i; for (i = 0; i < TAB_N; i++)
         UI_Button(dc, TabRectAt(i), kTabs[i].label, g_tab == kTabs[i].id); }
 
-    if (g_tab == TAB_NAV) Nav_Paint(dc);
-    else                  PaintGallery(dc);   // [여급] 과 [도감] 이 격자를 공유한다
+    if      (g_tab == TAB_NAV)   Nav_Paint(dc);
+    else if (g_tab == TAB_QUEST) Quest_Paint(dc);
+    else                         PaintGallery(dc);   // [여급] 과 [도감] 이 격자를 공유한다
 
     UI_BufEnd(&buf);
     EndPaint(h, &ps);
@@ -582,7 +587,9 @@ static void SetTab(HWND h, int t)
     g_tab = t;
     CloseDrops();
     Nav_Activate(h, t == TAB_NAV);
-    if (t != TAB_NAV) RebuildFilter();   // [여급] <-> [도감] 은 목록 내용이 아예 다르다
+    Quest_Activate(h, t == TAB_QUEST);   // 켤 때마다 세이브를 다시 읽는다
+    if (t != TAB_NAV && t != TAB_QUEST)
+        RebuildFilter();                 // [여급] <-> [도감] 은 목록 내용이 아예 다르다
     InvalidateRect(h, NULL, FALSE);
 }
 
@@ -614,8 +621,9 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (s != g_ddScroll) { g_ddScroll = s; InvalidateRect(h, NULL, FALSE); }
             return 0;
         }
-        if (g_tab == TAB_NAV) Nav_Wheel(h, notches);
-        else                  ScrollTo(h, g_scroll - notches);
+        if      (g_tab == TAB_NAV)   Nav_Wheel(h, notches);
+        else if (g_tab == TAB_QUEST) Quest_Wheel(h, notches);
+        else                         ScrollTo(h, g_scroll - notches);
         return 0;
     }
     case WM_LBUTTONDOWN: {
@@ -650,6 +658,8 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (PtInRect(&r, pt)) { SetTab(h, kTabs[i].id); return 0; } } }
         if (g_tab == TAB_NAV) {
             if (Nav_Click(h, pt)) return 0;
+        } else if (g_tab == TAB_QUEST) {
+            if (Quest_Click(h, pt)) return 0;
         } else {
             if (g_tab == TAB_GALLERY) {
                 { RECT r=MaleRect();   if (PtInRect(&r,pt)) { SetGender(h,FACE_MALE); return 0; } }
@@ -712,6 +722,10 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (Nav_Key(h, wp)) return 0;
             return 0;
         }
+        if (g_tab == TAB_QUEST) {
+            Quest_Key(h, wp);
+            return 0;
+        }
         switch (wp) {
         case VK_UP:    ScrollTo(h, g_scroll-1); return 0;
         case VK_DOWN:  ScrollTo(h, g_scroll+1); return 0;
@@ -755,6 +769,7 @@ void CharKR_ShowWindow(HWND owner, HINSTANCE hinst)
 #if CHARKR_SHOW_NAV_TAB
         Nav_Activate(g_wnd, g_tab == TAB_NAV);
 #endif
+        Quest_Activate(g_wnd, g_tab == TAB_QUEST);   // 창을 닫았다 다시 열 때 탭이 유지된다
         ShowWindow(g_wnd, SW_SHOW); UpdateWindow(g_wnd); SetFocus(g_wnd);
     }
 }
@@ -838,6 +853,9 @@ static DWORD WINAPI MonitorThread(LPVOID param)
     Maid_Load();
     Patron_Load();
     CharState_Apply(g_hinst);
+    // quests.json 대로 퀘스트 이벤트 파일을 다시 만들어 둔다. 게임이 그 파일을 읽기 전에
+    // 끝나야 해서 창을 여는 시점이 아니라 여기서 한다(원본은 <이름>.CDS.orig 로 남는다).
+    Quest_Init(g_hinst);
     for (;;) {
         HMENU bar;
         g_gameHwnd = NULL;
