@@ -3,6 +3,8 @@ add_library(CharacterUtilKR SHARED
     src/character.c
     src/navview.c
     src/questview.c
+    src/invview.c
+    src/inventory.c
     src/questjson.c
     src/questdb.c
     src/savedata.c
