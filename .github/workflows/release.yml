@@ -29,6 +29,8 @@ jobs:
           cp CDS95Util/PatchUtilKR.plugin dist/CDS95Util/
           # 어떤 플러그인을 쓸지 고르는 창. 설정 파일 없이 CDS95Util 폴더를 훑는다.
           cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
+          # 퀘스트 파일 묶음(mods\<모드>\)을 골라 까는 창.
+          cp CDS95Util/QuestModKR.plugin dist/CDS95Util/
           # patches.json 이 없으면 PatchUtilKR 은 아무것도 하지 않으므로 목록도 같이 넣는다.
           cp plugins-src/PatchUtilKR/patches.json dist/CDS95Util/
           cp plugins-src/PatchUtilKR/patches.json.example dist/CDS95Util/
