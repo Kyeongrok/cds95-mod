@@ -369,10 +369,44 @@ static HMENU FindFileMenu(HMENU bar)
     return NULL;
 }
 
-static BOOL HasOurItem(HMENU m)
+// "파일 > 모드" 서브메뉴를 찾거나 만든다.
+//
+// 플러그인 관리 · 퀘스트 모드 · 패치가 각자 파일 메뉴에 항목을 달면 목록이 너무 길어진다.
+// 셋을 이 하나 아래로 모은다. 서로를 모르는 별개 DLL 이라 먼저 뜬 쪽이 만들고 나머지는
+// 찾아 붙는다. 겹쳐 생긴 빈 "모드" 는 보이는 대로 치운다(동시에 만들면 둘이 될 수 있다).
+static HMENU FindOrCreateModMenu(HMENU fileMenu, BOOL mayCreate)
 {
-    int n = GetMenuItemCount(m), i;
-    for (i = 0; i < n; i++) if (GetMenuItemID(m, (UINT)i) == ID_MOD_OPEN) return TRUE;
+    int i;
+    WCHAR s[64];
+    HMENU first = NULL, sub;
+    if (!fileMenu) return NULL;
+    for (i = GetMenuItemCount(fileMenu) - 1; i >= 0; i--) {
+        if (GetMenuStringW(fileMenu, (UINT)i, s, 64, MF_BYPOSITION) <= 0) continue;
+        if (lstrcmpW(s, L"모드") != 0) continue;
+        sub = GetSubMenu(fileMenu, (UINT)i);
+        if (first && sub && GetMenuItemCount(sub) == 0) { RemoveMenu(fileMenu, (UINT)i, MF_BYPOSITION); continue; }
+        first = sub;
+    }
+    if (first || !mayCreate) return first;
+    sub = CreatePopupMenu();
+    if (!sub) return NULL;
+    AppendMenuW(fileMenu, MF_POPUP, (UINT_PTR)sub, L"모드");
+    return sub;
+}
+
+// 이 메뉴(하위 메뉴까지)에 우리 항목이 이미 있나.
+// 항목을 "모드" 서브메뉴로 옮긴 뒤로 파일 메뉴만 훑으면 늘 "없다" 가 나와서, 1초마다 또
+// 달아 메뉴가 끝없이 늘어났다. 그래서 아래로 내려가며 본다.
+static BOOL MenuHasId(HMENU m, UINT id)
+{
+    int n, i;
+    if (!m) return FALSE;
+    n = GetMenuItemCount(m);
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (MenuHasId(sub, id)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == id) return TRUE;
+    }
     return FALSE;
 }
 
@@ -388,8 +422,11 @@ static DWORD WINAPI MenuThread(LPVOID p)
             if (bar) {
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
-                if (!HasOurItem(target)) {
-                    AppendMenuW(target, MF_STRING, ID_MOD_OPEN, L"플러그인 관리");
+                if (!MenuHasId(target, ID_MOD_OPEN)) {
+                    {   // 파일 메뉴가 아니라 "모드" 아래에 붙인다
+                    HMENU modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, TRUE);
+                    AppendMenuW(modMenu ? modMenu : target, MF_STRING, ID_MOD_OPEN, L"플러그인 관리");
+                }
                     DrawMenuBar(g_gameHwnd);
                     LogW(L"[ModUtilKR] \"플러그인 관리\" 메뉴 설치.");
                 }

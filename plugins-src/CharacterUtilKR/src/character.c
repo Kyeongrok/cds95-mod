@@ -32,6 +32,12 @@
 #define TAB_PATRON  3
 #define TAB_QUEST   4
 #define TAB_INV     5
+// 아래 둘은 이 창의 탭이 아니라 TradeUtilKR 의 창을 여는 단추다. 메뉴에 항목이 너무 많아져
+// "교역" · "교역품" 을 여기로 옮겼다. 누르면 게임 창에 그쪽 커맨드를 보내 창을 띄운다.
+#define TAB_SISE    6
+#define TAB_GOODS   7
+#define ID_TRADE_SISE  0xB101u
+#define ID_TRADE_GOODS 0xB102u
 
 static HINSTANCE g_hinst = NULL;
 static HWND    g_gameHwnd = NULL;
@@ -142,6 +148,8 @@ static const struct { int id; const wchar_t* label; int w; } kTabs[] = {
     { TAB_MAID,    L"여급",         60 },
     { TAB_PATRON,  L"스폰서",       70 },
     { TAB_GALLERY, L"도감",         70 },
+    { TAB_SISE,    L"교역",         60 },
+    { TAB_GOODS,   L"교역품",       70 },
 };
 #define TAB_N ((int)(sizeof(kTabs)/sizeof(kTabs[0])))
 
@@ -585,8 +593,22 @@ static void SetCat(HWND h, int c)
     g_catFilter = c;
     RebuildFilter(); InvalidateRect(h,NULL,FALSE);
 }
+// TradeUtilKR 의 창을 띄운다. 그쪽이 게임 창을 서브클래싱해 이 ID 를 가로챈다.
+// 플러그인끼리 직접 부르지 않고 메시지로만 이어 두면 한쪽이 없어도 아무 일도 안 일어난다.
+static BOOL PostToGame(UINT id)
+{
+    HWND game = g_wnd ? GetWindow(g_wnd, GW_OWNER) : NULL;   // 이 창은 게임 창을 주인으로 뜬다
+    if (!game) return FALSE;
+    PostMessageW(game, WM_COMMAND, MAKEWPARAM(id, 0), 0);
+    return TRUE;
+}
+
 static void SetTab(HWND h, int t)
 {
+    if (t == TAB_SISE || t == TAB_GOODS) {          // 탭이 아니라 딴 창을 여는 단추다
+        PostToGame(t == TAB_SISE ? ID_TRADE_SISE : ID_TRADE_GOODS);
+        return;
+    }
     if (t == g_tab) return;
     g_tab = t;
     CloseDrops();

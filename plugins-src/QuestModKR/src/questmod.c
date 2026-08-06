@@ -35,6 +35,9 @@ static int       g_nmod = 0;
 static HWND      g_wnd = NULL, g_list = NULL;
 static HWND      g_gameHwnd = NULL, g_subHwnd = NULL;
 static WNDPROC   g_origProc = NULL;
+// 메뉴 감시 횟수. "모드" 는 ModUtilKR 이 만들게 두고, 없을 때만 두 번째 바퀴에서
+// 우리가 만든다 — 셋이 동시에 만들면 "모드" 가 여러 개 생긴다.
+static int       g_pass = 0;
 
 // 플러그인이 CDS95Util\\plugins\\<만든이>\\ 에 있으면 데이터는 그 위 CDS95Util 에 있다.
 // 플러그인은 만든이별로 폴더를 나눠도 cities.json / quests.json / mods 같은 것은 한 자리에
@@ -322,10 +325,12 @@ static void ReadModTxt(const wchar_t* modDir, wchar_t* base, wchar_t* all, wchar
             buf[i] = 0;
             MultiByteToWideChar(CP_UTF8, 0, buf + s0, -1, line, 512);
             buf[i] = save;
-            if ((line[0] == L'b' || line[0] == L'B') && line[1] == L'a' && line[2] == L's'
+            // 먼저 나온 것만 받는다. 설명 글에 "all= 로 나눠 깐다" 같은 문장이 있으면
+            // 뒤엣것이 값을 덮어써서 엉뚱한 파일을 찾게 된다(실제로 그렇게 깨졌다).
+            if (!base[0] && (line[0] == L'b' || line[0] == L'B') && line[1] == L'a' && line[2] == L's'
                 && line[3] == L'e' && line[4] == L'=')
                 lstrcpynW(base, line + 5, 64);
-            else if ((line[0] == L'a' || line[0] == L'A') && line[1] == L'l' && line[2] == L'l'
+            else if (!all[0] && (line[0] == L'a' || line[0] == L'A') && line[1] == L'l' && line[2] == L'l'
                 && line[3] == L'=')
                 lstrcpynW(all, line + 4, 32);
             else if (!desc[0])
@@ -372,6 +377,7 @@ static int FilesOk(const QMod* m)
     GameDir(game);
     ModsDir(mods);
     JoinPath(modDir, mods, m->name);
+    JoinPath(modDir, modDir, L"quests");
     if (m->all[0]) {                             // 하나를 8직업에 다 깐 모드
         JoinPath(src, modDir, m->all);
         for (i = 0; i < 8; i++) if (!SlotHas(game, kJobFiles[i], src)) return 0;
@@ -400,9 +406,11 @@ static void SeedDefaultMod(void)
     if (FileExists(state)) return;                 // 이미 한 번 갈아 끼운 적이 있다
     ModsDir(mods);
     CreateDirectoryW(mods, NULL);
-    JoinPath(modDir, mods, L"default_quest_mod");
+    JoinPath(modDir, mods, L"default_mod");
     if (FileExists(modDir)) return;
     GameDir(game);
+    CreateDirectoryW(modDir, NULL);
+    JoinPath(modDir, modDir, L"quests");       // 퀘스트는 늘 이 아래에
 
     for (i = 0; i < 8; i++) {
         // .orig 가 있으면 그쪽이 진짜 원본이다(게임이 읽는 .CDS 는 다시 만들어진 것).
@@ -456,6 +464,7 @@ static void Scan(void)
         lstrcpynW(m->name, fd.cFileName, 64);
         JoinPath(modDir, mods, m->name);
         ReadModTxt(modDir, m->base, m->all, m->desc);
+        JoinPath(modDir, modDir, L"quests");   // 퀘스트 파일은 이 아래에만 둔다
 
         JoinPath(pat, modDir, L"*.CDS");
         h2 = FindFirstFileW(pat, &f2);
@@ -469,6 +478,8 @@ static void Scan(void)
         }
         JoinPath(jsonPath, modDir, L"quests.json");
         m->hasJson = FileExists(jsonPath);
+        // 퀘스트가 없는 모드(패치만 든 것)는 여기 낼 이유가 없다 — 그건 [패치] 창에 뜬다.
+        if (m->nfile <= 0 && !m->hasJson) continue;
         m->applied = (lstrcmpiW(cur, m->name) == 0);   // 쓰기로 정해 둔 것이 이건가
         g_nmod++;
     } while (FindNextFileW(h, &fd));
@@ -513,6 +524,7 @@ static int ApplyMod(QMod* m, int switching, wchar_t* err)
     GameDir(game);
     ModsDir(mods);
     JoinPath(modDir, mods, m->name);
+    JoinPath(modDir, modDir, L"quests");
     JsonPath(live);
     StateRead(prev, 64);
 
@@ -521,6 +533,8 @@ static int ApplyMod(QMod* m, int switching, wchar_t* err)
         QMod* pm = FindMod(prev);
         if (pm) {
             JoinPath(dst, mods, prev);
+            JoinPath(dst, dst, L"quests");
+            CreateDirectoryW(dst, NULL);
             JoinPath(src, dst, L"quests.json");
             CopyFileW(live, src, FALSE);
         }
@@ -536,8 +550,15 @@ static int ApplyMod(QMod* m, int switching, wchar_t* err)
             JoinPath(src, modDir, m->all[0] ? m->all : m->file[i]);
             JoinPath(dst, game, job);
             if (!CopyFileW(src, dst, FALSE)) {
-                wsprintfW(err, L"%s 를 게임 폴더에 넣지 못했습니다.\n게임이 파일을 잡고 있는지 확인하세요.",
-                          job);
+                // 원본이 아예 없는 경우와 못 쓰는 경우를 갈라 말한다 — mod.txt 의 all= 값이
+                // 실제 파일 이름과 어긋났을 때 "파일을 잡고 있나" 만 뜨면 헤매게 된다.
+                if (!FileExists(src))
+                    wsprintfW(err, L"모드 폴더에서 %s 를 못 찾았습니다.\n"
+                                   L"mod.txt 의 all= 값이 실제 파일 이름과 맞는지 보세요.",
+                              m->all[0] ? m->all : m->file[i]);
+                else
+                    wsprintfW(err, L"%s 를 게임 폴더에 넣지 못했습니다.\n게임이 파일을 잡고 있는지 확인하세요.",
+                              job);
                 return 0;
             }
             JoinPath(dst, game, job); lstrcatW(dst, L".orig");  DeleteFileW(dst);
@@ -793,10 +814,44 @@ static HMENU FindFileMenu(HMENU bar)
     return NULL;
 }
 
-static BOOL HasOurItem(HMENU m)
+// "파일 > 모드" 서브메뉴를 찾거나 만든다.
+//
+// 플러그인 관리 · 퀘스트 모드 · 패치가 각자 파일 메뉴에 항목을 달면 목록이 너무 길어진다.
+// 셋을 이 하나 아래로 모은다. 서로를 모르는 별개 DLL 이라 먼저 뜬 쪽이 만들고 나머지는
+// 찾아 붙는다. 겹쳐 생긴 빈 "모드" 는 보이는 대로 치운다(동시에 만들면 둘이 될 수 있다).
+static HMENU FindOrCreateModMenu(HMENU fileMenu, BOOL mayCreate)
 {
-    int n = GetMenuItemCount(m), i;
-    for (i = 0; i < n; i++) if (GetMenuItemID(m, (UINT)i) == ID_QMOD_OPEN) return TRUE;
+    int i;
+    WCHAR s[64];
+    HMENU first = NULL, sub;
+    if (!fileMenu) return NULL;
+    for (i = GetMenuItemCount(fileMenu) - 1; i >= 0; i--) {
+        if (GetMenuStringW(fileMenu, (UINT)i, s, 64, MF_BYPOSITION) <= 0) continue;
+        if (lstrcmpW(s, L"모드") != 0) continue;
+        sub = GetSubMenu(fileMenu, (UINT)i);
+        if (first && sub && GetMenuItemCount(sub) == 0) { RemoveMenu(fileMenu, (UINT)i, MF_BYPOSITION); continue; }
+        first = sub;
+    }
+    if (first || !mayCreate) return first;
+    sub = CreatePopupMenu();
+    if (!sub) return NULL;
+    AppendMenuW(fileMenu, MF_POPUP, (UINT_PTR)sub, L"모드");
+    return sub;
+}
+
+// 이 메뉴(하위 메뉴까지)에 우리 항목이 이미 있나.
+// 항목을 "모드" 서브메뉴로 옮긴 뒤로 파일 메뉴만 훑으면 늘 "없다" 가 나와서, 1초마다 또
+// 달아 메뉴가 끝없이 늘어났다. 그래서 아래로 내려가며 본다.
+static BOOL MenuHasId(HMENU m, UINT id)
+{
+    int n, i;
+    if (!m) return FALSE;
+    n = GetMenuItemCount(m);
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (MenuHasId(sub, id)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == id) return TRUE;
+    }
     return FALSE;
 }
 
@@ -804,6 +859,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
 {
     (void)p;
     for (;;) {
+        g_pass++;
         g_gameHwnd = NULL;
         EnumWindows(EnumProc, 0);
         if (g_gameHwnd) {
@@ -811,8 +867,12 @@ static DWORD WINAPI MenuThread(LPVOID p)
             if (bar) {
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
-                if (!HasOurItem(target)) {
-                    AppendMenuW(target, MF_STRING, ID_QMOD_OPEN, L"퀘스트 모드");
+                if (!MenuHasId(target, ID_QMOD_OPEN)) {
+                    {   // 파일 메뉴가 아니라 "모드" 아래에 붙인다
+                    HMENU modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, g_pass > 1);
+                    if (!modMenu) continue;      // 아직 "모드" 가 없다 — 다음 바퀴에 다시 본다
+                    AppendMenuW(modMenu, MF_STRING, ID_QMOD_OPEN, L"퀘스트 모드");
+                }
                     DrawMenuBar(g_gameHwnd);
                     LogW(L"[QuestModKR] \"퀘스트 모드\" 메뉴 설치.");
                 }

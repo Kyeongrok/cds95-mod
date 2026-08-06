@@ -32,7 +32,7 @@ typedef struct {
     wchar_t      name[128];
     wchar_t      desc[256];
     // 이 패치가 어느 파일에서 왔나. 빈 값이면 CDS95Util\patches.json 이고,
-    // 그 밖은 mods\<모드>\patch\<파일>.json 에서 온 것이다(모드 이름을 적는다).
+    // 그 밖은 mods\<만든이>\patches\<파일>.json 에서 온 것이다(모드 이름을 적는다).
     wchar_t      src[64];
     unsigned int addrs[MAX_ADDRS];   // 파일 오프셋들
     int          naddr;
@@ -661,7 +661,7 @@ static void LoadModPatches(void)
         int nfile = 0;
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
         if (fd.cFileName[0] == L'.') continue;
-        wsprintfW(modDir, L"%s\\%s\\patch", dir, fd.cFileName);
+        wsprintfW(modDir, L"%s\\%s\\patches", dir, fd.cFileName);
         wsprintfW(pat, L"%s\\*.json", modDir);
         h2 = FindFirstFileW(pat, &f2);
         if (h2 == INVALID_HANDLE_VALUE) continue;
@@ -1081,6 +1081,9 @@ void PatchWin_Show(HWND owner)
 // ================================================================== 메뉴 설치 + 서브클래싱
 static HWND    g_gameHwnd = NULL, g_subHwnd = NULL;
 static WNDPROC g_origProc = NULL;
+// 메뉴 감시 횟수. "모드" 서브메뉴는 ModUtilKR 이 만들게 두고, 그래도 없으면 두 번째
+// 바퀴에서 우리가 만든다 — 셋이 동시에 만들면 "모드" 가 여러 개 생긴다.
+static int     g_pass = 0;
 
 static LRESULT CALLBACK SubProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
@@ -1141,21 +1144,67 @@ static BOOL CollapseSeparators(HMENU m)
     return changed;
 }
 
+// 이 메뉴(하위 메뉴까지)에 우리 항목이 이미 있나.
+// 항목을 "모드" 서브메뉴로 옮긴 뒤로 파일 메뉴만 훑으면 늘 "없다" 가 나와서, 1초마다 또
+// 달아 메뉴가 끝없이 늘어났다. 그래서 아래로 내려가며 본다.
+static BOOL MenuHasId(HMENU m, UINT id)
+{
+    int n, i;
+    if (!m) return FALSE;
+    n = GetMenuItemCount(m);
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (MenuHasId(sub, id)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == id) return TRUE;
+    }
+    return FALSE;
+}
+
+// "파일 > 모드" 서브메뉴를 찾거나 만든다.
+//
+// 플러그인 관리 · 퀘스트 모드 · 패치가 각자 파일 메뉴에 항목을 달면 목록이 너무 길어진다.
+// 셋을 이 하나 아래로 모은다. 서로를 모르는 별개 DLL 이라 먼저 뜬 쪽이 만들고 나머지는
+// 찾아 붙는다. 겹쳐 생긴 빈 "모드" 는 보이는 대로 치운다(동시에 만들면 둘이 될 수 있다).
+static HMENU FindOrCreateModMenu(HMENU fileMenu, BOOL mayCreate)
+{
+    int i;
+    WCHAR s[64];
+    HMENU first = NULL, sub;
+    if (!fileMenu) return NULL;
+    for (i = GetMenuItemCount(fileMenu) - 1; i >= 0; i--) {
+        if (GetMenuStringW(fileMenu, (UINT)i, s, 64, MF_BYPOSITION) <= 0) continue;
+        if (lstrcmpW(s, L"모드") != 0) continue;
+        sub = GetSubMenu(fileMenu, (UINT)i);
+        if (first && sub && GetMenuItemCount(sub) == 0) { RemoveMenu(fileMenu, (UINT)i, MF_BYPOSITION); continue; }
+        first = sub;
+    }
+    if (first || !mayCreate) return first;
+    sub = CreatePopupMenu();
+    if (!sub) return NULL;
+    AppendMenuW(fileMenu, MF_POPUP, (UINT_PTR)sub, L"모드");
+    return sub;
+}
+
 static DWORD WINAPI MenuThread(LPVOID pv)
 {
     (void)pv;
     OutputDebugStringW(L"[PatchUtilKR] menu monitor started.");
     for (;;) {
         HMENU bar;
+        g_pass++;
         g_gameHwnd = NULL;
         EnumWindows(EnumProc, 0);
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!HasOurMenu(target)) {
+            if (!MenuHasId(target, ID_PATCH_OPEN)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
-                AppendMenuW(target, MF_STRING, ID_PATCH_OPEN, L"패치");
+                {   // 파일 메뉴가 아니라 "모드" 아래에 붙인다
+                    HMENU modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, g_pass > 1);
+                    if (!modMenu) continue;      // 아직 "모드" 가 없다 — 다음 바퀴에 다시 본다
+                    AppendMenuW(modMenu, MF_STRING, ID_PATCH_OPEN, L"패치");
+                }
                 DrawMenuBar(g_gameHwnd);
                 OutputDebugStringW(L"[PatchUtilKR] 패치 menu installed.");
             }

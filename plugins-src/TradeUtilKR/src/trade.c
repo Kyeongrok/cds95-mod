@@ -1306,7 +1306,7 @@ static BOOL HasOurMenu(HMENU bar)
     int n = GetMenuItemCount(bar), i;
     WCHAR s[64];
     for (i = 0; i < n; i++)
-        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"교역") == 0)
+        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"워프") == 0)
             return TRUE;
     return FALSE;
 }
@@ -1371,11 +1371,9 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                     const wchar_t* rname[WARP_REGION_MAX]; HMENU rmenu[WARP_REGION_MAX]; int rn = 0;
                     if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                         AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL); // 게임 원래 항목과 구분(최초 1회)
-                    // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
-                    // (MF_STRING 항목은 클릭 시 WM_COMMAND 를 보낸다 — 파일 서브메뉴 안에서도 동일)
-                    AppendMenuW(target, MF_STRING, ID_TRADE_SISE, L"교역");
-                    // fb21/fb27: "교역품" — 현재 정박 도시의 실시간 판매목록.
-                    AppendMenuW(target, MF_STRING, ID_TRADE_GOODS, L"교역품");
+                    // 교역 · 교역품 창은 [정보] 창에서 연다 — 메뉴에 항목이 너무 많아졌다.
+                    // 여기서는 워프만 단다. 창을 여는 커맨드(ID_TRADE_SISE/GOODS)는 그대로라
+                    // [정보] 쪽에서 그 ID 로 WM_COMMAND 를 보내면 열린다.
                     // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
                     warp = CreatePopupMenu();
                     // 최근 다녀온 곳을 맨 위에. 항목은 펼칠 때마다 새로 채운다(RebuildRecentMenu).
