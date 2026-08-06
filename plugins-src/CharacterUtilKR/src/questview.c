@@ -20,6 +20,7 @@ static int g_drop = -1;     // 펼쳐진 목록의 필드 번호. -1 = 없음
 static int g_ddScroll = 0;
 static RECT g_ddRc;
 static wchar_t g_msg[192] = L"";
+static int     g_saidRebased = 0;   // 원본 다시 잡았다는 알림을 이미 띄웠나
 
 #define PANEL_X   (Q_X + 30)
 #define PANEL_W   (Q_W - 60)
@@ -206,7 +207,13 @@ static void PaintRow(HDC dc, int y, int idx, const QuestInfo* q)
     {
         // quests.json 이 손댄 퀘스트는 표가 붙는다 — 원본인지 아닌지 한눈에 보이게.
         const wchar_t* mark = q->addedFrom >= 0 ? L"＋ " : (q->edited ? L"✎ " : L"");
-        if (q->v[QF_CITY] >= 0)
+        // 아는 패치 파일이면 제작노트의 퀘스트 이름을 앞에 세운다 — 장소보다 이쪽이 눈에 든다.
+        if (q->patch && q->v[QF_CITY] >= 0)
+            wsprintfW(line, L"%s%d.  %s · %s %s", mark, idx + 1, q->patch,
+                      CityName(q->v[QF_CITY]), Quest_BuildingName(q->v[QF_BLDG]));
+        else if (q->patch)
+            wsprintfW(line, L"%s%d.  %s", mark, idx + 1, q->patch);
+        else if (q->v[QF_CITY] >= 0)
             wsprintfW(line, L"%s%d.  %s %s", mark, idx + 1,
                       CityName(q->v[QF_CITY]), Quest_BuildingName(q->v[QF_BLDG]));
         else
@@ -260,12 +267,14 @@ static RECT RcStep(int slot, int k)
     r.bottom= r.top + 22;
     return r;
 }
-#define BTN_N 5
-static const wchar_t* kBtn[BTN_N] = { L"저장", L"되돌리기", L"원래대로", L"이걸 본떠 추가", L"닫기" };
+// [이걸 본떠 추가] 는 뺐다 — 퀘스트를 새로 붙이는 것은 quests.json 에 { "clone": N } 을
+// 적는 쪽이 뭘 본떴는지 남고 되돌리기도 쉽다. 창에서는 있는 것을 고치기만 한다.
+#define BTN_N 4
+static const wchar_t* kBtn[BTN_N] = { L"저장", L"되돌리기", L"원래대로", L"닫기" };
 static RECT RcBtn(int i)
 {
-    static const int kx[BTN_N] = { 0, 96, 192, 288, 412 };
-    static const int kw[BTN_N] = { 88, 88, 88, 116, 88 };
+    static const int kx[BTN_N] = { 0, 96, 192, 288 };
+    static const int kw[BTN_N] = { 88, 88, 88, 88 };
     RECT r;
     r.left = PANEL_X + 14 + kx[i]; r.right = r.left + kw[i];
     r.bottom = PANEL_Y + PANEL_H - 10; r.top = r.bottom - 24;
@@ -314,7 +323,18 @@ static void LineText(const QuestLine* l, wchar_t* out)
 {
     static const wchar_t* kWhere[4] = { L"국가", L"도시", L"건물", L"지역" };
     switch (l->kind) {
-    case QL_TEXT:  wsprintfW(out, L"대사   \"%s\"", l->text); break;
+    // 플래그는 그 대사가 어떤 창으로 뜨는지를 정한다(0=확인만, 11=예/아니오 …).
+    // quests.json 에 세 번째 값으로 그대로 적어야 하므로 눈에 보이게 띄운다.
+    case QL_TEXT: {
+        wchar_t x[64];
+        x[0] = 0;
+        if (l->who[0]) {
+            const wchar_t* kr = Quest_SpeakerKR(l->who);      // 아는 이름이면 한글로 보여준다
+            wsprintfW(x, L"  ·화자 %s", kr ? kr : l->who);
+        }
+        if (l->a > 0)  wsprintfW(x + lstrlenW(x), L"  ·플래그 %d", l->a);
+        wsprintfW(out, L"대사   \"%s\"%s", l->text, x);
+        break; }
     case QL_RAW:   wsprintfW(out, L"??     %s", l->text); break;
     case QL_END:   lstrcpyW(out, L"끝"); break;
     case QL_WHERE: {
@@ -322,6 +342,8 @@ static void LineText(const QuestLine* l, wchar_t* out)
                          : l->a == 0x10 ? kWhere[2] : kWhere[3];
         if (l->a == 0x08)      wsprintfW(out, L"도시   = %s", CityName(l->b));
         else if (l->a == 0x10) wsprintfW(out, L"건물   = %s", Quest_BuildingName(l->b));
+        else if (l->a == 0x19 && Quest_RegionName(l->b)[0])
+                               wsprintfW(out, L"지역   = %s", Quest_RegionName(l->b));
         else                   wsprintfW(out, L"%s   = %d", k, l->b);
         break; }
     case QL_YEAR:  wsprintfW(out, L"연도   >= %d년", l->a); break;
@@ -334,6 +356,16 @@ static void LineText(const QuestLine* l, wchar_t* out)
     case QL_GOODS: wsprintfW(out, L"만약   %s산 %s %d 있으면 -> %d번",
                              CityName(l->a), GoodsName(l->b), l->c2, l->c); break;
     case QL_BRANCH:wsprintfW(out, L"분기   [%s] -> %d번", l->text, l->c); break;
+    case QL_FLAG:  wsprintfW(out, L"표식   [%s]", l->text); break;
+    case QL_PAD:   wsprintfW(out, L"여백   %d바이트 (남은 자리)", l->a); break;
+    case QL_ITEMOP: {
+        static const wchar_t* kAct[4] = { L"획득", L"잃음", L"있으면", L"없으면" };
+        wsprintfW(out, L"아이템 %s %s", ItemName(l->b), kAct[(l->a >= 0 && l->a < 4) ? l->a : 0]);
+        break; }
+    case QL_MAKE:
+        if (l->a == 0) wsprintfW(out, L"만들기 신도시 %s", CityName(l->b));
+        else           wsprintfW(out, L"만들기 %s 에 %s", CityName(l->b), Quest_BuildingName(l->c2));
+        break;
     default:       lstrcpyW(out, L""); break;
     }
 }
@@ -605,6 +637,13 @@ void Quest_Activate(HWND h, int active)
     if (Quest_Dirty()) { if (h) InvalidateRect(h, NULL, FALSE); return; }
     g_loaded = Quest_Load();
     g_sel = -1; g_drop = -1; g_msg[0] = 0;
+    // 이벤트 파일이 밖에서 바뀌어 원본을 다시 잡았으면 한 번은 알려 준다.
+    if (Quest_Rebased() && !g_saidRebased) {
+        g_saidRebased = 1;
+        lstrcpyW(g_msg, L"이벤트 파일이 바뀐 것을 보고 새 파일을 원본으로 다시 잡았습니다. "
+                        L"전에 쓰던 원본은 <파일>.CDS.orig.old 로 남겨 뒀습니다. "
+                        L"quests.json 에 남아 있던 항목은 이제 새 파일의 같은 번호에 걸립니다.");
+    }
     if (g_scroll > MaxScroll()) g_scroll = MaxScroll();
     if (h) InvalidateRect(h, NULL, FALSE);
 }
@@ -665,14 +704,6 @@ static int PanelClick(HWND h, POINT pt)
                 g_loaded = 1;
                 if (added) { g_sel = -1; lstrcpyW(g_msg, L"추가했던 퀘스트를 지웠습니다. [저장]을 눌러야 파일에 반영됩니다."); }
                 else lstrcpyW(g_msg, L"원래 값으로 돌렸습니다. [저장]을 눌러야 파일에 반영됩니다.");
-            }
-        } else if (i == 3) {                            // 이걸 본떠 새 퀘스트 추가
-            int ni = Quest_Add(g_sel);
-            if (ni < 0) lstrcpyW(g_msg, L"더 붙일 수 없습니다.");
-            else {
-                g_loaded = 1; g_sel = ni;
-                g_scroll = MaxScroll();          // 새로 붙인 것은 늘 맨 뒤라 끝으로 내린다
-                lstrcpyW(g_msg, L"맨 뒤에 새 퀘스트를 붙였습니다. 값을 고치고 [저장]하세요.");
             }
         } else {                                        // 닫기
             g_sel = -1;

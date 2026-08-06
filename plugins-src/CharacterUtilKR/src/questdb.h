@@ -74,6 +74,7 @@ typedef struct {
     int  condAnd;            // 1 = 연도·명성이 같은 덩이(AND), 0 = 따로(OR)
     int  addedFrom;          // -1 = 원본 퀘스트, >=0 = 그 번호를 본떠 새로 붙인 것
     int  edited;             // 1 = quests.json 에서 값을 덮어쓴 퀘스트
+    const wchar_t* patch;    // 알려진 패치 파일이면 그 퀘스트 이름. 모르면 NULL
     int  v[QF_N];            // 현재 값. 그 자리가 없으면 -1
     int  n[QF_N];            // 파일 안에서 그 값이 박혀 있는 자리 수(0 = 편집 불가)
     wchar_t summary[160];    // 소문 대사 한 줄 — "세빌리아 조합에서 일할 사람을 찾고 있었네."
@@ -85,6 +86,11 @@ void Quest_Init(HINSTANCE hinst);
 
 // 세이브 -> <이름>.CDS.orig -> quests.json 순으로 읽어 목록을 만든다. 성공 1.
 int  Quest_Load(void);
+
+// 있는 퀘스트 파일(8직업 + STORY)을 전부 [원본 + quests.json] 으로 다시 만든다.
+// quests.json 의 "*" 칸에 적은 편집은 파일 이름을 안 가리고 전부에 걸리므로, 8직업이
+// 같은 베이스(퀘스트패치처럼 8개가 같은 파일)일 때 모드를 json 하나로 돌릴 수 있다.
+void Quest_BuildAll(void);
 
 const wchar_t* Quest_FileName(void);   // "EHT.CDS". 실패하면 L""
 const wchar_t* Quest_JobName(void);    // "에스파니아 사냥꾼"
@@ -104,9 +110,12 @@ int  Quest_Dirty(void);
 int  Quest_Save(void);              // quests.json 저장 + .CDS 재생성. 성공 1
 int  Quest_HasBackup(void);         // <이름>.CDS.orig 가 있나
 
-// qi 를 본뜬 퀘스트를 파일 끝에 새로 붙인다. 새 퀘스트 번호, 실패 -1.
-// 끝에만 붙이는 이유는 questjson.h 참고(세이브 진행 포인터가 파트 번호라서).
-int  Quest_Add(int qi);
+// 밖에서 이벤트 파일을 다른 것으로 갈아 끼운 것을 알아채고 원본을 다시 잡았나.
+// 한 번 잡으면 그 판 내내 1 이다(알림을 놓치지 않게).
+int  Quest_Rebased(void);
+
+// 퀘스트를 새로 붙이는 것은 quests.json 에 { "clone": N } 을 적는 쪽만 남겼다
+// (창에서 버튼으로 붙이면 뭘 본떴는지 파일에 안 남아 되돌리기가 어렵다).
 
 // 이 퀘스트에 걸린 quests.json 항목을 지운다. 원본 퀘스트면 값이 원래대로 돌아가고,
 // 추가한 퀘스트면 통째로 사라진다. 성공 1.
@@ -124,7 +133,9 @@ int  Quest_ResetAll(void);
 // 위치를 참조하는 명령은 43 계열 하나뿐이고 형태가 통일돼 있다:
 //     43 <조건식> <u16 상대오프셋>      오프셋은 명령 끝 기준 전방
 // 뜻을 모르는 바이트는 QL_RAW 로 그대로 들고 있는다 — 몰라도 보존만 하면 되기 때문이다.
-#define QLINE_MAX 320
+// 상한 — 퀘스트패치(120파트)에서 제일 긴 퀘스트가 518줄이라 넉넉히 잡는다.
+// 여기서 잘리면 RebuildPart 가 그 파트를 반쪽만 다시 만들게 되므로 여유가 필요하다.
+#define QLINE_MAX 1024
 
 #define QL_HEADER 0    // 슬롯 머리글(줄이 아니라 구분선). a=도시 b=건물 (-1 없음)
 #define QL_TEXT   1    // 대사
@@ -139,6 +150,13 @@ int  Quest_ResetAll(void);
 #define QL_ITEM   10   // 분기 — 아이템 소지. a=아이템, c=점프 목표 줄번호
 #define QL_GOODS  11   // 분기 — 교역품 소지. a=산지 b=품목 c2=수량, c=목표 줄
 #define QL_BRANCH 12   // 그 밖의 43 분기. text 에 설명, c=목표 줄
+// 아래 셋은 퀘스트패치 제작노트(카페)로 뜻이 확정된 것들이다.
+#define QL_FLAG   13   // 인자 없는 표식. text 에 이름 (무계약 / 또는 / 다음 단계로 / 이벤트 끝)
+#define QL_ITEMOP 14   // 아이템. a: 0 획득 1 잃음 2 소지 조건 3 비소지 조건, b=아이템
+#define QL_MAKE   15   // 만들기. a: 0 신도시 1 특수건물, b=도시, c2=건물
+// 덩이의 마지막 FF 뒤에 남은 자리. 명령이 아니라 여백이라 낱개로 쪼개지 않고 한 줄로 들고
+// 있는다(그대로 보존은 된다). 퀘스트패치는 여기에 "이벤트 예비용 공백파일" 같은 메모를 남겼다.
+#define QL_PAD    16   // a = 바이트 수
 
 typedef struct {
     short   part, step, slot;
@@ -150,6 +168,7 @@ typedef struct {
     unsigned short tgt;        // 분기 목표의 원본 바이트 위치
     unsigned short off, len;   // 파트 안 위치/길이
     wchar_t text[136];
+    wchar_t who[24];           // 대사 앞머리의 화자("教会"). 없으면 L"". 초상화를 정하는 자리다
 } QuestLine;
 
 // qi 의 스크립트를 읽어 들인다. 줄 수를 돌려준다. 다른 퀘스트를 부르면 갈아탄다.
@@ -165,3 +184,9 @@ int  Quest_Status(void);
 const wchar_t* Quest_LastError(void);   // 저장/복원 실패 사유. 없으면 L""
 
 const wchar_t* Quest_BuildingName(int b);
+// 17 19 <n> 의 지역 이름. 모르는 번호면 L""
+const wchar_t* Quest_RegionName(int r);
+
+// 대사 앞머리의 일본어 화자 이름("教会") -> 한글 이름("교회"). 모르는 이름이면 NULL.
+// quests.json 에도 이 한글 이름을 그대로 적으면 된다.
+const wchar_t* Quest_SpeakerKR(const wchar_t* jp);

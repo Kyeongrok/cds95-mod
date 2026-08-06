@@ -66,6 +66,9 @@ typedef struct {
     short nargs;
     int   arg[QJ_ARG_MAX];
     char  str[QJ_STR_MAX];     // 대사(UTF-8) / 라벨 이름 / 생바이트 16진수
+    // 대사 앞머리의 화자. 초상화를 정하는 자리라 비우면 초상화가 안 뜬다.
+    // 글자로 적으면 cp932 로 바꿔 넣고("教会"), 16진수로 적으면 그 바이트 그대로 넣는다.
+    char  who[32];
 } QJLine;
 
 typedef struct {
