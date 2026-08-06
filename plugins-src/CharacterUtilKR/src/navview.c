@@ -65,6 +65,7 @@ static RECT  g_skPanel;
 static int   g_crWhich = -1;
 static RECT  g_crPanel;
 static int   g_crScroll = 0;
+static int   g_crReady = 0;       // 이름순 표를 만들어 뒀나(아래 BuildCrewOrder)
 
 // g_save.chars 색인 -> 실행 중 인물 배열의 칸 번호.
 // 0 = 아직 안 찾음 / -1 = 못 찾음 / 그 외 = 칸 번호 + 1.
@@ -249,6 +250,7 @@ static void Reload(HWND h)
     Save_Load(&g_save);
     LiveChar_Load();     // 아직 세이브를 안 불러온 상태에서 창을 열었을 수 있으니 매번 다시 본다
     ClearLiveCache();
+    g_crReady = 0;       // 인물 배열이 바뀌었을 수 있으니 이름순 표도 다시 만든다
     Rebuild();
     InvalidateRect(h, NULL, FALSE);
 }
@@ -389,12 +391,62 @@ static int CrewMaxScroll(void)
     int m = (CrewItemCount() + CR_COLS - 1) / CR_COLS - CR_ROWS;
     return m < 0 ? 0 : m;
 }
-// 목록의 i 번째: 0 = 없음, 그 밖은 인물 칸 (i-1).
+// ---- 이름순 늘어놓기 ----
+// 목록이 275줄이라 게임 내부 칸 순서대로 두면 찾기가 어렵다. 화면에는 가나다순으로
+// 늘어놓고, 고를 때 원래 칸 번호로 되돌린다. 이름은 안 바뀌므로 한 번만 만들어 둔다.
+static wchar_t g_crName[LIVECHAR_COUNT][48];
+static short   g_crOrder[LIVECHAR_COUNT];   // 표시 자리 -> 인물 칸
+static short   g_crPos[LIVECHAR_COUNT];     // 인물 칸  -> 표시 자리
+
+static int CrewNameBefore(int a, int b)
+{
+    const wchar_t *x = g_crName[a], *y = g_crName[b];
+    int c;
+    if ((x[0] != 0) != (y[0] != 0)) return x[0] != 0;   // 이름 없는 칸은 맨 뒤로
+    c = lstrcmpW(x, y);                                 // 로캘 대조 = 가나다순
+    return c != 0 ? c < 0 : a < b;                      // 동명이인은 칸 번호 순
+}
+
+static void BuildCrewOrder(void)
+{
+    int i, j, named = 0;
+    short v;
+    for (i = 0; i < LIVECHAR_COUNT; i++) {
+        LiveChar_NameAt(i, g_crName[i], 48);
+        if (g_crName[i][0]) named++;
+        g_crOrder[i] = (short)i;
+    }
+    if (!named) return;    // 아직 인물 배열이 안 채워졌다 — 다음에 다시 만든다
+    for (i = 1; i < LIVECHAR_COUNT; i++) {             // 삽입 정렬. 275건이면 넉넉하다
+        v = g_crOrder[i];
+        for (j = i - 1; j >= 0 && CrewNameBefore(v, g_crOrder[j]); j--) g_crOrder[j+1] = g_crOrder[j];
+        g_crOrder[j+1] = v;
+    }
+    for (i = 0; i < LIVECHAR_COUNT; i++) g_crPos[g_crOrder[i]] = (short)i;
+    g_crReady = 1;
+}
+
+// 표시 자리 -> 인물 칸. 0 = 없음(-1).
+static int CrewSlotAt(int i)
+{
+    if (i <= 0 || i > LIVECHAR_COUNT) return -1;
+    return g_crReady ? g_crOrder[i - 1] : i - 1;
+}
+// 인물 칸 -> 표시 자리. 비었으면 0.
+static int CrewPosOf(int slot)
+{
+    if (slot < 0 || slot >= LIVECHAR_COUNT) return 0;
+    return (g_crReady ? g_crPos[slot] : slot) + 1;
+}
+
+// 목록의 i 번째: 0 = 없음, 그 밖은 이름순으로 늘어놓은 인물.
 static void CrewItemText(int i, wchar_t* out, int cap)
 {
+    int slot;
     if (i == 0) { lstrcpynW(out, L"(없음)", cap); return; }
-    LiveChar_NameAt(i - 1, out, cap);
-    if (!out[0]) wsprintfW(out, L"#%d", i - 1);
+    slot = CrewSlotAt(i);
+    LiveChar_NameAt(slot, out, cap);
+    if (!out[0]) wsprintfW(out, L"#%d", slot);
 }
 
 static void OpenCrewPanel(int which, RECT anchor)
@@ -411,8 +463,9 @@ static void OpenCrewPanel(int which, RECT anchor)
     g_crPanel = p;
     g_crWhich = which;
     g_open    = 5;
+    if (!g_crReady) BuildCrewOrder();
     // 지금 앉아 있는 사람이 보이는 자리에서 연다(275명을 처음부터 훑지 않도록).
-    want = (cur + 1) / CR_COLS - CR_ROWS / 2;
+    want = CrewPosOf(cur) / CR_COLS - CR_ROWS / 2;
     mx = CrewMaxScroll();
     g_crScroll = want < 0 ? 0 : (want > mx ? mx : want);
 }
@@ -425,7 +478,7 @@ static void DrawCrewPanel(HDC dc)
 
     if (g_open != 5 || g_crWhich < 0) return;
     n = CrewItemCount();
-    cur = LiveChar_Crew(g_crWhich) + 1;      // 없음 = 0
+    cur = CrewPosOf(LiveChar_Crew(g_crWhich));   // 없음 = 0
     first = g_crScroll * CR_COLS;
 
     br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
@@ -690,7 +743,7 @@ int Nav_Click(HWND h, POINT pt)
             // 자리만 비우면 그 인물은 "고용중인데 아무 데도 없는" 상태로 남아 술집에도
             // 안 나온다. 자리에서 내릴 땐 고용가능으로, 태울 땐 고용중으로 같이 맞춘다.
             int prev = LiveChar_Crew(which);
-            int now  = i - 1;                          // 0 = 없음 -> -1
+            int now  = CrewSlotAt(i);                  // 0 = 없음 -> -1
             if (LiveChar_SetCrew(which, now)) {
                 if (prev >= 0 && prev != now) LiveChar_SetHire(prev, LIVECHAR_HIRE_FREE);
                 if (now  >= 0)                LiveChar_SetHire(now,  LIVECHAR_HIRE_TAKEN);
