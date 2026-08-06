@@ -1,0 +1,11 @@
+{
+  "Name": "도서-담배(아스테카→신대륙)",
+  "Description": "통합수정판 9-6",
+  "Addresses": [
+    "0xDA930"
+  ],
+  "ByteSize": 4,
+  "Type": "toggle",
+  "OriginalValue": 192,
+  "PatchedValue": 1
+}

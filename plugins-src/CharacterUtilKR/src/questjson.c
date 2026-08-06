@@ -44,6 +44,28 @@ static const struct { const char* name; int id; } kStat[] = {
 #define STAT_N ((int)(sizeof(kStat)/sizeof(kStat[0])))
 
 // "명성+" / "악명-" / "명성=" 를 가른다. 맞으면 항목 번호, 아니면 -1. mode 로 +/-/= 를 낸다.
+// 플러그인이 CDS95Util\\plugins\\<만든이>\\ 에 있으면 데이터는 그 위 CDS95Util 에 있다.
+// 플러그인은 만든이별로 폴더를 나눠도 cities.json / quests.json / mods 같은 것은 한 자리에
+// 모아 둬야 서로 찾을 수 있기 때문이다. 루트에 있는 플러그인은 이 함수가 아무 것도 안 한다.
+static void UpToDataDir(wchar_t* dir)
+{
+    wchar_t tmp[MAX_PATH];
+    int n, i, cut2 = -1, cut1 = -1;
+    lstrcpynW(tmp, dir, MAX_PATH);
+    n = lstrlenW(tmp);
+    if (n && tmp[n-1] == L'\\') tmp[--n] = 0;
+    for (i = n - 1; i >= 0; i--) {
+        if (tmp[i] != L'\\') continue;
+        if (cut2 < 0) cut2 = i;
+        else { cut1 = i; break; }
+    }
+    if (cut1 < 0 || cut2 <= cut1) return;
+    tmp[cut2] = 0;
+    if (lstrcmpiW(tmp + cut1 + 1, L"plugins") != 0) return;
+    tmp[cut1 + 1] = 0;
+    lstrcpyW(dir, tmp);
+}
+
 static int StatWord(const char* s, int* mode)
 {
     int i, n = lstrlenA(s);
@@ -349,6 +371,7 @@ static void JsonPath(HINSTANCE hinst)
     slash = g_path;
     for (q = g_path; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
     slash[1] = 0;
+    UpToDataDir(g_path);
     lstrcatW(g_path, L"quests.json");
 }
 

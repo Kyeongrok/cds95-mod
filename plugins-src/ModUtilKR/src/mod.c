@@ -12,6 +12,8 @@
 typedef struct {
     wchar_t file[MAX_PATH];      // 확장자 뺀 플러그인 파일명
     wchar_t desc[256];
+    wchar_t dir[MAX_PATH];       // 이 파일이 있는 폴더
+    wchar_t author[64];          // plugins\<만든이>\ 에서 왔으면 그 이름. 루트면 빈 값
     int     locked;              // 끄면 안 되는 것(로더 / 이 창 자신)
     int     on;                  // 1 = .plugin / 0 = .plugin.off
 } Plug;
@@ -69,15 +71,14 @@ static void JoinPath(wchar_t* out, const wchar_t* a, const wchar_t* b)
 }
 
 // CDS95Util 폴더의 *.plugin / *.plugin.off 를 훑는다. 이 폴더가 곧 목록이다.
-static void Scan(void)
+// 폴더 하나를 훑어 목록에 잇는다. author 가 비면 CDS95Util 루트다.
+static void ScanDir(const wchar_t* dir, const wchar_t* author)
 {
-    wchar_t dir[MAX_PATH], pat[MAX_PATH];
+    wchar_t pat[MAX_PATH];
     WIN32_FIND_DATAW fd;
     HANDLE h;
     int pass;
 
-    g_nplug = 0;
-    PluginDir(dir, MAX_PATH);
     for (pass = 0; pass < 2; pass++) {                 // 0 = 켜진 것, 1 = 꺼진 것
         JoinPath(pat, dir, pass ? L"*.plugin.off" : L"*.plugin");
         h = FindFirstFileW(pat, &fd);
@@ -101,10 +102,42 @@ static void Scan(void)
             p = &g_plugs[g_nplug++];
             ZeroMemory(p, sizeof(*p));
             lstrcpynW(p->file, base, MAX_PATH);
+            lstrcpynW(p->dir, dir, MAX_PATH);
+            if (author) lstrcpynW(p->author, author, 64);
             p->on = (pass == 0);
             p->locked = (lstrcmpiW(base, L"DDrawWrapper") == 0 || lstrcmpiW(base, L"ModUtilKR") == 0);
             for (k = 0; k < (int)(sizeof(kDesc)/sizeof(kDesc[0])); k++)
                 if (lstrcmpiW(base, kDesc[k].file) == 0) { lstrcpynW(p->desc, kDesc[k].desc, 256); break; }
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+}
+
+// CDS95Util 루트 + plugins\<만든이>\ 를 모두 훑는다.
+//
+// 로더(ddraw.dll)는 루트의 *.plugin 만 불러온다 — 우리 소스가 아니라 고칠 수 없다.
+// 그래서 하위 폴더 것은 이 창이 LoadLibrary 로 직접 불러온다(LoadSubPlugins).
+// 루트에도 그대로 둘 수 있으니 둘 다 목록에 낸다.
+static void Scan(void)
+{
+    wchar_t dir[MAX_PATH], sub[MAX_PATH], pat[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE h;
+
+    g_nplug = 0;
+    PluginDir(dir, MAX_PATH);
+    ScanDir(dir, NULL);
+
+    JoinPath(sub, dir, L"plugins");
+    JoinPath(pat, sub, L"*");
+    h = FindFirstFileW(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            wchar_t one[MAX_PATH];
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (fd.cFileName[0] == L'.') continue;
+            JoinPath(one, sub, fd.cFileName);
+            ScanDir(one, fd.cFileName);
         } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
@@ -114,9 +147,8 @@ static void Scan(void)
 // 켜기/끄기 = 확장자 바꾸기. 다음 실행부터 반영된다.
 static int Toggle(Plug* p, int on)
 {
-    wchar_t dir[MAX_PATH], a[MAX_PATH], b[MAX_PATH];
-    PluginDir(dir, MAX_PATH);
-    JoinPath(a, dir, p->file); lstrcatW(a, L".plugin");
+    wchar_t a[MAX_PATH], b[MAX_PATH];
+    JoinPath(a, p->dir, p->file); lstrcatW(a, L".plugin");
     lstrcpyW(b, a);            lstrcatW(b, L".off");
     if (p->locked) {
         wchar_t msg[512];
@@ -133,6 +165,51 @@ static int Toggle(Plug* p, int on)
     p->on = on;
     LogW(L"[ModUtilKR] %s %s (다음 실행부터)", p->file, on ? L"켬" : L"끔");
     return 1;
+}
+
+// plugins\<만든이>\*.plugin 을 직접 불러온다.
+//
+// 로더(ddraw.dll)는 CDS95Util 루트만 훑는다. 그 파일은 2019년 원본이라 고칠 길이 없어서,
+// 하위 폴더에 둔 것은 이 창이 대신 불러온다. 플러그인은 그냥 DLL 이고 할 일을 DllMain 에서
+// 하므로 LoadLibrary 만 하면 루트에 둔 것과 똑같이 돈다.
+// 이미 올라온 이름은 건너뛴다 — 루트와 하위 폴더에 같은 것이 있으면 메뉴가 두 개 붙는다.
+static void LoadSubPlugins(void)
+{
+    wchar_t dir[MAX_PATH], sub[MAX_PATH], pat[MAX_PATH], one[MAX_PATH], file[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE h;
+    int n = 0;
+
+    PluginDir(dir, MAX_PATH);
+    JoinPath(sub, dir, L"plugins");
+    JoinPath(pat, sub, L"*");
+    h = FindFirstFileW(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        WIN32_FIND_DATAW f2;
+        HANDLE h2;
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (fd.cFileName[0] == L'.') continue;
+        JoinPath(one, sub, fd.cFileName);
+        JoinPath(pat, one, L"*.plugin");
+        h2 = FindFirstFileW(pat, &f2);
+        if (h2 == INVALID_HANDLE_VALUE) continue;
+        do {
+            int len = lstrlenW(f2.cFileName);
+            if (f2.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            if (len < 8 || lstrcmpiW(f2.cFileName + len - 7, L".plugin") != 0) continue;
+            if (GetModuleHandleW(f2.cFileName)) {
+                LogW(L"[ModUtilKR] %s 는 이미 올라와 있어 건너뜀", f2.cFileName);
+                continue;
+            }
+            JoinPath(file, one, f2.cFileName);
+            if (LoadLibraryW(file)) { n++; LogW(L"[ModUtilKR] %s\%s 불러옴", fd.cFileName, f2.cFileName); }
+            else LogW(L"[ModUtilKR] %s\%s 못 불러옴 (오류 %lu)", fd.cFileName, f2.cFileName, GetLastError());
+        } while (FindNextFileW(h2, &f2));
+        FindClose(h2);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    if (n) LogW(L"[ModUtilKR] 하위 폴더 플러그인 %d개 불러옴", n);
 }
 
 // ------------------------------------------------------------------ 창
@@ -161,8 +238,10 @@ static void FillList(void)
         it.iItem = i; it.pszText = p->file; it.lParam = i;
         SendMessageW(g_list, LVM_INSERTITEMW, 0, (LPARAM)&it);
         StateText(p, st);
-        { LVITEMW s; s.iSubItem = 1; s.pszText = st;      SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
-        { LVITEMW s; s.iSubItem = 2; s.pszText = p->desc; SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
+        { LVITEMW s; s.iSubItem = 1; s.pszText = p->author[0] ? p->author : L"(루트)";
+          SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
+        { LVITEMW s; s.iSubItem = 2; s.pszText = st;      SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
+        { LVITEMW s; s.iSubItem = 3; s.pszText = p->desc; SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
         ListView_SetCheckState(g_list, i, p->on);
     }
     g_populating = 0;
@@ -172,8 +251,8 @@ static LRESULT CALLBACK ModProc(HWND h, UINT msg, WPARAM w, LPARAM l)
 {
     switch (msg) {
     case WM_CREATE: {
-        const wchar_t* titles[3] = { L"플러그인", L"상태", L"설명" };
-        int widths[3] = { 190, 120, 460 };
+        const wchar_t* titles[4] = { L"플러그인", L"만든이", L"상태", L"설명" };
+        int widths[4] = { 170, 110, 120, 380 };
         LVCOLUMNW c;
         int i;
         g_list = CreateWindowExW(0, WC_LISTVIEW, L"",
@@ -182,7 +261,7 @@ static LRESULT CALLBACK ModProc(HWND h, UINT msg, WPARAM w, LPARAM l)
         ListView_SetExtendedListViewStyle(g_list, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
         ZeroMemory(&c, sizeof(c));
         c.mask = LVCF_TEXT | LVCF_WIDTH;
-        for (i = 0; i < 3; i++) { c.pszText = (LPWSTR)titles[i]; c.cx = widths[i]; SendMessageW(g_list, LVM_INSERTCOLUMNW, i, (LPARAM)&c); }
+        for (i = 0; i < 4; i++) { c.pszText = (LPWSTR)titles[i]; c.cx = widths[i]; SendMessageW(g_list, LVM_INSERTCOLUMNW, i, (LPARAM)&c); }
         CreateWindowExW(0, L"BUTTON", L"다시 읽기", WS_CHILD|WS_VISIBLE, 0,0,10,10, h, (HMENU)ID_RELOAD, g_hinst, NULL);
         CreateWindowExW(0, L"BUTTON", L"폴더 열기", WS_CHILD|WS_VISIBLE, 0,0,10,10, h, (HMENU)ID_FOLDER, g_hinst, NULL);
         Scan();
@@ -199,9 +278,11 @@ static LRESULT CALLBACK ModProc(HWND h, UINT msg, WPARAM w, LPARAM l)
     case WM_COMMAND:
         if (LOWORD(w) == ID_RELOAD) { Scan(); FillList(); }
         else if (LOWORD(w) == ID_FOLDER) {
-            wchar_t dir[MAX_PATH];
+            wchar_t dir[MAX_PATH], sub[MAX_PATH];
             PluginDir(dir, MAX_PATH);
-            ShellExecuteW(h, L"open", dir, NULL, NULL, SW_SHOWNORMAL);
+            JoinPath(sub, dir, L"plugins");
+            CreateDirectoryW(sub, NULL);      // 만든이별로 넣는 자리를 보여 준다
+            ShellExecuteW(h, L"open", sub, NULL, NULL, SW_SHOWNORMAL);
         }
         return 0;
     case WM_NOTIFY: {
@@ -216,7 +297,7 @@ static LRESULT CALLBACK ModProc(HWND h, UINT msg, WPARAM w, LPARAM l)
                     wchar_t st[32];
                     Toggle(p, is ? 1 : 0);
                     StateText(p, st);
-                    { LVITEMW s; s.iSubItem = 1; s.pszText = st; SendMessageW(g_list, LVM_SETITEMTEXTW, nm->iItem, (LPARAM)&s); }
+                    { LVITEMW s; s.iSubItem = 2; s.pszText = st; SendMessageW(g_list, LVM_SETITEMTEXTW, nm->iItem, (LPARAM)&s); }
                     // 이름 바꾸기가 실패했을 수 있으므로 체크를 실제 상태로 맞춘다.
                     g_populating = 1;
                     ListView_SetCheckState(g_list, nm->iItem, p->on);
@@ -331,6 +412,7 @@ void ModKR_Init(HINSTANCE hinst)
     ic.dwICC = ICC_LISTVIEW_CLASSES;
     InitCommonControlsEx(&ic);
     LogW(L"[ModUtilKR] init.");
+    LoadSubPlugins();          // plugins\<만든이>\ 것을 대신 불러온다(로더가 루트만 보므로)
     t = CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     if (t) CloseHandle(t);
 }

@@ -1,0 +1,11 @@
+{
+  "Name": "주점힌트-카카오(메리다→미틀라)",
+  "Description": "통합수정판 8-1",
+  "Addresses": [
+    "0x1244BC"
+  ],
+  "ByteSize": 1,
+  "Type": "toggle",
+  "OriginalValue": 206,
+  "PatchedValue": 204
+}

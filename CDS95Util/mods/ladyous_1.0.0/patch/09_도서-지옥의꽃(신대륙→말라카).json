@@ -1,0 +1,11 @@
+{
+  "Name": "도서-지옥의꽃(신대륙→말라카)",
+  "Description": "통합수정판 9-3",
+  "Addresses": [
+    "0xD9940"
+  ],
+  "ByteSize": 4,
+  "Type": "toggle",
+  "OriginalValue": 1,
+  "PatchedValue": 3
+}

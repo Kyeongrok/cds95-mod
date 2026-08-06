@@ -1,0 +1,24 @@
+{
+  "Name": "용어: 선두상→선수상(조선소)",
+  "Description": "통합수정판 0-3. '선두상'->'선수상'. exe 안 14곳 전부 (문자열 시작 +2 의 2바이트: 두 B5CE -> 수 BCF6)",
+  "Addresses": [
+    "0x12EB22",
+    "0x12F3D0",
+    "0x12F46D",
+    "0x12F496",
+    "0x12F4E2",
+    "0x12F549",
+    "0x12F5D2",
+    "0x12FA7A",
+    "0x12FB72",
+    "0x12FB83",
+    "0x13986A",
+    "0x13987A",
+    "0x142DBA",
+    "0x14DCF7"
+  ],
+  "ByteSize": 2,
+  "Type": "toggle",
+  "OriginalValue": 52917,
+  "PatchedValue": 63164
+}

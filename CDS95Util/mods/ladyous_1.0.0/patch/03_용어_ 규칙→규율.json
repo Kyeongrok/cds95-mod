@@ -1,0 +1,11 @@
+{
+  "Name": "용어: 규칙→규율",
+  "Description": "통합수정판 0-2. 0x166610 \"규칙이 회복되었다\"",
+  "Addresses": [
+    "0x166610"
+  ],
+  "ByteSize": 4,
+  "Type": "toggle",
+  "OriginalValue": 2730808497,
+  "PatchedValue": 2998981809
+}

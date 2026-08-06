@@ -1,0 +1,11 @@
+{
+  "Name": "도서-남극인(남방→남극대륙)",
+  "Description": "통합수정판 9-2",
+  "Addresses": [
+    "0xDA3E0"
+  ],
+  "ByteSize": 1,
+  "Type": "toggle",
+  "OriginalValue": 9,
+  "PatchedValue": 10
+}

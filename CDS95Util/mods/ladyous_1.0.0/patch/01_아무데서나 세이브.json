@@ -1,0 +1,18 @@
+{
+  "Name": "아무데서나 세이브",
+  "Description": "통합수정판 1. 저장 메뉴를 어디서든(항해 중) 열 수 있게. 7곳에 78 87 56 00 기록",
+  "Addresses": [
+    "0x77BE6",
+    "0x77C92",
+    "0x7851B",
+    "0x78849",
+    "0x78866",
+    "0x788C4",
+    "0x788D3"
+  ],
+  "ByteSize": 4,
+  "Type": "number",
+  "Value": 5670776,
+  "OriginalValue": 0,
+  "PatchedValue": 0
+}

@@ -1,0 +1,11 @@
+{
+  "Name": "용어: 사교→주교",
+  "Description": "통합수정판 0-5. 0x161BF7 \"멕시코 사교좌 교회\"",
+  "Addresses": [
+    "0x161BF7"
+  ],
+  "ByteSize": 4,
+  "Type": "toggle",
+  "OriginalValue": 3014780859,
+  "PatchedValue": 3014776513
+}

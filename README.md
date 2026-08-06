@@ -96,6 +96,29 @@ MinHook 기반으로 새 DLL을 처음부터 작성하는 방식이며, 기존 `
 
 라이선스 및 외부 라이브러리(MinHook, Zip Utils) 관련 내용은 [0.ReadMe.md](0.ReadMe.md)를 참고하세요.
 
+### 폴더 배치
+
+압축을 풀면 이렇게 깔립니다.
+
+```
+CDS95Util/
+    ModUtilKR.plugin            루트 고정 - 아래 plugins 폴더를 대신 불러온다
+    cities.json  discoveries.json   데이터는 루트 한 자리에 모은다
+    plugins/
+        록히드매튜/              KR 플러그인 8개
+    mods/
+        kseokjeong_quest_mod/   퀘스트 파일 묶음
+        ladyous_1.0.0/patch/    메모리 패치 json
+```
+
+로더(`ddraw.dll`)는 `CDS95Util` 루트의 `*.plugin` 만 불러옵니다. 그 파일은 고칠 수 없으므로,
+만든이별 폴더에 둔 플러그인은 `ModUtilKR`이 `LoadLibrary`로 대신 불러옵니다. 그래서
+`ModUtilKR.plugin`과 `ddraw.dll`은 루트에 있어야 합니다. 나머지는 폴더를 나눠도 되고
+루트에 그대로 둬도 됩니다.
+
+플러그인이 `plugins/<만든이>/`에 있어도 `cities.json` · `quests.json` · `mods/` 같은 데이터는
+`CDS95Util` 루트에서 찾습니다. 흩어진 플러그인이 같은 자료를 보게 하려는 것입니다.
+
 ### 함께 담은 퀘스트 모드
 
 `CDS95Util/mods/kseokjeong_quest_mod/`는 kseokjung님이 만드신

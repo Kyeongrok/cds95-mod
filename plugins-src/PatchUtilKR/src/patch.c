@@ -31,6 +31,9 @@ typedef struct {
 typedef struct {
     wchar_t      name[128];
     wchar_t      desc[256];
+    // 이 패치가 어느 파일에서 왔나. 빈 값이면 CDS95Util\patches.json 이고,
+    // 그 밖은 mods\<모드>\patch\<파일>.json 에서 온 것이다(모드 이름을 적는다).
+    wchar_t      src[64];
     unsigned int addrs[MAX_ADDRS];   // 파일 오프셋들
     int          naddr;
     int          hasArray;           // Addresses[] 로 채워졌는지
@@ -58,6 +61,28 @@ static Patch     g_patches[MAX_PATCHES];
 static int       g_npatch = 0;
 
 // ------------------------------------------------------------------ 로그
+// 플러그인이 CDS95Util\\plugins\\<만든이>\\ 에 있으면 데이터는 그 위 CDS95Util 에 있다.
+// 플러그인은 만든이별로 폴더를 나눠도 cities.json / quests.json / mods 같은 것은 한 자리에
+// 모아 둬야 서로 찾을 수 있기 때문이다. 루트에 있는 플러그인은 이 함수가 아무 것도 안 한다.
+static void UpToDataDir(wchar_t* dir)
+{
+    wchar_t tmp[MAX_PATH];
+    int n, i, cut2 = -1, cut1 = -1;
+    lstrcpynW(tmp, dir, MAX_PATH);
+    n = lstrlenW(tmp);
+    if (n && tmp[n-1] == L'\\') tmp[--n] = 0;
+    for (i = n - 1; i >= 0; i--) {
+        if (tmp[i] != L'\\') continue;
+        if (cut2 < 0) cut2 = i;
+        else { cut1 = i; break; }
+    }
+    if (cut1 < 0 || cut2 <= cut1) return;
+    tmp[cut2] = 0;
+    if (lstrcmpiW(tmp + cut1 + 1, L"plugins") != 0) return;
+    tmp[cut1 + 1] = 0;
+    lstrcpyW(dir, tmp);
+}
+
 static void LogW(const wchar_t* fmt, ...)
 {
     wchar_t buf[512];
@@ -557,7 +582,14 @@ static void ParseJson(const char* buf)
     const char* p = buf;
     if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) p += 3; // BOM
     SkipWS(&p);
-    if (*p != '[') { LogW(L"[PatchUtilKR] patches.json: 최상위 '[' 아님"); return; }
+    // 최상위가 [ 면 여러 개, { 면 하나짜리 파일이다. 패치 하나를 파일 하나로 올리는 사람이
+    // 많을 테니 둘 다 받는다.
+    if (*p == '{') {
+        Patch pt;
+        if (ParseObject(&p, &pt) && g_npatch < MAX_PATCHES) g_patches[g_npatch++] = pt;
+        return;
+    }
+    if (*p != '[') { LogW(L"[PatchUtilKR] json: 최상위가 [ 도 { 도 아님"); return; }
     p++;
     for (;;) {
         SkipWS(&p);
@@ -596,7 +628,64 @@ static void PatchesPath(wchar_t* out, int cch)
     GetModuleFileNameW(g_hinst, out, cch);      // ...\CDS95Util\PatchUtilKR.plugin
     for (q = out; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
     slash[1] = 0;
+    UpToDataDir(out);
     lstrcatW(out, L"patches.json");
+}
+
+// mods\<모드>\patch\*.json 을 전부 읽어 뒤에 잇는다.
+//
+// 패치를 만든 사람마다 .json 하나씩 올리고, 쓰는 사람은 그 파일을 모드 폴더에 넣기만 하면
+// 되게 하려는 것이다. 기본 patches.json 은 그대로 두고 뒤에 덧붙이므로, 넣고 빼는 것이
+// 기본 목록을 건드리지 않는다. 같은 이름이 겹쳐도 출처가 다르면 따로 선다.
+static void LoadModPatches(void)
+{
+    wchar_t dir[MAX_PATH], pat[MAX_PATH], modDir[MAX_PATH], file[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE h;
+    wchar_t* q;
+    wchar_t* slash;
+
+    GetModuleFileNameW(g_hinst, dir, MAX_PATH);
+    slash = dir;
+    for (q = dir; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
+    slash[1] = 0;
+    UpToDataDir(dir);
+    lstrcatW(dir, L"mods");
+
+    wsprintfW(pat, L"%s\\*", dir);
+    h = FindFirstFileW(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        WIN32_FIND_DATAW f2;
+        HANDLE h2;
+        int nfile = 0;
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (fd.cFileName[0] == L'.') continue;
+        wsprintfW(modDir, L"%s\\%s\\patch", dir, fd.cFileName);
+        wsprintfW(pat, L"%s\\*.json", modDir);
+        h2 = FindFirstFileW(pat, &f2);
+        if (h2 == INVALID_HANDLE_VALUE) continue;
+        do {
+            char* buf;
+            int before = g_npatch, k;
+            if (f2.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            wsprintfW(file, L"%s\\%s", modDir, f2.cFileName);
+            buf = ReadWholeFile(file);
+            if (!buf) continue;
+            ParseJson(buf);
+            HeapFree(GetProcessHeap(), 0, buf);
+            for (k = before; k < g_npatch; k++) {
+                // 한 모드에 .json 이 여럿이면 파일 이름까지 밝힌다.
+                if (nfile > 0) wsprintfW(g_patches[k].src, L"%s / %s", fd.cFileName, f2.cFileName);
+                else           lstrcpynW(g_patches[k].src, fd.cFileName, 64);
+            }
+            if (g_npatch > before)
+                LogW(L"[PatchUtilKR] %s\\%s — 패치 %d개", fd.cFileName, f2.cFileName, g_npatch - before);
+            nfile++;
+        } while (FindNextFileW(h2, &f2));
+        FindClose(h2);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
 }
 
 // ------------------------------------------------------------------ 고른 상태 기억하기
@@ -604,6 +693,8 @@ static void PatchesPath(wchar_t* out, int cch)
 // 그래서 창에서 켜고 끈 것, 고른 값을 patches.state 에 적어 두고 다음 실행 때 그대로 다시 적용한다.
 // 형식은 줄마다 "항목이름<탭>값" (UTF-8). 값은 토글/값형이면 on, 선택형이면 숫자다.
 // 항목은 이름으로 맞춘다 — patches.json 의 순서가 바뀌어도 따라간다.
+// 모드에서 온 패치는 "모드이름|항목이름" 으로 적는다. 모드끼리 이름이 겹쳐도 따로 기억하고,
+// 기본 patches.json 것은 예전과 같은 줄이라 쓰던 patches.state 가 그대로 먹는다.
 static void StatePath(wchar_t* out, int cch)
 {
     wchar_t* q;
@@ -611,6 +702,7 @@ static void StatePath(wchar_t* out, int cch)
     GetModuleFileNameW(g_hinst, out, cch);
     for (q = out; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
     slash[1] = 0;
+    UpToDataDir(out);
     lstrcatW(out, L"patches.state");
 }
 
@@ -635,14 +727,18 @@ static void SaveState(void)
         char nm[256];
         int n;
         if (!p->name[0]) continue;
+        {   // 모드에서 온 것은 "모드이름|항목이름" 으로 적는다 — 이름이 겹쳐도 따로 기억한다.
+            wchar_t key[224];
+            if (p->src[0]) wsprintfW(key, L"%s|%s", p->src, p->name);
+            else           lstrcpynW(key, p->name, 224);
+            if (WideCharToMultiByte(CP_UTF8, 0, key, -1, nm, sizeof(nm), NULL, NULL) <= 0) continue;
+        }
         if (p->isChoice) {
             int v = Patch_ReadValue(p);
             if (v < 0) continue;
-            if (WideCharToMultiByte(CP_UTF8, 0, p->name, -1, nm, sizeof(nm), NULL, NULL) <= 0) continue;
             n = wsprintfA(line, "%s\t%d\r\n", nm, v);
         } else {
             if (!p->applied) continue;                 // 적힌 것만 다시 켠다 — 없으면 꺼진 것
-            if (WideCharToMultiByte(CP_UTF8, 0, p->name, -1, nm, sizeof(nm), NULL, NULL) <= 0) continue;
             n = wsprintfA(line, "%s\ton\r\n", nm);
         }
         WriteFile(f, line, (DWORD)n, &wr, NULL);
@@ -680,7 +776,10 @@ static void ApplySavedState(void)
         if (MultiByteToWideChar(CP_UTF8, 0, line, -1, wname, 256) <= 0) continue;
         for (i = 0; i < g_npatch; i++) {
             Patch* q = &g_patches[i];
-            if (lstrcmpW(q->name, wname) != 0) continue;
+            wchar_t key[224];
+            if (q->src[0]) wsprintfW(key, L"%s|%s", q->src, q->name);
+            else           lstrcpynW(key, q->name, 224);
+            if (lstrcmpW(key, wname) != 0) continue;
             if (q->isChoice) {
                 int v = 0, k;
                 for (k = 0; tab[k] >= '0' && tab[k] <= '9'; k++) v = v * 10 + (tab[k] - '0');
@@ -702,12 +801,12 @@ void PatchCore_Load(void)
     int i;
     g_npatch = 0;
     if (!g_nt) InitPE();
-    PatchesPath(path, MAX_PATH);
-    buf = ReadWholeFile(path);
-    if (!buf) { LogW(L"[PatchUtilKR] patches.json 없음: %s", path); return; }
-    ParseJson(buf);
-    HeapFree(GetProcessHeap(), 0, buf);
-    LogW(L"[PatchUtilKR] %d개 패치 로드: %s", g_npatch, path);
+    // 패치는 전부 mods\<모드>\patch\*.json 에서 온다. 예전에는 CDS95Util\patches.json
+    // 하나에 몰아 넣었는데, 그러면 누가 만든 것인지 안 보이고 남의 것을 받아 넣기도 번거롭다.
+    // 만든 이별로 폴더를 나눠 두면 넣고 빼는 것이 파일 옮기기로 끝난다.
+    (void)path; (void)buf;
+    LoadModPatches();
+    LogW(L"[PatchUtilKR] 패치 %d개 로드", g_npatch);
     for (i = 0; i < g_npatch; i++) {
         Patch* p = &g_patches[i];
         BYTE* m0;
@@ -761,30 +860,20 @@ void PatchCore_Load(void)
 #define ID_RELOAD  1002
 #define ID_OPEN    1003
 
-// patches.json 을 기본 편집기로 연다. .json 에 연결 프로그램이 없는 PC 가 흔해서
-// ShellExecute 가 실패하면(반환값 <= 32) 메모장으로 떨어뜨린다.
-// 고친 뒤에는 옆의 "다시 읽기" 를 누르면 반영된다.
+// 패치가 들어 있는 mods 폴더를 탐색기로 연다. 받은 .json 을 여기 넣으면 끝이라
+// 파일 하나를 여는 것보다 폴더를 여는 쪽이 쓸모 있다. 넣은 뒤에는 옆의 "다시 읽기".
 static void OpenPatchesFile(HWND owner)
 {
-    wchar_t path[MAX_PATH], cmd[MAX_PATH + 32];
-    HINSTANCE r;
-    PatchesPath(path, MAX_PATH);
-    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
-        MessageBoxW(owner, path, L"patches.json 을 찾을 수 없습니다", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    r = ShellExecuteW(owner, L"open", path, NULL, NULL, SW_SHOWNORMAL);
-    if ((INT_PTR)r <= 32) {
-        STARTUPINFOW si; PROCESS_INFORMATION pi;
-        ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
-        ZeroMemory(&pi, sizeof(pi));
-        wsprintfW(cmd, L"notepad.exe \"%s\"", path);
-        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-        } else {
-            MessageBoxW(owner, path, L"파일을 열지 못했습니다", MB_OK | MB_ICONWARNING);
-        }
-    }
+    wchar_t path[MAX_PATH];
+    wchar_t* q;
+    wchar_t* slash = path;
+    GetModuleFileNameW(g_hinst, path, MAX_PATH);
+    for (q = path; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
+    slash[1] = 0;
+    UpToDataDir(path);
+    lstrcatW(path, L"mods");
+    CreateDirectoryW(path, NULL);
+    ShellExecuteW(owner, L"open", path, NULL, NULL, SW_SHOWNORMAL);
 }
 
 static HWND g_win = NULL, g_list = NULL;
@@ -828,17 +917,18 @@ static void FillList(void)
         else                   wsprintfW(a, L"-");
         if (p->naddr && !p->mapped[0]) lstrcatW(a, L" (X)");
         if (!p->naddr && p->nreg && !p->regs[0].mapped) lstrcatW(a, L" (X)");
-        ListView_SetItemText(g_list, i, 1, a);
+        ListView_SetItemText(g_list, i, 1, p->src[0] ? p->src : L"기본");
+        ListView_SetItemText(g_list, i, 2, a);
         if (!p->naddr && p->nreg) {
             int k, tot = 0;
             for (k = 0; k < p->nreg; k++) tot += p->regs[k].len;
             wsprintfW(bs, L"%d", tot);
         } else wsprintfW(bs, L"%d", p->byteSize);
-        ListView_SetItemText(g_list, i, 2, bs);
-        ListView_SetItemText(g_list, i, 3, p->isChoice ? L"선택" : (p->isToggle ? L"토글" : L"값"));
+        ListView_SetItemText(g_list, i, 3, bs);
+        ListView_SetItemText(g_list, i, 4, p->isChoice ? L"선택" : (p->isToggle ? L"토글" : L"값"));
         StateText(p, st);
-        ListView_SetItemText(g_list, i, 4, st);
-        ListView_SetItemText(g_list, i, 5, p->desc);
+        ListView_SetItemText(g_list, i, 5, st);
+        ListView_SetItemText(g_list, i, 6, p->desc);
         if (!p->isChoice) ListView_SetCheckState(g_list, i, p->applied);   // 선택형은 체크 개념이 없다
     }
     g_populating = FALSE;
@@ -848,8 +938,8 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
     switch (m) {
         case WM_CREATE: {
-            const wchar_t* titles[6] = { L"이름", L"주소", L"바이트", L"종류", L"상태", L"설명" };
-            int widths[6] = { 180, 130, 52, 52, 90, 240 };
+            const wchar_t* titles[7] = { L"이름", L"출처", L"주소", L"바이트", L"종류", L"상태", L"설명" };
+            int widths[7] = { 180, 110, 120, 52, 52, 90, 210 };
             LVCOLUMNW c;
             int i;
             g_list = CreateWindowExW(0, WC_LISTVIEW, L"",
@@ -859,10 +949,10 @@ static LRESULT CALLBACK PatchProc(HWND h, UINT m, WPARAM w, LPARAM l)
                         LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
             ZeroMemory(&c, sizeof(c));
             c.mask = LVCF_TEXT | LVCF_WIDTH;
-            for (i = 0; i < 6; i++) { c.pszText = (LPWSTR)titles[i]; c.cx = widths[i]; ListView_InsertColumn(g_list, i, &c); }
-            CreateWindowExW(0, L"BUTTON", L"patches.json 다시 읽기",
+            for (i = 0; i < 7; i++) { c.pszText = (LPWSTR)titles[i]; c.cx = widths[i]; ListView_InsertColumn(g_list, i, &c); }
+            CreateWindowExW(0, L"BUTTON", L"다시 읽기",
                         WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, h, (HMENU)ID_RELOAD, g_hinst, NULL);
-            CreateWindowExW(0, L"BUTTON", L"patches.json 열기",
+            CreateWindowExW(0, L"BUTTON", L"패치 폴더 열기",
                         WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, h, (HMENU)ID_OPEN, g_hinst, NULL);
             FillList();
             return 0;

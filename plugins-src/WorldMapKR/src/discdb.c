@@ -24,6 +24,28 @@ int DiscDb_Marked(void)
 }
 
 // 가운데를 남기고 양쪽을 잘라 낸다. 남극대륙(2500x150)·신대륙(481x751) 둘만 걸린다.
+// 플러그인이 CDS95Util\\plugins\\<만든이>\\ 에 있으면 데이터는 그 위 CDS95Util 에 있다.
+// 플러그인은 만든이별로 폴더를 나눠도 cities.json / quests.json / mods 같은 것은 한 자리에
+// 모아 둬야 서로 찾을 수 있기 때문이다. 루트에 있는 플러그인은 이 함수가 아무 것도 안 한다.
+static void UpToDataDir(wchar_t* dir)
+{
+    wchar_t tmp[MAX_PATH];
+    int n, i, cut2 = -1, cut1 = -1;
+    lstrcpynW(tmp, dir, MAX_PATH);
+    n = lstrlenW(tmp);
+    if (n && tmp[n-1] == L'\\') tmp[--n] = 0;
+    for (i = n - 1; i >= 0; i--) {
+        if (tmp[i] != L'\\') continue;
+        if (cut2 < 0) cut2 = i;
+        else { cut1 = i; break; }
+    }
+    if (cut1 < 0 || cut2 <= cut1) return;
+    tmp[cut2] = 0;
+    if (lstrcmpiW(tmp + cut1 + 1, L"plugins") != 0) return;
+    tmp[cut1 + 1] = 0;
+    lstrcpyW(dir, tmp);
+}
+
 static void ClampSpan(int* a, int* b)
 {
     int span = *b - *a + 1, mid;
@@ -162,6 +184,7 @@ static void JsonPath(HINSTANCE hinst, wchar_t* out, int cch)
     GetModuleFileNameW(hinst, out, cch);     // ...\CDS95Util\WorldMapKR.plugin
     for (q = out; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
     slash[1] = 0;
+    UpToDataDir(out);
     lstrcatW(out, L"discoveries.json");
 }
 

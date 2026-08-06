@@ -1,0 +1,11 @@
+{
+  "Name": "도서-정토의연꽃(중국→잉카)",
+  "Description": "통합수정판 9-4",
+  "Addresses": [
+    "0xD9F80"
+  ],
+  "ByteSize": 4,
+  "Type": "toggle",
+  "OriginalValue": 5,
+  "PatchedValue": 193
+}

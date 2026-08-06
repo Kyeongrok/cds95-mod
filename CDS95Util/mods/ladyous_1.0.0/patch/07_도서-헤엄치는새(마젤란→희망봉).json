@@ -1,0 +1,11 @@
+{
+  "Name": "도서-헤엄치는새(마젤란→희망봉)",
+  "Description": "통합수정판 9-1",
+  "Addresses": [
+    "0xD9850"
+  ],
+  "ByteSize": 1,
+  "Type": "toggle",
+  "OriginalValue": 6,
+  "PatchedValue": 0
+}

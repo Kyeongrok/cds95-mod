@@ -37,6 +37,28 @@ static HWND      g_wnd = NULL, g_list = NULL;
 static HWND      g_gameHwnd = NULL, g_subHwnd = NULL;
 static WNDPROC   g_origProc = NULL;
 
+// 플러그인이 CDS95Util\\plugins\\<만든이>\\ 에 있으면 데이터는 그 위 CDS95Util 에 있다.
+// 플러그인은 만든이별로 폴더를 나눠도 cities.json / quests.json / mods 같은 것은 한 자리에
+// 모아 둬야 서로 찾을 수 있기 때문이다. 루트에 있는 플러그인은 이 함수가 아무 것도 안 한다.
+static void UpToDataDir(wchar_t* dir)
+{
+    wchar_t tmp[MAX_PATH];
+    int n, i, cut2 = -1, cut1 = -1;
+    lstrcpynW(tmp, dir, MAX_PATH);
+    n = lstrlenW(tmp);
+    if (n && tmp[n-1] == L'\\') tmp[--n] = 0;
+    for (i = n - 1; i >= 0; i--) {
+        if (tmp[i] != L'\\') continue;
+        if (cut2 < 0) cut2 = i;
+        else { cut1 = i; break; }
+    }
+    if (cut1 < 0 || cut2 <= cut1) return;
+    tmp[cut2] = 0;
+    if (lstrcmpiW(tmp + cut1 + 1, L"plugins") != 0) return;
+    tmp[cut1 + 1] = 0;
+    lstrcpyW(dir, tmp);
+}
+
 static void LogW(const wchar_t* fmt, ...)
 {
     wchar_t buf[512];
@@ -64,6 +86,7 @@ static void PluginDir(wchar_t* out)
     GetModuleFileNameW(g_hinst, out, MAX_PATH);
     for (q = out; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
     slash[1] = 0;
+    UpToDataDir(out);
 }
 
 static void StatePath(wchar_t* out)
@@ -324,22 +347,26 @@ static int IsPlugin(const wchar_t* name)
 //  .plugin  늘 덮어쓴다. 지금 쓰고 있어 못 덮으면 이름을 밀어내고 새것을 놓는다
 //           (윈도는 열려 있는 이미지의 이름 바꾸기를 허용한다). 반영은 다음 실행부터.
 //  .json    건드리지 않는다 — 사용자가 고쳐 쓰는 파일이다. 새것은 <이름>.new 로 옆에 둔다.
-static int InstallFrom(const wchar_t* srcDir, const wchar_t* tag, int* skipped)
+// 하위 폴더까지 그대로 따라 깐다 — zip 이 plugins\<만든이>\ 와 mods\ 를 담고 있어서다.
+static int InstallTree(const wchar_t* srcDir, const wchar_t* dstDir, const wchar_t* tag, int* skipped)
 {
-    wchar_t dst[MAX_PATH], pat[MAX_PATH], from[MAX_PATH], to[MAX_PATH], bak[MAX_PATH];
+    wchar_t pat[MAX_PATH], from[MAX_PATH], to[MAX_PATH], bak[MAX_PATH];
     WIN32_FIND_DATAW fd;
     HANDLE h;
     int n = 0;
 
-    *skipped = 0;
-    PluginDir(dst);
     JoinPath(pat, srcDir, L"*");
     h = FindFirstFileW(pat, &fd);
     if (h == INVALID_HANDLE_VALUE) { lstrcpyW(g_err, L"푼 폴더가 비어 있습니다."); return 0; }
     do {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         JoinPath(from, srcDir, fd.cFileName);
-        JoinPath(to, dst, fd.cFileName);
+        JoinPath(to, dstDir, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (fd.cFileName[0] == L'.') continue;
+            CreateDirectoryW(to, NULL);
+            n += InstallTree(from, to, tag, skipped);
+            continue;
+        }
         if (!IsPlugin(fd.cFileName)) {
             if (GetFileAttributesW(to) == INVALID_FILE_ATTRIBUTES) {
                 if (CopyFileW(from, to, FALSE)) n++;
@@ -382,7 +409,12 @@ static int Install(const Rel* r, int* copied, int* skipped)
     JoinPath(inner, dir, L"CDS95Util");
     if (GetFileAttributesW(inner) == INVALID_FILE_ATTRIBUTES) lstrcpyW(inner, dir);
 
-    *copied = InstallFrom(inner, r->tag, skipped);
+    {
+        wchar_t root[MAX_PATH];
+        PluginDir(root);                       // CDS95Util (plugins\<만든이>\ 에 있어도 루트로 온다)
+        *skipped = 0;
+        *copied = InstallTree(inner, root, r->tag, skipped);
+    }
     if (*copied <= 0) { if (!g_err[0]) lstrcpyW(g_err, L"옮긴 파일이 없습니다."); return 0; }
     StateWrite(r->tag);
     LogW(L"[UpdateUtilKR] %s 깔았음 — %d개(%d개 건너뜀)", r->tag, *copied, *skipped);

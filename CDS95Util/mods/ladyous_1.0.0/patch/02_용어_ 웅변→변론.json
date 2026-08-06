@@ -1,0 +1,11 @@
+{
+  "Name": "용어: 웅변→변론",
+  "Description": "통합수정판 0-1. 0x15E0DC (4바이트 텍스트)",
+  "Addresses": [
+    "0x15E0DC"
+  ],
+  "ByteSize": 4,
+  "Type": "toggle",
+  "OriginalValue": 2948265407,
+  "PatchedValue": 3501699002
+}

@@ -1,0 +1,11 @@
+{
+  "Name": "도서-고무나무(향료→잉카)",
+  "Description": "통합수정판 9-5",
+  "Addresses": [
+    "0xDA070"
+  ],
+  "ByteSize": 4,
+  "Type": "toggle",
+  "OriginalValue": 4,
+  "PatchedValue": 193
+}
