@@ -25,6 +25,8 @@ jobs:
           done
           # 데이터는 루트 한 자리에 모은다 — 플러그인이 어느 폴더에 있든 여기서 찾는다.
           # cities.json / discoveries.json 이 없으면 소스에 구워 둔 표를 쓴다. 고칠 수 있게 같이 넣는다.
+          # 지금 무슨 판이 깔려 있는지 — UpdateUtilKR 이 이 파일을 읽어 창에 표시한다.
+          echo "${{ github.ref_name }}" > dist/CDS95Util/VERSION
           cp plugins-src/WorldMapKR/cities.json dist/CDS95Util/
           cp plugins-src/WorldMapKR/discoveries.json dist/CDS95Util/
           # 모드 — 퀘스트 묶음과 패치 묶음. 바닐라 이벤트 파일은 담지 않는다(게임 자료라

@@ -96,42 +96,80 @@ static void StatePath(wchar_t* out)
     JoinPath(out, dir, L"update.state");
 }
 
-static void StateRead(void)
+// 첫 줄만 떠 온다. 없으면 0.
+static int ReadFirstLine(const wchar_t* path, wchar_t* out, int cch)
 {
-    wchar_t path[MAX_PATH];
     HANDLE h;
     char buf[64];
     DWORD got = 0;
     int i;
 
-    g_cur[0] = 0;
-    StatePath(path);
-    h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+    out[0] = 0;
+    h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
                     FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) return 0;
     if (!ReadFile(h, buf, sizeof(buf) - 1, &got, NULL)) got = 0;
     CloseHandle(h);
     buf[got] = 0;
-    for (i = 0; buf[i]; i++) if (buf[i] == '\r' || buf[i] == '\n') { buf[i] = 0; break; }
-    MultiByteToWideChar(CP_UTF8, 0, buf, -1, g_cur, 32);
+    for (i = 0; buf[i]; i++) if (buf[i] == '\r' || buf[i] == '\n' || buf[i] == ' ') { buf[i] = 0; break; }
+    if (!buf[0]) return 0;
+    MultiByteToWideChar(CP_UTF8, 0, buf, -1, out, cch);
+    return out[0] != 0;
 }
 
-static void StateWrite(const wchar_t* tag)
+// 태그끼리 견준다. VERSION 은 "0.4.24", 릴리즈 태그는 "v0.4.24" 라 v 를 떼고 본다.
+static int SameTag(const wchar_t* a, const wchar_t* b)
 {
-    wchar_t path[MAX_PATH];
+    if (*a == L'v' || *a == L'V') a++;
+    if (*b == L'v' || *b == L'V') b++;
+    return lstrcmpiW(a, b) == 0;
+}
+
+// 지금 깔려 있는 판. VERSION 을 먼저 본다 — 릴리즈 zip 이 담아 오므로 손으로 풀어 넣었든
+// 이 창으로 받았든 사실대로 적혀 있다. 그것이 없으면(옛 판) 이 창이 남긴 update.state 를 본다.
+static void StateRead(void)
+{
+    wchar_t path[MAX_PATH], dir[MAX_PATH];
+
+    g_cur[0] = 0;
+    PluginDir(dir);
+    JoinPath(path, dir, L"VERSION");
+    if (!ReadFirstLine(path, g_cur, 32)) {
+        StatePath(path);
+        ReadFirstLine(path, g_cur, 32);
+    }
+    if (g_cur[0] && g_cur[0] != L'v' && g_cur[0] != L'V') {   // "0.4.24" → "v0.4.24"
+        wchar_t t[32];
+        lstrcpynW(t, g_cur, 31);
+        wsprintfW(g_cur, L"v%s", t);
+    }
+}
+
+static void WriteLine(const wchar_t* path, const wchar_t* text)
+{
     char buf[64];
     HANDLE h;
     DWORD put = 0;
-    int n;
-
-    StatePath(path);
-    n = WideCharToMultiByte(CP_UTF8, 0, tag, -1, buf, sizeof(buf) - 2, NULL, NULL);
+    int n = WideCharToMultiByte(CP_UTF8, 0, text, -1, buf, sizeof(buf) - 2, NULL, NULL);
     if (n <= 0) return;
     buf[n - 1] = '\n';
     h = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return;
     WriteFile(h, buf, (DWORD)n, &put, NULL);
     CloseHandle(h);
+}
+
+// 깔고 나서 남긴다. VERSION 도 함께 고쳐 둔다 — 옛 판으로 되돌리면 그 zip 에는 VERSION 이
+// 없어 옛 파일이 그대로 남고, 그러면 창이 엉뚱한 판을 지금 것이라 우기게 된다.
+static void StateWrite(const wchar_t* tag)
+{
+    wchar_t path[MAX_PATH], dir[MAX_PATH];
+
+    StatePath(path);
+    WriteLine(path, tag);
+    PluginDir(dir);
+    JoinPath(path, dir, L"VERSION");
+    WriteLine(path, tag);
     lstrcpynW(g_cur, tag, 32);
 }
 
@@ -284,7 +322,7 @@ static void ParseReleases(const char* js, DWORD len)
             }
         }
         if (r->tag[0] && r->url[0]) {
-            r->cur = (g_cur[0] && lstrcmpiW(g_cur, r->tag) == 0);
+            r->cur = (g_cur[0] && SameTag(g_cur, r->tag));
             g_nrel++;
         }
         p = nextTag;
@@ -367,7 +405,8 @@ static int InstallTree(const wchar_t* srcDir, const wchar_t* dstDir, const wchar
             n += InstallTree(from, to, tag, skipped);
             continue;
         }
-        if (!IsPlugin(fd.cFileName)) {
+        // VERSION 은 사람이 고쳐 쓰는 파일이 아니라 "지금 무엇이 깔려 있나" 그 자체다. 늘 덮어쓴다.
+        if (!IsPlugin(fd.cFileName) && lstrcmpiW(fd.cFileName, L"VERSION") != 0) {
             if (GetFileAttributesW(to) == INVALID_FILE_ATTRIBUTES) {
                 if (CopyFileW(from, to, FALSE)) n++;
             } else {
@@ -444,7 +483,9 @@ static void FillList(void)
         { LVITEMW s; s.iSubItem = 1; s.pszText = r->date; SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
         wsprintfW(t, L"%d KB", (r->size + 512) / 1024);
         { LVITEMW s; s.iSubItem = 2; s.pszText = t; SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
-        lstrcpyW(t, r->cur ? L"● 쓰는 중" : (i == 0 ? L"최신" : L""));
+        if (r->cur)      lstrcpyW(t, i == 0 ? L"● 지금 이 판 (최신)" : L"● 지금 이 판");
+        else if (i == 0) lstrcpyW(t, g_cur[0] ? L"최신 — 올릴 수 있음" : L"최신");
+        else             t[0] = 0;
         { LVITEMW s; s.iSubItem = 3; s.pszText = t; SendMessageW(g_list, LVM_SETITEMTEXTW, i, (LPARAM)&s); }
     }
     // 고른 것이 없으면 맨 위(최신)를 잡아 둔다 — 기본은 늘 최신이다.
@@ -455,6 +496,15 @@ static void FillList(void)
     }
 }
 
+// 지금 쓰는 판을 제목에 박아 둔다 — 목록만 봐서는 어느 것이 내 것인지 모른다.
+static void SetTitle(HWND h)
+{
+    wchar_t t[160];
+    wsprintfW(t, L"업데이트 — 지금 %s (문제 있으면 옛 판으로 되돌릴 수 있다)",
+              g_cur[0] ? g_cur : L"쓰는 판 모름");
+    SetWindowTextW(h, t);
+}
+
 static void DoReload(HWND h)
 {
     SetCursor(LoadCursorW(NULL, (LPCWSTR)IDC_WAIT));
@@ -462,6 +512,7 @@ static void DoReload(HWND h)
         SendMessageW(g_list, LVM_DELETEALLITEMS, 0, 0);
         MessageBoxW(h, g_err[0] ? g_err : L"목록을 받지 못했습니다.", L"업데이트", MB_OK | MB_ICONWARNING);
     } else FillList();
+    SetTitle(h);
     SetCursor(LoadCursorW(NULL, (LPCWSTR)IDC_ARROW));
 }
 
@@ -493,6 +544,7 @@ static void DoApply(HWND h)
         }
     }
     FillList();
+    SetTitle(h);
     wsprintfW(msg,
         L"[%s] 을(를) 깔았습니다. (파일 %d개%s)\n\n"
         L"쓰고 있던 플러그인은 <이름>.plugin.old-%s 로 밀어냈습니다.\n"
@@ -510,7 +562,7 @@ static LRESULT CALLBACK UpdProc(HWND h, UINT msg, WPARAM w, LPARAM l)
     switch (msg) {
     case WM_CREATE: {
         const wchar_t* titles[4] = { L"판", L"올린 날", L"크기", L"상태" };
-        int widths[4] = { 120, 130, 90, 120 };
+        int widths[4] = { 120, 130, 90, 170 };
         LVCOLUMNW c;
         int i;
         g_list = CreateWindowExW(0, WC_LISTVIEW, L"",
@@ -566,11 +618,12 @@ static void ShowUpdWindow(void)
             reg = TRUE;
         }
         g_wnd = CreateWindowExW(0, WC_UPD,
-                    L"업데이트 — 받을 판을 고른다 (문제 있으면 옛 판으로 되돌릴 수 있다)",
-                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 560, 420,
+                    L"업데이트",
+                    WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 620, 420,
                     NULL, NULL, g_hinst, NULL);
     }
     if (g_wnd) {
+        SetTitle(g_wnd);
         ShowWindow(g_wnd, SW_SHOW);
         SetForegroundWindow(g_wnd);
         DoReload(g_wnd);          // 창을 열 때마다 목록을 새로 받는다

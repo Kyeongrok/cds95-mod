@@ -103,6 +103,7 @@ MinHook 기반으로 새 DLL을 처음부터 작성하는 방식이며, 기존 `
 ```
 CDS95Util/
     ModUtilKR.plugin            루트 고정 - 아래 plugins 폴더를 대신 불러온다
+    VERSION                     지금 깔린 판. [업데이트] 창이 읽어 표시한다
     cities.json  discoveries.json   데이터는 루트 한 자리에 모은다
     plugins/
         록히드매튜/              KR 플러그인 8개
