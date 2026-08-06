@@ -8,6 +8,7 @@
 #include "navview.h"
 #include "questview.h"
 #include "invview.h"
+#include "playerview.h"
 #include "questdb.h"     // Quest_Init — 창을 열기 전에 quests.json 을 반영해야 한다
 #include <windowsx.h>
 
@@ -32,6 +33,7 @@
 #define TAB_PATRON  3
 #define TAB_QUEST   4
 #define TAB_INV     5
+#define TAB_PLAYER  8
 // 아래 둘은 이 창의 탭이 아니라 TradeUtilKR 의 창을 여는 단추다. 메뉴에 항목이 너무 많아져
 // "교역" · "교역품" 을 여기로 옮겼다. 누르면 게임 창에 그쪽 커맨드를 보내 창을 띄운다.
 #define TAB_SISE    6
@@ -138,8 +140,13 @@ static const struct { const wchar_t* label; int cat; } kCatBtn[] = {
 #define CAT_N ((int)(sizeof(kCatBtn)/sizeof(kCatBtn[0])))
 static RECT CloseRect(RECT c) { RECT r; r.right=c.right-FRAME-4; r.left=r.right-22; r.top=FRAME+4; r.bottom=r.top+18; return r; }
 // 탭은 [항해사 찾기][여급][도감] 순으로 왼쪽부터 — 자주 쓰는 쪽을 왼쪽에 둔다
-// (탭 번호 순서와는 별개다). CHARKR_SHOW_NAV_TAB=0 이면 맨 앞 하나만 빠진다.
+// (탭 번호 순서와는 별개다). ui.h 의 CHARKR_SHOW_PLAYER_TAB / CHARKR_SHOW_NAV_TAB 을
+// 0 으로 두면 그 탭 단추만 빠진다. 단추가 없으면 g_tab 이 그 값이 될 길도 없으므로
+// 아래 Paint/Click 의 분기는 그대로 둬도 된다(되돌릴 때 손댈 곳이 줄어든다).
 static const struct { int id; const wchar_t* label; int w; } kTabs[] = {
+#if CHARKR_SHOW_PLAYER_TAB
+    { TAB_PLAYER,  L"플레이어",    80 },
+#endif
 #if CHARKR_SHOW_NAV_TAB
     { TAB_NAV,     L"항해사 찾기", 110 },
 #endif
@@ -558,10 +565,11 @@ static void OnPaint(HWND h)
     { int i; for (i = 0; i < TAB_N; i++)
         UI_Button(dc, TabRectAt(i), kTabs[i].label, g_tab == kTabs[i].id); }
 
-    if      (g_tab == TAB_NAV)   Nav_Paint(dc);
-    else if (g_tab == TAB_QUEST) Quest_Paint(dc);
-    else if (g_tab == TAB_INV)   Inv_Paint(dc);
-    else                         PaintGallery(dc);   // [여급] 과 [도감] 이 격자를 공유한다
+    if      (g_tab == TAB_NAV)    Nav_Paint(dc);
+    else if (g_tab == TAB_QUEST)  Quest_Paint(dc);
+    else if (g_tab == TAB_INV)    Inv_Paint(dc);
+    else if (g_tab == TAB_PLAYER) Pl_Paint(dc);
+    else                          PaintGallery(dc);   // [여급] 과 [도감] 이 격자를 공유한다
 
     UI_BufEnd(&buf);
     EndPaint(h, &ps);
@@ -615,7 +623,8 @@ static void SetTab(HWND h, int t)
     Nav_Activate(h, t == TAB_NAV);
     Quest_Activate(h, t == TAB_QUEST);   // 켤 때마다 세이브를 다시 읽는다
     Inv_Activate(h, t == TAB_INV);       // 켤 때마다 소지품 자리를 다시 잡는다
-    if (t != TAB_NAV && t != TAB_QUEST && t != TAB_INV)
+    Pl_Activate(h, t == TAB_PLAYER);     // 켤 때마다 주인공 레코드를 다시 읽는다
+    if (t != TAB_NAV && t != TAB_QUEST && t != TAB_INV && t != TAB_PLAYER)
         RebuildFilter();                 // [여급] <-> [도감] 은 목록 내용이 아예 다르다
     InvalidateRect(h, NULL, FALSE);
 }
@@ -648,10 +657,11 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (s != g_ddScroll) { g_ddScroll = s; InvalidateRect(h, NULL, FALSE); }
             return 0;
         }
-        if      (g_tab == TAB_NAV)   Nav_Wheel(h, notches);
-        else if (g_tab == TAB_QUEST) Quest_Wheel(h, notches);
-        else if (g_tab == TAB_INV)   Inv_Wheel(h, notches);
-        else                         ScrollTo(h, g_scroll - notches);
+        if      (g_tab == TAB_NAV)    Nav_Wheel(h, notches);
+        else if (g_tab == TAB_QUEST)  Quest_Wheel(h, notches);
+        else if (g_tab == TAB_INV)    Inv_Wheel(h, notches);
+        else if (g_tab == TAB_PLAYER) Pl_Wheel(h, notches);
+        else                          ScrollTo(h, g_scroll - notches);
         return 0;
     }
     case WM_LBUTTONDOWN: {
@@ -690,6 +700,8 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             if (Quest_Click(h, pt)) return 0;
         } else if (g_tab == TAB_INV) {
             if (Inv_Click(h, pt)) return 0;
+        } else if (g_tab == TAB_PLAYER) {
+            if (Pl_Click(h, pt)) return 0;
         } else {
             if (g_tab == TAB_GALLERY) {
                 { RECT r=MaleRect();   if (PtInRect(&r,pt)) { SetGender(h,FACE_MALE); return 0; } }
@@ -760,6 +772,10 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             Inv_Key(h, wp);
             return 0;
         }
+        if (g_tab == TAB_PLAYER) {
+            Pl_Key(h, wp);
+            return 0;
+        }
         switch (wp) {
         case VK_UP:    ScrollTo(h, g_scroll-1); return 0;
         case VK_DOWN:  ScrollTo(h, g_scroll+1); return 0;
@@ -805,6 +821,7 @@ void CharKR_ShowWindow(HWND owner, HINSTANCE hinst)
 #endif
         Quest_Activate(g_wnd, g_tab == TAB_QUEST);   // 창을 닫았다 다시 열 때 탭이 유지된다
         Inv_Activate(g_wnd, g_tab == TAB_INV);
+        Pl_Activate(g_wnd, g_tab == TAB_PLAYER);
         ShowWindow(g_wnd, SW_SHOW); UpdateWindow(g_wnd); SetFocus(g_wnd);
     }
 }

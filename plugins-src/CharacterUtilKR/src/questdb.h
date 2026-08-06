@@ -95,6 +95,11 @@ void Quest_BuildAll(void);
 const wchar_t* Quest_FileName(void);   // "EHT.CDS". 실패하면 L""
 const wchar_t* Quest_JobName(void);    // "에스파니아 사냥꾼"
 int  Quest_Pointer(void);              // 진행 포인터(파트 번호)
+
+// 진행 포인터를 갈아 끼운다(세이브에 바로 쓴다). 남은 기한은 0 으로 민다.
+// 맨 처음 한 번 SAVEDATA.CDS.bak 을 떠 둔다. 실패하면 Quest_LastError 에 까닭이 남는다.
+// 게임이 돌고 있는 동안은 메모리 쪽이 진짜이므로, 고친 뒤 그 세이브를 불러와야 반영된다.
+int  Quest_SetPointer(int part);       // 성공 1
 int  Quest_DaysLeft(void);             // 남은 기한(일)
 int  Quest_MyFame(void);               // 주인공 명성
 int  Quest_Year(void);                 // 세이브의 연도

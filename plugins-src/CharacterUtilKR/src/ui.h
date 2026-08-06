@@ -7,6 +7,11 @@
 // navview/savedata 코드는 그대로 남으므로 1 로 되돌리면 그대로 복구된다.
 #define CHARKR_SHOW_NAV_TAB 1
 
+// "플레이어" 탭 노출 스위치. 지금은 미완성이라 0 — 탭 단추만 빠지고
+// playerview/livechar 코드는 그대로 남는다. 마무리되면 1 로 되돌리면 된다.
+// (초상화는 얼굴코드를 바꿔도 화면이 안 따라오고 MALE.CDS 파트 16 을 갈아야 먹는다.)
+#define CHARKR_SHOW_PLAYER_TAB 0
+
 #define TAB_H     26
 #define FILTER_H  30
 #define GAP       10
@@ -41,6 +46,23 @@
 #define Q_ROWS    8
 #define Q_Y       (FRAME + TITLE_H + TAB_H + FILTER_H + 6)   // 91
 #define Q_LIST_H  (Q_ROW_H * Q_ROWS)                         // 496
+
+// ---- 플레이어 탭 ----
+// 위쪽에 지금 초상화를 크게 한 장(+ 옆에 인물 요약), 아래는 골라 끼우는 얼굴 격자다.
+// 초상화 원본이 80x96 이라 가로세로비를 지켜 키운다(133x160 = x1.66, 썸네일 60x72 = x0.75).
+#define PL_Y       (FRAME + TITLE_H + TAB_H + FILTER_H + 6)   // 91
+#define PL_PORT_W  133
+#define PL_PORT_H  160
+#define PL_HEAD_H  170                                        // 초상화 + 아래 여백
+#define PL_GX      (FRAME + GAP)                              // 13
+#define PL_GY      (PL_Y + PL_HEAD_H)                         // 261
+#define PL_THUMB_W 60
+#define PL_THUMB_H 72
+#define PL_CELL_W  (PL_THUMB_W + 6)                           // 66
+#define PL_CELL_H  (PL_THUMB_H + 16)                          // 88 (아래 16 은 번호 줄)
+#define PL_COLS    11                                         // 13 + 11*66 = 739 <= 스크롤바 왼쪽
+#define PL_ROWS    4                                          // 261 + 4*88 = 613 <= 창 아래끝
+#define PL_MAX     512                                        // MALE.CDS 쪽 얼굴 수가 상한
 
 #define WIN_W     (GX + COLS*CELL_W + (COLS-1)*GAP + GAP + SB_W + FRAME)   // 760
 #define GAL_WIN_H (GY + GAL_H + FRAME)                                     // 618

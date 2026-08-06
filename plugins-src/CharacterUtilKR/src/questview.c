@@ -21,6 +21,15 @@ static int g_ddScroll = 0;
 static RECT g_ddRc;
 static wchar_t g_msg[192] = L"";
 static int     g_saidRebased = 0;   // 원본 다시 잡았다는 알림을 이미 띄웠나
+static int     g_ptrOpen = 0;       // 진행 포인터 고르는 격자가 펼쳐져 있나
+static RECT    g_ptrRc;
+
+// 진행 포인터 고르기 — 0~64. 퀘스트패치가 120파트라 앞쪽 절반이면 손으로 옮겨 볼
+// 만한 자리는 다 든다. 65칸이 9x8 격자에 한 번에 들어가 스크롤이 필요 없다.
+#define PTR_MAX    64
+#define PTR_COLS   9
+#define PTR_ROWS   8
+#define PTR_ITEM_W 40
 
 #define PANEL_X   (Q_X + 30)
 #define PANEL_W   (Q_W - 60)
@@ -40,8 +49,10 @@ static int     g_saidRebased = 0;   // 원본 다시 잡았다는 알림을 이�
 
 static RECT RcReload(void)
 { RECT r; r.left=FRAME+8; r.right=r.left+66; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+static RECT RcPtr(void)
+{ RECT r; r.left=FRAME+82; r.right=r.left+108; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
 static RECT RcInfo(void)
-{ RECT r; r.left=FRAME+82; r.right=WIN_W-FRAME-8; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+{ RECT r; r.left=RcPtr().right+8; r.right=WIN_W-FRAME-8; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
 static RECT RcTrack(void)
 { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_W; r.top=Q_Y; r.bottom=Q_Y+Q_LIST_H; return r; }
 static RECT RcPanel(void)
@@ -580,6 +591,84 @@ static int DropHit(POINT pt)
     return (i >= 0 && i < n) ? i : -1;
 }
 
+// ---- 진행 포인터 고르기 ----
+
+// 이 파트에서 시작하는 퀘스트 번호(1부터). 없으면 0.
+// 포인터는 아무 파트나 가리킬 수 있지만, 뜻이 통하는 자리는 퀘스트의 첫 파트(조건 파트)다.
+// 중간 파트에 걸면 받은 적 없는 의뢰의 완료보고가 뜨는 식으로 어긋난다.
+static int QuestStartingAt(int part)
+{
+    int i, n = Quest_Count();
+    for (i = 0; i < n; i++) {
+        const QuestInfo* q = Quest_At(i);
+        if (q && q->first == part) return i + 1;
+    }
+    return 0;
+}
+
+static void OpenPtr(void)
+{
+    RECT a = RcPtr();
+    int w = PTR_COLS * PTR_ITEM_W, h = PTR_ROWS * DD_ITEM_H;
+    g_ptrRc.left = a.left; g_ptrRc.right = a.left + w;
+    g_ptrRc.top  = a.bottom; g_ptrRc.bottom = a.bottom + h;
+    if (g_ptrRc.right > WIN_W - FRAME) {
+        int d = g_ptrRc.right - (WIN_W - FRAME);
+        g_ptrRc.left -= d; g_ptrRc.right -= d;
+    }
+    g_ptrOpen = 1;
+}
+
+static void PaintPtr(HDC dc)
+{
+    int r, c, cur = Quest_Pointer();
+    HBRUSH br;
+    RECT lg;
+    if (!g_ptrOpen) return;
+
+    br = CreateSolidBrush(COL_FACE_TOP); FillRect(dc, &g_ptrRc, br); DeleteObject(br);
+    UI_Bevel(dc, g_ptrRc, FALSE);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &g_ptrRc, br); DeleteObject(br);
+
+    for (r = 0; r < PTR_ROWS; r++) for (c = 0; c < PTR_COLS; c++) {
+        int v = r * PTR_COLS + c;
+        int qn;
+        RECT ir;
+        wchar_t t[16];
+        if (v > PTR_MAX) continue;
+        ir.left = g_ptrRc.left + c * PTR_ITEM_W; ir.right = ir.left + PTR_ITEM_W;
+        ir.top  = g_ptrRc.top  + r * DD_ITEM_H;  ir.bottom = ir.top + DD_ITEM_H;
+        qn = QuestStartingAt(v);
+        if (v == cur) { br = CreateSolidBrush(COL_SEL_BG); FillRect(dc, &ir, br); DeleteObject(br); }
+        wsprintfW(t, L"%d", v);
+        // 퀘스트가 시작하는 파트는 진하게, 그 밖은 흐리게 — 골라도 되는 자리를 눈에 띄게 한다.
+        UI_Text(dc, ir, t, g_smallFont,
+                v == cur ? COL_LIGHT : (qn ? COL_TEXT : COL_FACE_BOT),
+                DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
+
+    // 격자 아래에 지금 짚고 있는 자리를 한 줄로 풀어 준다.
+    lg = g_ptrRc; lg.top = g_ptrRc.bottom + 2; lg.bottom = lg.top + 32; lg.right += 200;
+    {
+        int qn = QuestStartingAt(cur);
+        wchar_t t[192];
+        if (qn) wsprintfW(t, L"지금 %d — %d번 퀘스트의 첫 파트입니다.\n진한 숫자가 퀘스트 시작 자리입니다.", cur, qn);
+        else    wsprintfW(t, L"지금 %d — 퀘스트 시작 자리가 아닙니다.\n진한 숫자가 퀘스트 시작 자리입니다.", cur);
+        UI_Text(dc, lg, t, g_smallFont, COL_WARN_TX, DT_LEFT|DT_WORDBREAK|DT_NOPREFIX);
+    }
+}
+
+// 격자에서 클릭한 자리의 값. 밖이거나 빈 칸이면 -1.
+static int PtrHit(POINT pt)
+{
+    int c, r, v;
+    if (!g_ptrOpen || !PtInRect(&g_ptrRc, pt)) return -1;
+    c = (pt.x - g_ptrRc.left) / PTR_ITEM_W; if (c >= PTR_COLS) c = PTR_COLS - 1;
+    r = (pt.y - g_ptrRc.top) / DD_ITEM_H;
+    v = r * PTR_COLS + c;
+    return (v >= 0 && v <= PTR_MAX) ? v : -1;
+}
+
 // ---- 그리기 ----
 
 void Quest_Paint(HDC dc)
@@ -602,9 +691,12 @@ void Quest_Paint(HDC dc)
         return;
     }
 
-    wsprintfW(buf, L"%s · %s · %d개 중 %d 완료 · %d년 · 내명성 %d · 포인터 %d%s",
+    wsprintfW(buf, L"포인터 %d", Quest_Pointer());
+    UI_Select(dc, RcPtr(), buf, g_ptrOpen);
+
+    wsprintfW(buf, L"%s · %s · %d개 중 %d 완료 · %d년 · 내명성 %d%s",
               Quest_FileName(), Quest_JobName(), n, Quest_DoneCount(),
-              Quest_Year(), Quest_MyFame(), Quest_Pointer(),
+              Quest_Year(), Quest_MyFame(),
               Quest_Dirty() ? L" · 저장 안 됨" : L"");
     UI_Text(dc, RcInfo(), buf, g_smallFont, Quest_Dirty() ? COL_WARN_TX : COL_TEXT,
             DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
@@ -616,7 +708,21 @@ void Quest_Paint(HDC dc)
     }
     UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), Q_ROWS, n);
 
+    // 편집 패널이 없을 때의 알림 자리. 패널이 떠 있으면 그 안에서 같은 글을 낸다.
+    // 목록 첫 줄 위에 덮어 그린다 — 포인터를 옮긴 결과를 바로 봐야 하기 때문이다.
+    if (g_sel < 0 && g_msg[0]) {
+        RECT m;
+        HBRUSH br;
+        m.left = Q_X; m.right = Q_X + Q_W; m.top = Q_Y; m.bottom = Q_Y + 52;
+        br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &m, br); DeleteObject(br);
+        UI_Bevel(dc, m, FALSE);
+        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &m, br); DeleteObject(br);
+        m.left += 10; m.right -= 10; m.top += 5;
+        UI_Text(dc, m, g_msg, g_smallFont, COL_WARN_TX, DT_LEFT|DT_WORDBREAK|DT_NOPREFIX);
+    }
+
     if (g_sel >= 0) { PaintPanel(dc); PaintDrop(dc); }
+    PaintPtr(dc);      // 격자는 패널 위에 뜬다
 }
 
 // ---- 입력 ----
@@ -636,7 +742,7 @@ void Quest_Activate(HWND h, int active)
     // 한 번 읽어두면 금방 낡은 내용이 된다. 편집하다 만 것이 있으면 그대로 둔다.
     if (Quest_Dirty()) { if (h) InvalidateRect(h, NULL, FALSE); return; }
     g_loaded = Quest_Load();
-    g_sel = -1; g_drop = -1; g_msg[0] = 0;
+    g_sel = -1; g_drop = -1; g_ptrOpen = 0; g_msg[0] = 0;
     // 이벤트 파일이 밖에서 바뀌어 원본을 다시 잡았으면 한 번은 알려 준다.
     if (Quest_Rebased() && !g_saidRebased) {
         g_saidRebased = 1;
@@ -741,6 +847,33 @@ int Quest_Click(HWND h, POINT pt)
 {
     RECT r;
 
+    // 포인터 격자가 제일 위에 뜬다. 하나 고르면 세이브에 바로 쓰고 닫힌다.
+    if (g_ptrOpen) {
+        int v = PtrHit(pt);
+        g_ptrOpen = 0;
+        g_msg[0] = 0;
+        if (v >= 0) {
+            if (!Quest_SetPointer(v)) lstrcpynW(g_msg, Quest_LastError(), 192);
+            else {
+                int qn = QuestStartingAt(v);
+                if (qn) wsprintfW(g_msg, L"진행 포인터를 %d(%d번 퀘스트) 로 옮겼습니다. 남은 기한은 0 이 됐고, "
+                                         L"고치기 전 세이브는 SAVEDATA.CDS.bak 에 있습니다. "
+                                         L"게임에서 이 세이브를 다시 불러와야 반영됩니다.", v, qn);
+                else    wsprintfW(g_msg, L"진행 포인터를 %d 로 옮겼습니다 — 퀘스트가 시작하는 자리가 아니라 "
+                                         L"진행이 어긋날 수 있습니다. 고치기 전 세이브는 SAVEDATA.CDS.bak 에 있습니다. "
+                                         L"게임에서 이 세이브를 다시 불러와야 반영됩니다.", v);
+            }
+        }
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
+    r = RcPtr();
+    if (g_loaded && Quest_Status() == QUEST_OK && PtInRect(&r, pt)) {
+        OpenPtr();
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
+
     // 펼친 목록이 먼저 먹는다. 하나 고르면 닫힌다.
     if (g_drop >= 0) {
         int i = DropHit(pt), f = g_drop;
@@ -752,7 +885,7 @@ int Quest_Click(HWND h, POINT pt)
     if (g_sel >= 0) {
         r = RcPanel();
         if (PtInRect(&r, pt)) return PanelClick(h, pt);
-        g_sel = -1;                    // 패널 밖 = 닫기
+        g_sel = -1; g_msg[0] = 0;      // 패널 밖 = 닫기
         InvalidateRect(h, NULL, FALSE);
         return 1;
     }
@@ -780,8 +913,9 @@ int Quest_Click(HWND h, POINT pt)
 int Quest_Key(HWND h, WPARAM wp)
 {
     if (wp == VK_ESCAPE) {
+        if (g_ptrOpen)       { g_ptrOpen = 0; InvalidateRect(h, NULL, FALSE); return 1; }
         if (g_drop >= 0)     { g_drop = -1; InvalidateRect(h, NULL, FALSE); return 1; }
-        if (g_sel >= 0)      { g_sel = -1;  InvalidateRect(h, NULL, FALSE); return 1; }
+        if (g_sel >= 0)      { g_sel = -1; g_msg[0] = 0; InvalidateRect(h, NULL, FALSE); return 1; }
         return 0;
     }
     if (g_sel >= 0) return 1;      // 패널이 떠 있으면 목록 스크롤은 막는다
@@ -799,6 +933,7 @@ int Quest_Key(HWND h, WPARAM wp)
 
 void Quest_Wheel(HWND h, int notches)
 {
+    if (g_ptrOpen) return;      // 65칸이 한 화면에 다 들어와 굴릴 것이 없다
     if (g_sel >= 0 && g_drop < 0 && g_mode == 1) {
         int s = g_lnScroll - notches * 3;
         if (s < 0) s = 0;

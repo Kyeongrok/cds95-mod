@@ -172,6 +172,120 @@ unsigned Ls12_Build(unsigned char* const* parts, const unsigned* lens, int count
     return pos;
 }
 
+// ---- 파트 하나만 갈아 끼우기 ----
+// 자세한 뜻은 ls12.h 참고. 핵심은 원본 사전을 그대로 두는 것이다 — 그래야 손대지 않은
+// 파트의 압축 바이트를 그냥 옮겨도 그대로 풀린다.
+
+// 되풀이 구간을 거리 1 짜리 뒤복사로 낸다. 얼굴은 배경이 넓게 단색이라 이것만으로도
+// 새 파트가 원본 파트만 한 크기로 들어간다(안 하면 바이트당 최대 2바이트로 불어난다).
+#define RLE_MAX_RUN 1024
+
+static void EncodePart(BitOut* b, const unsigned char* raw, unsigned n, const unsigned char* rev)
+{
+    unsigned i = 0;
+    while (i < n && !b->over) {
+        unsigned run = 1;
+        while (i + run < n && raw[i + run] == raw[i] && run < RLE_MAX_RUN) run++;
+        BoCode(b, rev[raw[i]]);                  // 첫 바이트는 늘 그대로
+        if (run >= 4) {                          // 나머지가 3개 이상이어야 뒤복사가 이득이다
+            BoCode(b, 256 + 1);                  // 거리 1
+            BoCode(b, run - 1 - 3);              // 길이 = 3 + code
+            i += run;
+        } else {
+            i++;
+        }
+    }
+}
+
+unsigned Ls12_RewriteCap(const Ls12File* f, unsigned rawlen)
+{
+    unsigned total = 0;
+    int i;
+    if (!f) return 0;
+    for (i = 0; i < f->count; i++) total += f->comp[i];
+    // 헤더 + 옮길 압축 바이트 + 새 파트(최악의 경우 바이트당 2바이트) + 여유
+    return 0x110u + 12u * (unsigned)(f->count + 1) + 4u + total + rawlen * 2u + 64u;
+}
+
+unsigned Ls12_Rewrite(const Ls12File* f, int index, const unsigned char* raw, unsigned rawlen,
+                      unsigned char* out, unsigned outcap)
+{
+    unsigned char rev[256];
+    int seen[256];
+    int count, tgt, i;
+    unsigned hdr, pos;
+
+    if (!f || !f->data || !raw || !rawlen) return 0;
+    if (index >= f->count) return 0;
+    count = f->count + (index < 0 ? 1 : 0);
+    tgt   = index < 0 ? f->count : index;
+    hdr   = 0x110u + 12u * (unsigned)count + 4u;
+    if (outcap < hdr) return 0;
+
+    for (i = 0; i < 256; i++) seen[i] = 0;
+    for (i = 0; i < 256; i++) { rev[f->dict[i]] = (unsigned char)i; seen[f->dict[i]] = 1; }
+    for (i = 0; i < 256; i++) if (!seen[i]) return 0;   // 순열이 아니면 인코딩 불가
+
+    memset(out, 0, hdr);
+    memcpy(out, f->data, 0x110);       // 매직 + 패딩 + 사전을 그대로 물려받는다
+
+    pos = hdr;
+    for (i = 0; i < count; i++) {
+        unsigned clen, ulen;
+        if (i == tgt) {
+            BitOut b;
+            b.buf = out + pos; b.cap = outcap - pos; b.len = 0; b.bit = 0; b.over = 0;
+            EncodePart(&b, raw, rawlen, rev);
+            if (b.over) return 0;
+            clen = b.len; ulen = rawlen;
+        } else {
+            clen = f->comp[i]; ulen = f->uncomp[i];
+            if (f->off[i] > (unsigned)f->size || clen > (unsigned)f->size - f->off[i]) return 0;
+            if (pos > outcap || clen > outcap - pos) return 0;
+            memcpy(out + pos, f->data + f->off[i], clen);
+        }
+        WrBE(out + 0x110 + i * 12,     clen);
+        WrBE(out + 0x110 + i * 12 + 4, ulen);
+        WrBE(out + 0x110 + i * 12 + 8, pos);
+        pos += clen;
+    }
+    return pos;
+}
+
+int Ls12_VerifyPart(const unsigned char* buf, unsigned buflen, int index,
+                    const unsigned char* raw, unsigned rawlen)
+{
+    Ls12File t;
+    unsigned char* tmp;
+    unsigned pos;
+    int n, ok;
+
+    if (!buf || buflen < 0x114 || !raw) return 0;
+    ZeroMemory(&t, sizeof(t));
+    t.data = (unsigned char*)buf;      // 읽기만 한다. Ls12_Close 를 부르지 않으므로 안전하다
+    t.size = (long)buflen;
+    memcpy(t.dict, buf + 16, 256);
+    pos = 0x110;
+    while (pos + 12 <= buflen && t.count < 512) {
+        if (RdBE(buf + pos) == 0) break;
+        t.comp[t.count]   = RdBE(buf + pos);
+        t.uncomp[t.count] = RdBE(buf + pos + 4);
+        t.off[t.count]    = RdBE(buf + pos + 8);
+        t.count++;
+        pos += 12;
+    }
+    if (index < 0) index = t.count - 1;
+    if (index < 0 || index >= t.count) return 0;
+    if (t.uncomp[index] != rawlen) return 0;
+
+    tmp = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, rawlen);
+    if (!tmp) return 0;
+    n = Ls12_DecodePart(&t, index, tmp, rawlen);
+    ok = (n == (int)rawlen) && (memcmp(tmp, raw, rawlen) == 0);
+    HeapFree(GetProcessHeap(), 0, tmp);
+    return ok;
+}
+
 int Ls12_DecodeFace(Ls12File* f, int index, unsigned char* out)
 {
     int n = Ls12_DecodePart(f, index, out, (unsigned)LS12_FACE_SZ);

@@ -74,6 +74,36 @@ int LiveChar_HireOffset(void);            // 못 찾았으면 -1 (진단용)
 int LiveChar_Hire(int slot);              // 못 읽으면 -1
 int LiveChar_SetHire(int slot, int v);    // 성공 1
 
+// ---- 주인공(플레이어) 레코드 ----
+// 인물 배열과 같은 배치의 레코드가 딱 하나 따로 있다(ce/CDS_95.CT "주인공 정보").
+// CE 가 짚은 자리들이 위 레코드 배치와 정확히 맞아떨어져서 오프셋을 그대로 쓴다:
+//   얼굴 0x1B60A8(+0x00) · 성별 0x1B60B0(+0x08) · 혈액형 0x1B60B8(+0x10)
+//   직업 0x1B60BC(+0x14) · 항해술 0x1B60E0(+0x38) · 명성 0x1B614C(+0xA4)
+//   이름 0x1B615C(+0xB4) · 성 0x1B616F(+0xC7)
+// 인물 배열에 없는 것이 하나 있다 — 생년/월/일이 이름 뒤 +0xE0/+0xE4/+0xE8 에 붙는다.
+//
+// 칸이 하나뿐이라 "말이 되는 칸 수" 로 판정할 수 없어서, 이름·성별·얼굴이 인물 레코드로
+// 보이는지만 본다. 세이브를 안 불러왔으면 이름이 비어 있어 걸러진다.
+#define PLAYER_RVA 0x1B60A8u
+
+int  Player_Load(void);        // 성공 1. 탭을 열 때마다 다시 불러도 된다
+int  Player_Ready(void);
+int  Player_Status(void);      // LIVECHAR_E_* 와 같은 코드
+
+void Player_Name(wchar_t* out, int cap);
+int  Player_Face(void);        // 얼굴코드. 못 읽으면 -1
+int  Player_SetFace(int code); // 초상화 교체. 성공 1
+int  Player_Gender(void);      // 0=남 1=여. 못 읽으면 -1
+// 성별 바꾸기. 게임이 초상화를 MALE.CDS / FEMALE.CDS 중 어디서 꺼낼지가 이 값으로 갈리므로,
+// 반대쪽 표의 얼굴을 쓰려면 이것도 같이 써야 한다(초상화 말고 게임 진행에도 영향이 간다).
+int  Player_SetGender(int g);  // 성공 1
+int  Player_Age(void);         // 못 읽으면 -9999
+int  Player_BirthYear(void);   // 못 읽으면 0
+int  Player_Blood(void);       // 0=A 1=B 2=O 3=AB. 못 읽으면 -1
+int  Player_Job(void);         // 못 읽으면 -1
+int  Player_Fame(void);        // 못 읽으면 -1
+int  Player_Infamy(void);      // 못 읽으면 -1
+
 // 주인공이 데리고 다니는 네 자리(부관/항해사/측량사/통역).
 // 0x1B61A0 부터 4바이트씩 넷이고, 값은 4096 + 인물 배열 칸 번호, 0xFFFFFFFF 면 비어 있다.
 // CE 표의 드롭다운이 276줄(275명 + "없음")인 것이 인물 배열 크기와 정확히 맞는다.

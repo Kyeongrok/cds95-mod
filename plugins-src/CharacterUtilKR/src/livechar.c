@@ -65,9 +65,9 @@ static void ReadStr(const unsigned char* p, int len, wchar_t* out, int cap)
     while (w > 0 && out[w-1] == L' ') out[--w] = 0;
 }
 
-static void SlotName(int slot, wchar_t* out, int cap)
+// 레코드 하나의 이름("이름·성"). 인물 배열의 칸과 주인공 레코드가 배치가 같아 둘 다 쓴다.
+static void RecName(const unsigned char* r, wchar_t* out, int cap)
 {
-    const unsigned char* r = g_tbl + slot * LIVECHAR_SIZE;
     wchar_t a[32], b[32], full[80];
     out[0] = 0;
     ReadStr(r + LC_NAME1, LC_NAME_LEN, a, 32);
@@ -76,6 +76,11 @@ static void SlotName(int slot, wchar_t* out, int cap)
     if (a[0] && b[0]) wsprintfW(full, L"%s·%s", a, b);
     else              lstrcpyW(full, a[0] ? a : b);
     lstrcpynW(out, full, cap);
+}
+
+static void SlotName(int slot, wchar_t* out, int cap)
+{
+    RecName(g_tbl + slot * LIVECHAR_SIZE, out, cap);
 }
 
 // 이름이 붙은 칸이 인물 레코드로 말이 되는지.
@@ -141,11 +146,13 @@ int LiveChar_Load(void)
     return 1;
 }
 
+// 인물 배열과 상관없이 읽는다 — 배열 검사에 실패해도 연도는 알 수 있어야 한다
+// (주인공 탭은 배열을 안 쓰는데 나이를 생년에서 계산하려면 이 값이 필요하다).
 int LiveChar_Year(void)
 {
     const unsigned char* base = (const unsigned char*)GetModuleHandleW(NULL);
     int y;
-    if (!base || !g_tbl) return 0;
+    if (!base || !Readable(base + YEAR_RVA, sizeof(int))) return 0;
     y = *(const int*)(base + YEAR_RVA);
     return (y >= YEAR_MIN && y <= YEAR_MAX) ? y : 0;
 }
@@ -359,6 +366,101 @@ int LiveChar_SetCrew(int which, int slot)
     if (!VirtualProtect(p, sizeof(unsigned), PAGE_READWRITE, &old)) return 0;
     *p = v;
     VirtualProtect(p, sizeof(unsigned), old, &old);
+    return 1;
+}
+
+// ================================================================== 주인공 레코드
+// 배치는 livechar.h 참고. 인물 배열과 같은 구조라 LC_* 오프셋을 그대로 쓴다.
+
+#define LC_GENDER 0x08
+#define LC_BLOOD  0x10
+#define LC_JOB    0x14
+#define LC_FAME   0xA4
+#define LC_INFAMY 0xA8
+#define LC_BORNY  0xE0        /* 인물 배열에는 없다 — 이름/성 뒤에 붙는 주인공 전용 자리 */
+
+static unsigned char* g_pl      = NULL;
+static int            g_plState = LIVECHAR_E_READ;
+
+int Player_Ready(void)  { return g_pl != NULL; }
+int Player_Status(void) { return g_plState; }
+
+int Player_Load(void)
+{
+    const unsigned char* base = (const unsigned char*)GetModuleHandleW(NULL);
+    unsigned char* r;
+    wchar_t nm[64];
+    int face, gender;
+
+    g_pl = NULL;
+    if (!base) { g_plState = LIVECHAR_E_MODULE; return 0; }
+    r = (unsigned char*)(base + PLAYER_RVA);
+    if (!Readable(r, LIVECHAR_SIZE)) { g_plState = LIVECHAR_E_READ; return 0; }
+
+    // 아직 인물을 안 만들었으면(=세이브 전) 이름 자리가 통째로 비어 있다.
+    RecName(r, nm, 64);
+    if (!nm[0]) { g_plState = LIVECHAR_E_EMPTY; return 0; }
+
+    // 이름처럼 보이는 쓰레기에 속지 않도록 나머지 필드도 인물 레코드로 말이 되는지 본다.
+    // (나이는 안 본다 — 주인공은 생년/월/일을 따로 들고 있어 +0x04 를 안 쓸 수도 있다.)
+    face   = *(const int*)(r + LC_FACE);
+    gender = *(const int*)(r + LC_GENDER);
+    if (face < -1 || face > FACE_MAX)   { g_plState = LIVECHAR_E_SLOTS; return 0; }
+    if (gender != 0 && gender != 1)     { g_plState = LIVECHAR_E_SLOTS; return 0; }
+
+    g_pl = r;
+    g_plState = LIVECHAR_OK;
+    return 1;
+}
+
+void Player_Name(wchar_t* out, int cap)
+{
+    if (cap <= 0) return;
+    out[0] = 0;
+    if (g_pl) RecName(g_pl, out, cap);
+}
+
+static int PlField(int off, int lo, int hi, int bad)
+{
+    int v;
+    if (!g_pl) return bad;
+    v = *(const int*)(g_pl + off);
+    return (v >= lo && v <= hi) ? v : bad;
+}
+
+int Player_Face(void)      { return PlField(LC_FACE,   -1, FACE_MAX, -1); }
+int Player_Gender(void)    { return PlField(LC_GENDER,  0, 1,        -1); }
+int Player_Blood(void)     { return PlField(LC_BLOOD,   0, 3,        -1); }
+int Player_Job(void)       { return PlField(LC_JOB,     0, 63,       -1); }
+int Player_Age(void)       { return PlField(LC_AGE, AGE_MIN, AGE_MAX, -9999); }
+int Player_BirthYear(void) { return PlField(LC_BORNY, YEAR_MIN, YEAR_MAX, 0); }
+int Player_Fame(void)      { return PlField(LC_FAME,   0, FAME_MAX,  -1); }
+int Player_Infamy(void)    { return PlField(LC_INFAMY, 0, FAME_MAX,  -1); }
+
+int Player_SetGender(int g)
+{
+    unsigned char* p;
+    DWORD old = 0;
+    if (!g_pl || (g != 0 && g != 1)) return 0;
+    p = g_pl + LC_GENDER;
+    if (!VirtualProtect(p, sizeof(int), PAGE_READWRITE, &old)) return 0;
+    *(int*)p = g;
+    VirtualProtect(p, sizeof(int), old, &old);
+    return 1;
+}
+
+// 초상화 교체. 게임은 이 값으로 MALE.CDS / FEMALE.CDS 에서 얼굴을 꺼내므로,
+// 성별(+0x08)에 맞는 표의 얼굴코드를 줘야 한다(고르는 쪽에서 그 표만 보여준다).
+// 세이브할 때 이 레코드가 그대로 저장되므로 여급/스폰서와 달리 따로 기억해 둘 필요가 없다.
+int Player_SetFace(int code)
+{
+    unsigned char* p;
+    DWORD old = 0;
+    if (!g_pl || code < 0 || code > FACE_MAX) return 0;
+    p = g_pl + LC_FACE;
+    if (!VirtualProtect(p, sizeof(int), PAGE_READWRITE, &old)) return 0;
+    *(int*)p = code;
+    VirtualProtect(p, sizeof(int), old, &old);
     return 1;
 }
 

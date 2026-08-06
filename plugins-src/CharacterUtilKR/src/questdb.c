@@ -775,6 +775,74 @@ static int ReadSave(void)
     return 1;
 }
 
+// 포인터가 옮겨졌을 때 목록의 상태 배지만 다시 낸다. 파일을 다시 읽지 않으므로
+// 저장 안 한 편집이 살아 있어도 날아가지 않는다(LoadNamed 5) 와 같은 규칙이다).
+static void Restate(void)
+{
+    int gi;
+    for (gi = 0; gi < g_n; gi++) {
+        QuestInfo* q = &g_q[gi];
+        if      (g_ptr >  q->last)      q->state = QUEST_DONE;
+        else if (g_ptr <  q->first)     q->state = QUEST_LOCKED;
+        else if (g_ptr == q->first)     q->state = QUEST_WAIT;
+        else if (g_ptr == q->first + 1) q->state = QUEST_READY;
+        else                            q->state = QUEST_ACTIVE;
+    }
+}
+
+// 세이브의 진행 포인터를 갈아 끼운다. 성공 1.
+//
+// 남은 기한도 0 으로 민다 — 포인터를 옮긴다는 것은 다른 퀘스트로 건너뛴다는 뜻이라,
+// 앞 퀘스트에서 받아 둔 기한은 뜻이 없다. 그대로 두면 옮겨간 자리에서 곧바로
+// 기한 만료로 처리되는 일이 생긴다(QuestModKR 이 모드를 갈아 끼울 때와 같은 이유다).
+//
+// 맨 처음 한 번만 SAVEDATA.CDS.bak 을 떠 둔다. 여러 번 옮겨 보다가 원래 자리를
+// 잃지 않도록 덮어쓰지 않는다.
+int Quest_SetPointer(int part)
+{
+    wchar_t path[MAX_PATH], bak[MAX_PATH], dir[MAX_PATH];
+    HANDLE h;
+    DWORD sz, put = 0;
+    unsigned char v[2];
+    int ok = 0;
+
+    g_err[0] = 0;
+    if (part < 0 || part > 0xFFFF) { lstrcpyW(g_err, L"포인터 값이 범위를 벗어납니다."); return 0; }
+
+    GameDir(dir);
+    wsprintfW(path, L"%s\\SAVEDATA.CDS", dir);
+    lstrcpyW(bak, path); lstrcatW(bak, L".bak");
+    CopyFileW(path, bak, TRUE);          // TRUE = 이미 있으면 그대로 둔다
+
+    // 게임이 세이브를 열어둔 채일 수 있으므로 읽기와 마찬가지로 공유를 넉넉히 준다.
+    h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        lstrcpyW(g_err, L"SAVEDATA.CDS 를 쓰지 못했습니다.");
+        return 0;
+    }
+    sz = GetFileSize(h, NULL);
+    if (sz == INVALID_FILE_SIZE || sz < SV_MIN) {
+        CloseHandle(h);
+        lstrcpyW(g_err, L"SAVEDATA.CDS 가 너무 작습니다 — 세이브가 맞는지 확인하세요.");
+        return 0;
+    }
+    v[0] = (unsigned char)part; v[1] = (unsigned char)(part >> 8);
+    if (SetFilePointer(h, SV_QPTR, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER &&
+        WriteFile(h, v, 2, &put, NULL) && put == 2) {
+        v[0] = 0; v[1] = 0;
+        if (SetFilePointer(h, SV_QDAYS, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER &&
+            WriteFile(h, v, 2, &put, NULL) && put == 2)
+            ok = 1;
+    }
+    CloseHandle(h);
+    if (!ok) { lstrcpyW(g_err, L"SAVEDATA.CDS 에 쓰다가 실패했습니다."); return 0; }
+
+    g_ptr = part; g_days = 0;
+    Restate();
+    return 1;
+}
+
 // 퀘스트 파일 하나를 풀어 목록을 만든다. 성공 1.
 // 지금 쓰는 파일이 아닌 것도 부를 수 있다 — 8직업 파일을 전부 다시 만들 때 그렇게 쓴다.
 // 그때는 진행 포인터 같은 세이브 값이 그 파일과 상관없지만, 화면에 안 쓰고 파일만

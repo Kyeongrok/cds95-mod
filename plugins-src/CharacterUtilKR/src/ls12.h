@@ -40,3 +40,23 @@ unsigned Ls12_PartSize(Ls12File* f, int index);
 unsigned Ls12_BuildCap(const unsigned* lens, int count);
 unsigned Ls12_Build(unsigned char* const* parts, const unsigned* lens, int count,
                     unsigned char* out, unsigned outcap);
+
+// ---- 파트 하나만 갈아 끼우기 ----
+// Ls12_Build 로 얼굴 파일을 다시 묶으면 414개를 전부 다시 인코딩하게 되어 MALE.CDS 가
+// 1.7MB -> 8MB 로 분다. 얼굴 한 장을 바꾸려고 파일 전체를 그렇게 만들 이유가 없어서,
+// 건드리지 않는 파트는 "압축된 바이트를 그대로" 옮기고 바꾸는 파트만 새로 인코딩한다.
+// 원본 사전을 그대로 두므로 옮긴 파트들은 손대지 않아도 그대로 풀린다.
+//
+// index >= 0 이면 그 파트를 갈아 끼우고, index < 0 이면 끝에 새 파트로 붙인다(파트 수 +1).
+// 만들어진 바이트 수를 돌려준다(실패 0). 필요한 버퍼는 Ls12_RewriteCap 으로 잡는다.
+//
+// 사전이 순열이 아니면(바이트 하나가 어느 코드에도 없으면) 인코딩할 수 없어 0 을 돌려준다.
+// MALE.CDS / FEMALE.CDS 는 둘 다 중복 없는 순열이라 문제없다.
+unsigned Ls12_RewriteCap(const Ls12File* f, unsigned rawlen);
+unsigned Ls12_Rewrite(const Ls12File* f, int index, const unsigned char* raw, unsigned rawlen,
+                      unsigned char* out, unsigned outcap);
+
+// 새로 만든 버퍼에서 그 파트를 도로 풀어 원본과 같은지 본다. 같으면 1.
+// 파일을 덮어쓰기 전에 반드시 통과시킨다 — 인코딩이 어긋나면 얼굴 파일이 통째로 깨진다.
+int Ls12_VerifyPart(const unsigned char* buf, unsigned buflen, int index,
+                    const unsigned char* raw, unsigned rawlen);
