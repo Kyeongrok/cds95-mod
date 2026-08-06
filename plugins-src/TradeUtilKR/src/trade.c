@@ -20,10 +20,13 @@
 #define WC_SISE       L"TradeUtilKR_Sise"
 #define CITY_COUNT    (int)(sizeof(kCities)/sizeof(kCities[0]))
 #define WARP_COUNT    (int)(sizeof(kWarps)/sizeof(kWarps[0]))
+#define WARP_REGION_MAX 16          // 서로 다른 지역 이름 수(지금 11개)
 
 // fb14: 순간이동(워프). ce/CDS_95.CT "순간이동용" = 현재 위치를 담는 16바이트 @ 0x005B63A8.
 //   목적지 도시의 16바이트를 여기에 쓰면 그 도시로 이동한다(현재값이 목록의 현위치와 일치함을 확인).
 #define WARP_ADDR     0x005B63A8u
+
+static void RecentWarped(int city);   // 아래 "최근 방문한 도시" 에 있다
 
 // kWarps[i] 의 16바이트를 워프 주소에 써서 해당 도시로 순간이동.
 static void DoWarp(int i)
@@ -41,6 +44,56 @@ static void DoWarp(int i)
     {
         memcpy(dst, kWarps[i].b, 16);
     }
+    RecentWarped(i);      // 워프한 곳도 "다녀온 곳"이다 — 게임이 현재도시를 갱신하기 전에 넣어 둔다
+}
+
+// ---------------- 최근 워프한 도시 ----------------
+//
+// 226개를 지역별로 훑는 것이 번거로워서, 워프로 다녀온 곳을 메뉴 맨 위에 모아 둔다.
+// 이 메뉴로 간 곳만 담는다(배로 정박한 것은 안 담는다) — "아까 갔던 데로 다시"가 쓸모라서다.
+// 같은 도시를 다시 고르면 맨 위로 올라오고, 12개가 차면 가장 오래된 것부터 밀려난다.
+// 목록은 게임을 켜 둔 동안만 들고 있는다(파일로 남기지 않는다).
+#define RECENT_MAX 12
+static int   g_recent[RECENT_MAX];
+static int   g_recentN = 0;
+static HMENU g_recentMenu = NULL;
+
+static void RecentPush(int city)
+{
+    int i, j;
+    if (city < 0 || city >= WARP_COUNT) return;
+    for (i = 0; i < g_recentN; i++) if (g_recent[i] == city) break;
+    if (i == 0 && g_recentN > 0) return;                  // 이미 맨 앞이다
+    if (i == g_recentN)                                   // 목록에 없던 도시
+    {
+        if (g_recentN < RECENT_MAX) g_recentN++;
+        else i = RECENT_MAX - 1;                          // 꽉 찼으면 맨 뒤를 밀어낸다
+    }
+    for (j = i; j > 0; j--) g_recent[j] = g_recent[j - 1];
+    g_recent[0] = city;
+}
+
+// 워프로 간 곳만 담는다. 배로 정박한 것까지 잡으려면 게임의 "현재 도시"를 계속 들여다봐야
+// 하는데, 이 목록의 쓸모는 "아까 워프했던 데로 다시" 라서 그것만으로 충분하다.
+static void RecentWarped(int city)
+{
+    RecentPush(city);
+}
+
+// 서브메뉴를 펼치기 직전(WM_INITMENUPOPUP, 게임 UI 스레드)에 다시 만든다.
+// 메뉴를 딴 스레드에서 건드리지 않으려고 이 시점으로 미뤄 둔 것이다.
+static void RebuildRecentMenu(void)
+{
+    int i;
+    if (!g_recentMenu) return;
+    while (GetMenuItemCount(g_recentMenu) > 0) DeleteMenu(g_recentMenu, 0, MF_BYPOSITION);
+    if (g_recentN <= 0)
+    {
+        AppendMenuW(g_recentMenu, MF_STRING | MF_GRAYED, 0, L"(아직 없음)");
+        return;
+    }
+    for (i = 0; i < g_recentN; i++)
+        AppendMenuW(g_recentMenu, MF_STRING, ID_WARP_BASE + g_recent[i], kWarps[g_recent[i]].city);
 }
 
 // 게임 라이브 메모리: 도시별 시세 배열 (2026-07-03 배열 시그니처 스캔으로 확정).
@@ -1212,6 +1265,9 @@ static void ShowTradeGoodsWindow(HWND owner)
 static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     WNDPROC op = g_origProc;
+    // "최근 방문"을 펼치기 직전에 항목을 새로 깐다. 게임 UI 스레드에서만 메뉴를 건드린다.
+    if (msg == WM_INITMENUPOPUP && g_recentMenu && (HMENU)wp == g_recentMenu)
+        RebuildRecentMenu();
     if (msg == WM_COMMAND && HIWORD(wp) == 0)
     {
         WORD id = LOWORD(wp);
@@ -1309,7 +1365,10 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                 HMENU target = fileMenu ? fileMenu : bar;
                 if (!HasOurMenu(target))
                 {
-                    HMENU warp, sub = NULL; const wchar_t* region = NULL; int i;
+                    HMENU warp; int i;
+                    // 같은 지역이 떨어져 있어도 서브메뉴는 하나로 모은다.
+                    // (도시 ID 순서로는 북유럽·지중해·중근동이 두 덩어리로 나뉘어 있다.)
+                    const wchar_t* rname[WARP_REGION_MAX]; HMENU rmenu[WARP_REGION_MAX]; int rn = 0;
                     if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                         AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL); // 게임 원래 항목과 구분(최초 1회)
                     // fb13: "교역"을 드롭다운이 아니라 클릭 즉시 시세 일람이 뜨는 커맨드 항목으로.
@@ -1319,15 +1378,25 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                     AppendMenuW(target, MF_STRING, ID_TRADE_GOODS, L"교역품");
                     // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
                     warp = CreatePopupMenu();
+                    // 최근 다녀온 곳을 맨 위에. 항목은 펼칠 때마다 새로 채운다(RebuildRecentMenu).
+                    g_recentMenu = CreatePopupMenu();
+                    AppendMenuW(g_recentMenu, MF_STRING | MF_GRAYED, 0, L"(아직 없음)");
+                    AppendMenuW(warp, MF_POPUP, (UINT_PTR)g_recentMenu, L"최근 방문");
+                    AppendMenuW(warp, MF_SEPARATOR, 0, NULL);
                     for (i = 0; i < WARP_COUNT; i++)
                     {
-                        if (!region || lstrcmpW(region, kWarps[i].region) != 0)
+                        int r;
+                        for (r = 0; r < rn; r++)
+                            if (lstrcmpW(rname[r], kWarps[i].region) == 0) break;
+                        if (r == rn)
                         {
-                            sub = CreatePopupMenu();
-                            AppendMenuW(warp, MF_POPUP, (UINT_PTR)sub, kWarps[i].region);
-                            region = kWarps[i].region;
+                            if (rn >= WARP_REGION_MAX) continue;   // 표를 넘기면 그 도시는 건너뛴다
+                            rmenu[rn] = CreatePopupMenu();
+                            rname[rn] = kWarps[i].region;
+                            AppendMenuW(warp, MF_POPUP, (UINT_PTR)rmenu[rn], kWarps[i].region);
+                            rn++;
                         }
-                        AppendMenuW(sub, MF_STRING, ID_WARP_BASE + i, kWarps[i].city);
+                        AppendMenuW(rmenu[r], MF_STRING, ID_WARP_BASE + i, kWarps[i].city);
                     }
                     AppendMenuW(target, MF_POPUP, (UINT_PTR)warp, L"워프");
                     DrawMenuBar(g_hwnd);
