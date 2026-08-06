@@ -13,7 +13,7 @@
 
 // fb15/fb16: 인물(얼굴) 코드 브라우저 — 갤러리(2열, 스크롤) + 남/여/카테고리 필터.
 //   얼굴 = 80x96 8bpp(LS12 디코드), kFacePalette 로 컬러화(게임 캡처 역산 근사 팔레트).
-//   상단 "파일" 메뉴에 "인물" 항목 추가(서브클래싱으로 클릭 가로챔) → 브라우저 오픈.
+//   상단 "파일" 메뉴에 "정보" 항목 추가(서브클래싱으로 클릭 가로챔) → 브라우저 오픈.
 // fb31: 창을 탭으로 나눔 — [도감] 은 기존 얼굴 브라우저, [항해사 찾기] 는
 //   SAVEDATA.CDS 를 읽어 고용 가능한 인물을 특기/레벨로 추려 보여준다(navview.c, 읽기 전용).
 //   ui.h 의 CHARKR_SHOW_NAV_TAB=0 으로 두면 [항해사 찾기] 만 빠진다.
@@ -544,7 +544,7 @@ static void OnPaint(HWND h)
     tb.left=FRAME; tb.top=FRAME; tb.right=rc.right-FRAME; tb.bottom=FRAME+TITLE_H;
     UI_VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); UI_Bevel(dc, tb, FALSE);
     tr = tb; tr.left += 8;
-    UI_Text(dc, tr, L"인물 브라우저", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    UI_Text(dc, tr, L"정보", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     UI_Button(dc, CloseRect(rc), L"×", FALSE);
 
     { int i; for (i = 0; i < TAB_N; i++)
@@ -776,7 +776,7 @@ void CharKR_ShowWindow(HWND owner, HINSTANCE hinst)
         y = orc.top  + ((orc.bottom-orc.top)-WIN_H)/2;
         if (x < 0) x = 0; if (y < 0) y = 0;
     }
-    g_wnd = CreateWindowExW(0, WC_CHAR, L"인물 브라우저", WS_POPUP, x, y, WIN_W, WIN_H, owner, NULL, hinst, NULL);
+    g_wnd = CreateWindowExW(0, WC_CHAR, L"정보", WS_POPUP, x, y, WIN_W, WIN_H, owner, NULL, hinst, NULL);
     if (g_wnd) {
 #if CHARKR_SHOW_NAV_TAB
         Nav_Activate(g_wnd, g_tab == TAB_NAV);
@@ -815,7 +815,7 @@ static BOOL HasOurMenu(HMENU bar)
 {
     int n = GetMenuItemCount(bar), i; WCHAR s[64];
     for (i = 0; i < n; i++)
-        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"인물") == 0) return TRUE;
+        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"정보") == 0) return TRUE;
     return FALSE;
 }
 // 최상위 메뉴바에서 "파일" 팝업을 찾아 그 서브메뉴 핸들을 돌려준다. 없으면 NULL.
@@ -882,9 +882,9 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                 if (!HasOurMenu(target)) {
                     if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                         AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL); // 게임 원래 항목과 구분(최초 1회)
-                    AppendMenuW(target, MF_STRING, ID_CHAR, L"인물");
+                    AppendMenuW(target, MF_STRING, ID_CHAR, L"정보");
                     DrawMenuBar(g_gameHwnd);
-                    OutputDebugStringW(L"[CharacterUtilKR] 인물 menu (re)installed.");
+                    OutputDebugStringW(L"[CharacterUtilKR] 정보 menu (re)installed.");
                 }
                 if (fileMenu && CollapseSeparators(fileMenu)) DrawMenuBar(g_gameHwnd); // race 로 생긴 중복 구분선 정리
                 if (g_subHwnd != g_gameHwnd) {

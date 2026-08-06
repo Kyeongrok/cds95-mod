@@ -4,7 +4,7 @@
 #include "mod.h"
 
 #define MAX_MODS 64
-// "파일 > 모드" 커맨드. 게임 창 하나를 여러 플러그인이 같이 서브클래싱하므로 ID 가 겹치면
+// "파일 > 플러그인 관리" 커맨드. 게임 창 하나를 여러 플러그인이 같이 서브클래싱하므로 ID 가 겹치면
 // 먼저 가로챈 쪽이 대신 열린다(0xB600 을 쓰다가 WorldMapKR 의 지도가 떴다).
 // 쓰이는 값: Trade=0xB101/0xB102/0xC0xx, Char=0xB301, Ship=0xB410, Patch=0xB500, Map=0xB600.
 #define ID_MOD_OPEN 0xB700u
@@ -20,9 +20,10 @@ typedef struct {
 static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"DDrawWrapper",    L"플러그인 로더 + DirectDraw 에뮬레이션. 끄면 나머지가 다 안 뜬다." },
     { L"ModUtilKR",       L"이 창. 어떤 플러그인을 쓸지 고른다." },
+    { L"QuestModKR",      L"퀘스트 모드 — mods 폴더의 퀘스트 파일 묶음을 골라 깐다." },
     { L"HotelUtilKR",     L"여관 숙박 일수를 직접 입력한다." },
     { L"TradeUtilKR",     L"교역 메뉴 — 시세 일람 / 교역품 관리 / 워프." },
-    { L"CharacterUtilKR", L"인물 창 — 항해사 찾기 / 퀘스트 / 여급 / 스폰서 / 도감." },
+    { L"CharacterUtilKR", L"정보 창 — 항해사 찾기 / 퀘스트 / 소지품 / 여급 / 스폰서 / 도감." },
     { L"WorldMapKR",      L"세계지도 — 도시·발견물 마커, 우클릭 워프." },
     { L"ShipSkinKR",      L"함선 스킨 + 성능(등장시기 포함) 편집." },
     { L"PatchUtilKR",     L"patches.json 의 메모리 패치를 켜고 끈다." },
@@ -245,7 +246,7 @@ static void ShowModWindow(void)
             RegisterClassW(&wc);
             reg = TRUE;
         }
-        g_wnd = CreateWindowExW(0, WC_MOD, L"모드 관리 — 쓸 플러그인 고르기 (다음 실행부터 반영)",
+        g_wnd = CreateWindowExW(0, WC_MOD, L"플러그인 관리 — 쓸 플러그인 고르기 (다음 실행부터 반영)",
                     WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 820, 420,
                     NULL, NULL, g_hinst, NULL);
     } else {
@@ -306,9 +307,9 @@ static DWORD WINAPI MenuThread(LPVOID p)
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
                 if (!HasOurItem(target)) {
-                    AppendMenuW(target, MF_STRING, ID_MOD_OPEN, L"모드");
+                    AppendMenuW(target, MF_STRING, ID_MOD_OPEN, L"플러그인 관리");
                     DrawMenuBar(g_gameHwnd);
-                    LogW(L"[ModUtilKR] \"모드\" 메뉴 설치.");
+                    LogW(L"[ModUtilKR] \"플러그인 관리\" 메뉴 설치.");
                 }
                 if (g_subHwnd != g_gameHwnd) {
                     g_origProc = (WNDPROC)SetWindowLongPtrW(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)SubProc);

@@ -59,7 +59,7 @@ void CharState_Save(HINSTANCE hinst)
     int i, n;
     // /utf-8 로 컴파일하므로 좁은 문자열 리터럴이 그대로 UTF-8 이다.
     static const char hdr[] =
-        "# CharacterUtilKR — 인물 창에서 고친 값. 게임을 다시 켜면 이대로 다시 쓴다.\r\n"
+        "# CharacterUtilKR — 정보 창에서 고친 값. 게임을 다시 켜면 이대로 다시 쓴다.\r\n"
         "# 이 파일을 지우면 다음 실행부터 원본 값으로 돌아간다.\r\n"
         "# 항해사(생년·특기·승무원)는 세이브를 불러와야 생기는 값이라 여기 담지 않는다.\r\n";
 
