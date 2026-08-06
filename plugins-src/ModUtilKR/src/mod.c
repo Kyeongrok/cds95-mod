@@ -21,6 +21,7 @@ static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"DDrawWrapper",    L"플러그인 로더 + DirectDraw 에뮬레이션. 끄면 나머지가 다 안 뜬다." },
     { L"ModUtilKR",       L"이 창. 어떤 플러그인을 쓸지 고른다." },
     { L"QuestModKR",      L"퀘스트 모드 — mods 폴더의 퀘스트 파일 묶음을 골라 깐다." },
+    { L"UpdateUtilKR",    L"업데이트 — GitHub 릴리즈를 받아 깐다. 옛 판으로 되돌릴 수도 있다." },
     { L"HotelUtilKR",     L"여관 숙박 일수를 직접 입력한다." },
     { L"TradeUtilKR",     L"교역 메뉴 — 시세 일람 / 교역품 관리 / 워프." },
     { L"CharacterUtilKR", L"정보 창 — 항해사 찾기 / 퀘스트 / 소지품 / 여급 / 스폰서 / 도감." },
