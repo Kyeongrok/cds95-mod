@@ -4,8 +4,9 @@
   "Addresses": [
     "0x15E0DC"
   ],
-  "ByteSize": 4,
   "Type": "toggle",
-  "OriginalValue": 2948265407,
-  "PatchedValue": 3501699002
+  "OriginalValue": "웅변",
+  "PatchedValue": "변론",
+  "ValueType": "text",
+  "AutoApply": true
 }

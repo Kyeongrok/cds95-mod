@@ -4,8 +4,9 @@
   "Addresses": [
     "0x161BF7"
   ],
-  "ByteSize": 4,
   "Type": "toggle",
-  "OriginalValue": 3014780859,
-  "PatchedValue": 3014776513
+  "OriginalValue": "사교",
+  "PatchedValue": "주교",
+  "ValueType": "text",
+  "AutoApply": true
 }

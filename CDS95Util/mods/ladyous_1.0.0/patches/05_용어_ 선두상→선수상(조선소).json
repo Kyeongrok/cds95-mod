@@ -17,8 +17,9 @@
     "0x142DBA",
     "0x14DCF7"
   ],
-  "ByteSize": 2,
   "Type": "toggle",
-  "OriginalValue": 52917,
-  "PatchedValue": 63164
+  "OriginalValue": "두",
+  "PatchedValue": "수",
+  "ValueType": "text",
+  "AutoApply": true
 }

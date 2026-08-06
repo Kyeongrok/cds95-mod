@@ -49,6 +49,17 @@ typedef struct {
     int          vmin, vmax;         // 허용 범위. Choices 가 없으면 이 범위에서 목록을 만든다
     long long    originalValue;      // toggle OFF 기록값
     long long    patchedValue;       // toggle ON 기록값
+    // ValueType — 값을 사람이 읽는 대로 적게 하려고 둔다.
+    //   "number"(기본) 그냥 숫자   "text" 한글 그대로("웅변")   "hex" 바이트열("BF F5")
+    // text/hex 는 바이트로 바꿔 넣는다. 4바이트 이하면 위의 정수 자리에 리틀엔디안으로
+    // 담고, 넘으면 Regions[] 로 돌린다(길이 제한이 없는 쪽).
+    int          valKind;            // 0 숫자 1 글자 2 16진수
+    char         rawVal[160], rawOrig[160], rawPatched[160];
+    // OriginalValue 를 안 적은 글자 패치 — "그냥 써라" 라는 뜻이다.
+    //   · 지금 값이 뭐든 확인하지 않고 쓴다(문구 바꾸기는 원본이 자리마다 다를 수 있다.
+    //     실제로 '선두상' 14곳 중 2곳은 원본 EXE 가 이미 '선수상' 이었다)
+    //   · 끌 때는 게임을 켰을 때 그 자리에 있던 바이트(snap)로 되돌린다 — 자리마다 따로.
+    int          noCheck;
     unsigned char snap[MAX_ADDRS][4];// 로드 시 원본 메모리 바이트
     int          mapped[MAX_ADDRS];  // 오프셋→메모리 변환 성공 여부
     int          applied;            // 현재 적용 상태
@@ -177,6 +188,7 @@ static void SnapshotPatch(Patch* p)
 // (number 형은 대조할 원본값이 json 에 없어서 검사하지 않는다.)
 static BOOL ToggleTargetsLookRight(const Patch* p, int* badIdx)
 {
+    if (p->noCheck) return TRUE;         // 원본을 안 적은 문구 패치 — 대조할 것이 없다
     BYTE a[4], b[4];
     int i, k;
     // 바이트열 구간: 지금 바이트가 원본이거나 패치본이어야 한다.
@@ -293,7 +305,7 @@ BOOL Patch_SetApplied(int idx, BOOL on)
         if (on) {
             ValueBytes(p->isToggle ? p->patchedValue : p->value, p->byteSize, bytes);
             WriteMem(m, bytes, p->byteSize);
-        } else if (p->isToggle) {
+        } else if (p->isToggle && !p->noCheck) {
             ValueBytes(p->originalValue, p->byteSize, bytes);
             WriteMem(m, bytes, p->byteSize);
         } else {
@@ -500,6 +512,69 @@ static void ParseRegions(const char** pp, Patch* pt)
     }
 }
 
+// 사람이 적은 값을 바이트로. kind: 1 글자(cp949 로 바꾼다), 2 16진수, 0 자동 판별.
+// 담은 바이트 수를 돌려준다.
+static int ValueToBytes(const char* raw, int kind, unsigned char* out, int cap)
+{
+    wchar_t w[160];
+    int n;
+    if (!raw || !raw[0]) return 0;
+    if (kind == 0) {                     // 안 밝혔으면 16진수처럼 생겼는지 본다
+        const char* q;
+        int hexish = 1;
+        for (q = raw; *q; q++) {
+            if (*q == ' ') continue;
+            if (!((*q >= '0' && *q <= '9') || ((*q | 32) >= 'a' && (*q | 32) <= 'f'))) { hexish = 0; break; }
+        }
+        kind = hexish ? 2 : 1;
+    }
+    if (kind == 2) return HexBytes(raw, out, cap);
+    // 글자 — 게임 글꼴이 cp949 라 그 인코딩으로 넣는다.
+    n = MultiByteToWideChar(CP_UTF8, 0, raw, -1, w, 160);
+    if (n <= 0) return 0;
+    n = WideCharToMultiByte(949, 0, w, -1, (char*)out, cap, NULL, NULL);
+    return n > 0 ? n - 1 : 0;            // 널은 빼고 센다
+}
+
+// ValueType 이 붙은 항목을 실제 값/바이트열로 바꾼다.
+// 원본과 패치본의 길이가 다르면 짧은 쪽을 공백(0x20)으로 채워 맞춘다 — 글자 자리는 폭이
+// 정해져 있어서, 짧게 쓰면 뒤에 옛 글자가 남고 길게 쓰면 옆자리를 먹는다.
+static void ResolveTypedValues(Patch* pt)
+{
+    unsigned char o[MAX_REGION_LEN], q[MAX_REGION_LEN], v[MAX_REGION_LEN];
+    int no, nq, nv, len, i;
+
+    if (!pt->rawOrig[0] && !pt->rawPatched[0] && !pt->rawVal[0]) return;
+    // 원본을 안 적었으면 "그냥 써라" — 대조하지 않고, 끌 때는 스냅샷으로 되돌린다.
+    if (!pt->rawOrig[0] && pt->rawPatched[0]) pt->noCheck = 1;
+    no = ValueToBytes(pt->rawOrig,    pt->valKind, o, MAX_REGION_LEN);
+    nq = ValueToBytes(pt->rawPatched, pt->valKind, q, MAX_REGION_LEN);
+    nv = ValueToBytes(pt->rawVal,     pt->valKind, v, MAX_REGION_LEN);
+    len = no > nq ? no : nq;
+    if (nv > len) len = nv;
+    if (len <= 0) return;
+    for (i = no; i < len; i++) o[i] = 0x20;
+    for (i = nq; i < len; i++) q[i] = 0x20;
+    for (i = nv; i < len; i++) v[i] = 0x20;
+
+    if (len == 1 || len == 2 || len == 4) {      // 정수 자리에 그대로 담긴다
+        pt->byteSize = len;
+        if (no) { pt->originalValue = 0; for (i = len - 1; i >= 0; i--) pt->originalValue = (pt->originalValue << 8) | o[i]; }
+        if (nq) { pt->patchedValue  = 0; for (i = len - 1; i >= 0; i--) pt->patchedValue  = (pt->patchedValue  << 8) | q[i]; }
+        if (nv) { pt->value         = 0; for (i = len - 1; i >= 0; i--) pt->value         = (pt->value         << 8) | v[i]; }
+        return;
+    }
+    // 길면 바이트열 패치로 돌린다. 주소마다 구간 하나씩.
+    for (i = 0; i < pt->naddr && pt->nreg < MAX_REGIONS; i++) {
+        Region* r = &pt->regs[pt->nreg++];
+        r->off = pt->addrs[i];
+        r->len = len;
+        memcpy(r->orig,    no ? o : v, len);
+        memcpy(r->patched, nq ? q : v, len);
+    }
+    pt->naddr = 0;                                // 주소는 구간이 들고 있다
+}
+
 static BOOL ParseObject(const char** pp, Patch* pt)
 {
     char single[64];
@@ -524,9 +599,20 @@ static BOOL ParseObject(const char** pp, Patch* pt)
         else if (lstrcmpA(key, "Addresses") == 0)    { ParseAddresses(pp, pt); }
         else if (lstrcmpA(key, "Regions") == 0)      { ParseRegions(pp, pt); }
         else if (lstrcmpA(key, "ByteSize") == 0)     { pt->byteSize = (int)ParseNumber(pp); }
-        else if (lstrcmpA(key, "Value") == 0)        { pt->value = ParseNumber(pp); }
-        else if (lstrcmpA(key, "OriginalValue") == 0){ pt->originalValue = ParseNumber(pp); }
-        else if (lstrcmpA(key, "PatchedValue") == 0) { pt->patchedValue = ParseNumber(pp); }
+        // 값 셋은 숫자로도, 따옴표 안 글자로도 적을 수 있다. 글자면 그대로 들고 있다가
+        // 아래에서 ValueType 을 보고 바이트로 바꾼다(ValueType 이 뒤에 나올 수 있어서다).
+        else if (lstrcmpA(key, "Value") == 0)        { SkipWS(pp);
+                                                       if (**pp == '"') ParseStringInto(pp, pt->rawVal, sizeof(pt->rawVal));
+                                                       else pt->value = ParseNumber(pp); }
+        else if (lstrcmpA(key, "OriginalValue") == 0){ SkipWS(pp);
+                                                       if (**pp == '"') ParseStringInto(pp, pt->rawOrig, sizeof(pt->rawOrig));
+                                                       else pt->originalValue = ParseNumber(pp); }
+        else if (lstrcmpA(key, "PatchedValue") == 0) { SkipWS(pp);
+                                                       if (**pp == '"') ParseStringInto(pp, pt->rawPatched, sizeof(pt->rawPatched));
+                                                       else pt->patchedValue = ParseNumber(pp); }
+        else if (lstrcmpA(key, "ValueType") == 0)    { char t[16]; ParseStringInto(pp, t, sizeof(t));
+                                                       pt->valKind = (lstrcmpA(t, "text") == 0 || lstrcmpA(t, "글자") == 0) ? 1
+                                                                   : (lstrcmpA(t, "hex")  == 0 || lstrcmpA(t, "16진수") == 0) ? 2 : 0; }
         else if (lstrcmpA(key, "Type") == 0)         { char t[16]; ParseStringInto(pp, t, sizeof(t));
                                                        pt->isToggle = (lstrcmpA(t, "toggle") == 0);
                                                        pt->isChoice = (lstrcmpA(t, "choice") == 0); }
@@ -549,6 +635,7 @@ static BOOL ParseObject(const char** pp, Patch* pt)
             }
         }
         else if (lstrcmpA(key, "AutoApply") == 0)    { SkipWS(pp); pt->autoApply = (**pp == 't'); SkipValue(pp); }
+        else if (lstrcmpA(key, "CheckOriginal") == 0){ SkipWS(pp); pt->noCheck = (**pp == 'f'); SkipValue(pp); }
         else                                         { SkipValue(pp); }
         SkipWS(pp);
         if (**pp == ',') { (*pp)++; continue; }
@@ -559,6 +646,7 @@ static BOOL ParseObject(const char** pp, Patch* pt)
         unsigned int off;
         if (ParseHex(single, &off)) { pt->addrs[0] = off; pt->naddr = 1; }
     }
+    ResolveTypedValues(pt);                     // 한글/16진수로 적은 값을 바이트로
     if (pt->byteSize != 1 && pt->byteSize != 2 && pt->byteSize != 4) pt->byteSize = 1;
     // 값 선택형인데 Min/Max 를 안 적었으면 Choices 범위, 그것도 없으면 바이트 폭 전체로 잡는다.
     if (pt->isChoice && pt->vmin == 0 && pt->vmax == 0) {

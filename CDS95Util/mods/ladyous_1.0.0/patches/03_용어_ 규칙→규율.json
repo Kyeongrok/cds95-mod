@@ -4,8 +4,9 @@
   "Addresses": [
     "0x166610"
   ],
-  "ByteSize": 4,
   "Type": "toggle",
-  "OriginalValue": 2730808497,
-  "PatchedValue": 2998981809
+  "OriginalValue": "규칙",
+  "PatchedValue": "규율",
+  "ValueType": "text",
+  "AutoApply": true
 }
