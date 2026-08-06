@@ -95,3 +95,12 @@ MinHook 기반으로 새 DLL을 처음부터 작성하는 방식이며, 기존 `
 ## 재배포·개조·전재 조건 및 사용 라이브러리
 
 라이선스 및 외부 라이브러리(MinHook, Zip Utils) 관련 내용은 [0.ReadMe.md](0.ReadMe.md)를 참고하세요.
+
+### 함께 담은 퀘스트 모드
+
+`CDS95Util/mods/kseokjeong_quest_mod/`는 kseokjung님이 만드신
+[대3 퀘스트패치 v1.5](https://cafe.naver.com/daehangs)를 그대로 담은 것입니다. 만든 이와
+출처는 해당 폴더의 `mod.txt`에 적어 두었습니다.
+
+게임 원본 이벤트 파일(바닐라)은 담지 않습니다. `QuestModKR`이 처음 실행될 때 각자의 게임
+폴더에서 떠서 `mods/default_quest_mod/`를 만듭니다.

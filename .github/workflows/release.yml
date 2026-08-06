@@ -33,6 +33,8 @@ jobs:
           cp CDS95Util/QuestModKR.plugin dist/CDS95Util/
           # 릴리즈 목록을 받아 골라 까는 창. 문제가 있으면 옛 판으로 되돌린다.
           cp CDS95Util/UpdateUtilKR.plugin dist/CDS95Util/
+          # 퀘스트 모드 묶음. 바닐라는 담지 않는다(게임 자료라 각자 폴더에서 뜬다).
+          cp -r CDS95Util/mods dist/CDS95Util/
           # patches.json 이 없으면 PatchUtilKR 은 아무것도 하지 않으므로 목록도 같이 넣는다.
           cp plugins-src/PatchUtilKR/patches.json dist/CDS95Util/
           cp plugins-src/PatchUtilKR/patches.json.example dist/CDS95Util/

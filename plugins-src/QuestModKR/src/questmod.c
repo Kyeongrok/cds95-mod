@@ -361,6 +361,50 @@ static int FilesOk(const QMod* m)
     return 1;
 }
 
+// 첫 실행 때 mods\default_quest_mod 를 게임 폴더에 깔려 있는 파일로 떠 둔다.
+//
+// 배포판에 원본 이벤트 파일을 담아 돌릴 수는 없다 — 게임 자료다. 대신 각자 깔려 있는 것을
+// 그대로 떠 두면 언제든 돌아갈 자리가 생긴다. 아직 한 번도 갈아 끼운 적이 없을 때
+// (questmod.state 가 없을 때)만 뜬다 — 모드를 깐 뒤에 뜨면 그게 바닐라로 굳어 버린다.
+static void SeedDefaultMod(void)
+{
+    wchar_t mods[MAX_PATH], modDir[MAX_PATH], state[MAX_PATH];
+    wchar_t game[MAX_PATH], src[MAX_PATH], dst[MAX_PATH], txt[MAX_PATH];
+    int i, n = 0;
+
+    StatePath(state);
+    if (FileExists(state)) return;                 // 이미 한 번 갈아 끼운 적이 있다
+    ModsDir(mods);
+    CreateDirectoryW(mods, NULL);
+    JoinPath(modDir, mods, L"default_quest_mod");
+    if (FileExists(modDir)) return;
+    GameDir(game);
+
+    for (i = 0; i < 8; i++) {
+        // .orig 가 있으면 그쪽이 진짜 원본이다(게임이 읽는 .CDS 는 다시 만들어진 것).
+        JoinPath(src, game, kJobFiles[i]); lstrcatW(src, L".orig");
+        if (!FileExists(src)) JoinPath(src, game, kJobFiles[i]);
+        if (!FileExists(src)) continue;
+        if (n == 0) CreateDirectoryW(modDir, NULL);
+        JoinPath(dst, modDir, kJobFiles[i]);
+        if (CopyFileW(src, dst, FALSE)) n++;
+    }
+    if (!n) return;
+
+    JoinPath(txt, modDir, L"mod.txt");
+    {
+        // /utf-8 로 컴파일하므로 이 문자열은 그대로 UTF-8 바이트다.
+        HANDLE h = CreateFileW(txt, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h != INVALID_HANDLE_VALUE) {
+            static const char* s = "깔려 있던 원본 퀘스트 이벤트. 처음 실행할 때 게임 폴더에서 떠 둔 것이다.\n";
+            DWORD put = 0;
+            WriteFile(h, s, (DWORD)lstrlenA(s), &put, NULL);
+            CloseHandle(h);
+        }
+    }
+    LogW(L"[QuestModKR] default_quest_mod 를 게임 폴더에서 떠 뒀습니다 (%d개).", n);
+}
+
 static void Scan(void)
 {
     wchar_t mods[MAX_PATH], pat[MAX_PATH], modDir[MAX_PATH], jsonPath[MAX_PATH], cur[64];
@@ -767,6 +811,7 @@ void QuestModKR_Init(HINSTANCE hinst)
     ic.dwICC = ICC_LISTVIEW_CLASSES;
     InitCommonControlsEx(&ic);
     LogW(L"[QuestModKR] init.");
+    SeedDefaultMod();      // 처음이면 지금 깔려 있는 것을 되돌릴 자리로 떠 둔다
     // 퀘스트 파일을 먼저 제자리에 놔야 CharacterUtilKR 이 그것을 원본으로 잡는다.
     // 그래서 스레드로 미루지 않고 여기서 바로 한다(파일 몇 개 복사라 금방이다).
     ApplyOnStart();
