@@ -50,6 +50,7 @@ int CharDb_PatronFace(int row)   { const PatronRow* p = Patron(row); return p ? 
 int CharDb_PatronGender(int row) { const PatronRow* p = Patron(row); return p ? p->gender : 0; }
 unsigned char CharDb_PatronPrefAt(int row) { const PatronRow* p = Patron(row); return p ? p->pref : 0; }
 const wchar_t* CharDb_PatronName(int row)  { const PatronRow* p = Patron(row); return p ? p->name : L""; }
+const wchar_t* CharDb_PatronCity(int row)  { const PatronRow* p = Patron(row); return p ? p->city : L""; }
 int CharDb_PatronAppear(int row) { const PatronRow* p = Patron(row); return p ? p->appear : 0; }
 
 int CharDb_PatronWealthAt(int row)

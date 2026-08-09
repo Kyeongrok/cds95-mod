@@ -27,6 +27,7 @@ int CharDb_PatronGender(int row);                // 0=남 1=여
 int CharDb_PatronWealthAt(int row);              // 자금. 잘못된 행이면 -1
 unsigned char CharDb_PatronPrefAt(int row);      // 취향 비트마스크
 const wchar_t* CharDb_PatronName(int row);
+const wchar_t* CharDb_PatronCity(int row);       // 후원자가 있는 도시
 int CharDb_PatronAppear(int row);                // 등장연도(관련). EXE 표에서 구운 값
 const wchar_t* CharDb_PrefName(int bit);         // 0 -> "지리" … 7 -> "보물"
 

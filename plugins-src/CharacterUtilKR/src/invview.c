@@ -9,11 +9,18 @@
 // 칸마다 한 줄. 소지 16칸을 먼저 늘어놓고 보관 99칸이 이어진다.
 // 자식 컨트롤은 안 쓴다(게임 DirectDraw 화면 위에서 불안정) — 목록은 직접 그린다.
 
-#define IV_ROW_H   24
-#define IV_ROWS    18
+// 도감처럼 두 열로 늘어놓는다. 한 칸에 그림 80x80 + 이름 + 단추.
+// 창 높이가 634 이고 목록이 121 에서 시작하므로 92x5=460 줄까지 들어간다(= 한 판에 10칸).
+#define IV_COLS    2
+#define IV_CELL_W  ((Q_W - 6) / IV_COLS)      // 358
+#define IV_CELL_H  92
+#define IV_ROWS    5                          // 보이는 줄 수(칸 수는 IV_ROWS * IV_COLS)
+#define IV_PAGE    (IV_ROWS * IV_COLS)
+#define IV_PIC     80                         // 칸 그림. 원본 120x120 을 줄여 그린다
 #define IV_Y       (Q_Y + 30)                 // 위 한 줄은 소지금
-#define IV_LIST_H  (IV_ROW_H * IV_ROWS)
+#define IV_LIST_H  (IV_CELL_H * IV_ROWS)
 #define IV_N       (INV_HELD_N + INV_STORE_N)
+#define IV_LINES   ((IV_N + IV_COLS - 1) / IV_COLS)   // 전체 줄 수(58)
 
 #define DD_ITEM_H  22
 #define DD_COLS    4
@@ -41,6 +48,7 @@ static wchar_t g_useMsg[96] = L"";   // 판 안에서 단추를 누른 결과 �
 static int  g_ddScroll = 0;
 static RECT g_ddRc;
 static wchar_t g_msg[128] = L"";
+static int  g_msgWarn = 0;      // g_msg 가 안 된 일을 알리는 말인가(빨간 글씨)
 
 static const wchar_t* ItemName(int id)
 {
@@ -66,15 +74,29 @@ static RECT RcMoneyBtn(int k)
     r.top = Q_Y + 2; r.bottom = r.top + 22;
     return r;
 }
-static RECT RcRow(int vis)
-{ RECT r; r.left=Q_X; r.right=Q_X+Q_W; r.top=IV_Y+vis*IV_ROW_H; r.bottom=r.top+IV_ROW_H-2; return r; }
+// vis = 화면에 보이는 칸 번호(0 ~ IV_PAGE-1). 왼쪽 위부터 오른쪽으로 채운다.
+static RECT RcCell(int vis)
+{
+    RECT r;
+    r.left = Q_X + (vis % IV_COLS) * (IV_CELL_W + 6);
+    r.right = r.left + IV_CELL_W;
+    r.top = IV_Y + (vis / IV_COLS) * IV_CELL_H;
+    r.bottom = r.top + IV_CELL_H - 4;
+    return r;
+}
+static RECT RcThumb(int vis)
+{ RECT c = RcCell(vis); RECT r; r.left=c.left+5; r.right=r.left+IV_PIC; r.top=c.top+4; r.bottom=r.top+IV_PIC; return r; }
+// 아이템칸(펼치는 목록)은 빈 칸에만 둔다 — 든 칸은 이름을 그대로 적고,
+// 바꾸려면 [판매] 로 비운 뒤 고르면 된다.
 static RECT RcSlot(int vis)
-{ RECT r; r.left=Q_X+120; r.right=r.left+240; r.top=IV_Y+vis*IV_ROW_H+1; r.bottom=r.top+20; return r; }
-static RECT RcClear(int vis)
-{ RECT r; r.left=Q_X+370; r.right=r.left+52; r.top=IV_Y+vis*IV_ROW_H+1; r.bottom=r.top+20; return r; }
-// [비우기] 오른쪽. 줄은 Q_X+Q_W(735)까지 있고 스크롤바는 743부터라 이 자리는 비어 있다.
+{ RECT c = RcCell(vis); RECT r; r.left=c.left+IV_PIC+14; r.right=c.right-8; r.top=c.top+10; r.bottom=r.top+22; return r; }
+static RECT RcSell(int vis)
+{ RECT c = RcCell(vis); RECT r; r.left=c.left+IV_PIC+14; r.right=r.left+52; r.top=c.top+56; r.bottom=r.top+22; return r; }
 static RECT RcDetail(int vis)
-{ RECT r; r.left=Q_X+430; r.right=r.left+52; r.top=IV_Y+vis*IV_ROW_H+1; r.bottom=r.top+20; return r; }
+{ RECT c = RcCell(vis); RECT r; r.left=c.left+IV_PIC+72; r.right=r.left+52; r.top=c.top+56; r.bottom=r.top+22; return r; }
+// [정보] 오른쪽 — 소지 <-> 보관 옮기기.
+static RECT RcMove(int vis)
+{ RECT c = RcCell(vis); RECT r; r.left=c.left+IV_PIC+130; r.right=r.left+86; r.top=c.top+56; r.bottom=r.top+22; return r; }
 static RECT RcItemPanel(void)
 { RECT r; r.left=IP_X; r.right=IP_X+IP_W; r.top=IP_Y; r.bottom=IP_Y+IP_H; return r; }
 static RECT RcItemClose(void)
@@ -92,9 +114,57 @@ static int UseOf(int item)
 static RECT RcTrack(void)
 { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_W; r.top=IV_Y; r.bottom=IV_Y+IV_LIST_H; return r; }
 
-static int MaxScroll(void) { int m = IV_N - IV_ROWS; return m > 0 ? m : 0; }
+static int MaxScroll(void) { int m = IV_LINES - IV_ROWS; return m > 0 ? m : 0; }   // 줄 단위
 static int KindOf(int i)   { return i < INV_HELD_N ? INV_HELD : INV_STORE; }
 static int IndexOf(int i)  { return i < INV_HELD_N ? i : i - INV_HELD_N; }
+
+// 소지 <-> 보관 옮기기. 받는 쪽 첫 빈 칸에 넣고 원래 칸을 비운다.
+// 게임 메모리에 바로 쓰므로 창을 닫아도 그대로다(세이브 파일은 안 건드린다).
+static void MoveSlot(int slot)
+{
+    int from = KindOf(slot), fi = IndexOf(slot);
+    int to   = (from == INV_HELD) ? INV_STORE : INV_HELD;
+    int item = Inv_Get(from, fi), ti;
+
+    if (item < 0) return;
+    ti = Inv_FirstEmpty(to);
+    if (ti < 0) {
+        wsprintfW(g_msg, L"%s이 꽉 찼습니다.", to == INV_STORE ? L"보관함" : L"소지품");
+        g_msgWarn = 1;
+        return;
+    }
+    if (!Inv_Set(to, ti, item) ) { lstrcpyW(g_msg, L"옮기지 못했습니다."); g_msgWarn = 1; return; }
+    Inv_Set(from, fi, INV_EMPTY);
+    wsprintfW(g_msg, L"%s → %s %d칸", ItemName(item), to == INV_STORE ? L"보관" : L"소지", ti + 1);
+    g_msgWarn = 0;
+}
+
+// 판다. 값은 아이템 표의 값B — 286개를 훑어 보면 대개 값A(사는 값)의 절반쯤이고,
+// 향수·상아처럼 교역품에 가까운 것만 값A보다 비싸다. 게임 상점 시세와는 별개로
+// 이 표의 값을 그대로 쳐서 소지금에 더한다.
+static void SellSlot(int slot)
+{
+    int kind = KindOf(slot), idx = IndexOf(slot);
+    int item = Inv_Get(kind, idx), money, price;
+    const ItemRec* rec;
+
+    if (item < 0) return;
+    rec = ItemDb_At(item);
+    if (!rec) {
+        lstrcpyW(g_msg, L"아이템 표를 못 찾아 값을 모릅니다 — 팔지 않았습니다.");
+        g_msgWarn = 1;
+        return;
+    }
+    price = rec->valB;
+    money = Inv_Money();
+    if (money >= 0 && price > 0) {
+        double sum = (double)money + price;      // 9999만을 넘기지 않게
+        Inv_SetMoney(sum > INV_MONEY_MAX ? INV_MONEY_MAX : money + price);
+    }
+    Inv_Set(kind, idx, INV_EMPTY);
+    wsprintfW(g_msg, L"%s 팔았습니다 — %d", ItemName(item), price);
+    g_msgWarn = 0;
+}
 
 static void OpenDrop(int slot, RECT anchor)
 {
@@ -286,39 +356,57 @@ void Inv_Paint(HDC dc)
     UI_Button(dc, RcMoneyBtn(3), L"▶▶", FALSE);
     if (g_msg[0]) {
         RECT m; m.left = Q_X + 350; m.right = Q_X + Q_W; m.top = Q_Y + 2; m.bottom = m.top + 22;
-        UI_Text(dc, m, g_msg, g_smallFont, COL_WARN_TX, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        UI_Text(dc, m, g_msg, g_smallFont, g_msgWarn ? COL_WARN_TX : COL_TEXT,
+                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
 
-    // 칸 목록
-    { int r;
-      for (r = 0; r < IV_ROWS; r++) {
-        int i = g_scroll + r, item;
-        RECT row, lbl;
-        wchar_t name[80];
+    // 칸 — 두 열, 한 칸에 그림 + 이름 + 단추
+    { int v;
+      for (v = 0; v < IV_PAGE; v++) {
+        int i = g_scroll * IV_COLS + v, item;
+        RECT cell, tb, box, t;
+        wchar_t name[96];
         HBRUSH br;
+        const ItemRec* rec;
         if (i >= IV_N) break;
-        row = RcRow(r);
-        if (i & 1) { br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &row, br); DeleteObject(br); }
 
-        lbl = row; lbl.left += 6; lbl.right = lbl.left + 106;
-        if (KindOf(i) == INV_HELD) wsprintfW(name, L"소지 %d", IndexOf(i) + 1);
-        else                       wsprintfW(name, L"보관 %d", IndexOf(i) + 1);
-        UI_Text(dc, lbl, name, g_font,
-                KindOf(i) == INV_HELD ? COL_TEXT : COL_DARK,
-                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        cell = RcCell(v);
+        if ((v / IV_COLS) & 1) { br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &cell, br); DeleteObject(br); }
 
         item = Inv_Get(KindOf(i), IndexOf(i));
-        if (item < 0) lstrcpyW(name, L"(비움)");
-        else          wsprintfW(name, L"%d  %s", item, ItemName(item));
-        UI_Select(dc, RcSlot(r), name, g_open == i);
-        if (item >= 0) {
-            UI_Button(dc, RcClear(r), L"비우기", FALSE);
-            // 그림이 없는 아이템에도 그대로 둔다 — 있다 없다 하면 목록이 들쭉날쭉해진다.
-            UI_Button(dc, RcDetail(r), L"정보", FALSE);
+        rec  = item >= 0 ? ItemDb_At(item) : NULL;
+
+        // 그림. 빈 칸이나 그림 없는 아이템도 액자는 그대로 둔다 —
+        // 있다 없다 하면 칸이 들쭉날쭉해 보인다.
+        tb = RcThumb(v); box = tb;
+        if (!ItemPic_Draw(dc, tb.left, tb.top, IV_PIC, IV_PIC, rec ? rec->pic : -1)) {
+            br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &tb, br); DeleteObject(br);
+            UI_Bevel(dc, tb, TRUE);
         }
+        InflateRect(&box, 1, 1);
+        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &box, br); DeleteObject(br);
+
+        if (item < 0) {
+            // 빈 칸에만 목록을 편다 — 여기서 고르면 그 아이템이 생긴다.
+            UI_Select(dc, RcSlot(v), L"(비움)", g_open == i);
+            continue;
+        }
+
+        t = RcSlot(v);
+        wsprintfW(name, L"%d  %s", item, ItemName(item));
+        UI_Text(dc, t, name, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX|DT_END_ELLIPSIS);
+        t.top += 22; t.bottom += 22;
+        if (rec) wsprintfW(name, L"%s · 팔면 %d", ItemDb_CatName(rec->cat), rec->valB);
+        else     lstrcpyW(name, L"아이템 표를 못 찾았습니다");
+        UI_Text(dc, t, name, g_smallFont, COL_DARK, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+
+        UI_Button(dc, RcSell(v), L"판매", FALSE);
+        // 그림이 없는 아이템에도 그대로 둔다 — 있다 없다 하면 칸이 들쭉날쭉해진다.
+        UI_Button(dc, RcDetail(v), L"정보", FALSE);
+        UI_Button(dc, RcMove(v), KindOf(i) == INV_HELD ? L"보관함 ▶" : L"◀ 소지품", FALSE);
       } }
 
-    UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), IV_ROWS, IV_N);
+    UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), IV_ROWS, IV_LINES);
     PaintDrop(dc);
     if (g_info >= 0) PaintItemPanel(dc, g_info);
 }
@@ -337,7 +425,9 @@ void Inv_Activate(HWND h, int active)
     // 켤 때마다 다시 잡는다 — 세이브를 나중에 불러왔을 수 있다.
     Inv_Load();
     ItemDb_Reset();     // 지난번에 표를 못 찾았어도 다시 해 본다
-    g_open = -1; g_info = -1; g_msg[0] = 0; g_useMsg[0] = 0;
+    ItemDb_Load();      // 줄마다 그림을 그리려면 그림 번호가 필요하다
+    ItemPic_Load();
+    g_open = -1; g_info = -1; g_msg[0] = 0; g_useMsg[0] = 0; g_msgWarn = 0;
     if (g_scroll > MaxScroll()) g_scroll = MaxScroll();
     if (h) InvalidateRect(h, NULL, FALSE);
 }
@@ -391,24 +481,22 @@ int Inv_Click(HWND h, POINT pt)
         return 1;
     }
 
-    { int row;
-      for (row = 0; row < IV_ROWS; row++) {
-        int slot = g_scroll + row;
+    { int v;
+      for (v = 0; v < IV_PAGE; v++) {
+        int slot = g_scroll * IV_COLS + v, item;
         if (slot >= IV_N) break;
-        r = RcSlot(row);
-        if (PtInRect(&r, pt)) { OpenDrop(slot, r); InvalidateRect(h, NULL, FALSE); return 1; }
-        r = RcClear(row);
-        if (PtInRect(&r, pt) && Inv_Get(KindOf(slot), IndexOf(slot)) >= 0) {
-            Inv_Set(KindOf(slot), IndexOf(slot), -1);
-            InvalidateRect(h, NULL, FALSE);
-            return 1;
+        item = Inv_Get(KindOf(slot), IndexOf(slot));
+        if (item < 0) {                      // 빈 칸 — 목록을 펴서 아이템을 고른다
+            r = RcSlot(v);
+            if (PtInRect(&r, pt)) { OpenDrop(slot, r); InvalidateRect(h, NULL, FALSE); return 1; }
+            continue;
         }
-        r = RcDetail(row);
-        if (PtInRect(&r, pt)) {
-            int item = Inv_Get(KindOf(slot), IndexOf(slot));
-            if (item >= 0) { OpenItemInfo(item); InvalidateRect(h, NULL, FALSE); }
-            return 1;
-        }
+        r = RcSell(v);
+        if (PtInRect(&r, pt)) { SellSlot(slot); InvalidateRect(h, NULL, FALSE); return 1; }
+        r = RcDetail(v);
+        if (PtInRect(&r, pt)) { OpenItemInfo(item); InvalidateRect(h, NULL, FALSE); return 1; }
+        r = RcMove(v);
+        if (PtInRect(&r, pt)) { MoveSlot(slot); InvalidateRect(h, NULL, FALSE); return 1; }
       } }
     return 0;
 }

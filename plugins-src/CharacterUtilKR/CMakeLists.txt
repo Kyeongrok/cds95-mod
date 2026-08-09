@@ -21,6 +21,9 @@ add_library(CharacterUtilKR SHARED
     src/faces.c
     src/uikit.c
     src/ls12.c
+    # 탭에 지금 걸린 단축키를 적으려고 hotkeys.json 을 읽는다. 읽는 코드를 복사하면
+    # 한쪽만 고쳐지는 사고가 나므로 HotkeyUtilKR 것을 그대로 같이 빌드한다.
+    ../HotkeyUtilKR/src/hkjson.c
 )
 
 # comdlg32: PNG 파일 고르는 대화상자. gdiplus 는 링크하지 않고 실행 중에 부른다
@@ -31,6 +34,7 @@ target_link_libraries(CharacterUtilKR PRIVATE user32 gdi32 comdlg32)
 # 같은 표를 두 벌 두면 한쪽만 고쳐지는 사고가 나므로 복사하지 않고 참조한다.
 target_include_directories(CharacterUtilKR PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../HotkeyUtilKR/src
 )
 
 # 소스에 한국어(UTF-8) 와이드 문자열 리터럴이 있으므로 MSVC 에 UTF-8 소스로 알려준다.

@@ -8,8 +8,13 @@
 // NAV_Y / NAV_ROW_H / NAV_ROWS / NAV_H / CREW_* 는 ui.h 에 있다 — 창 높이가 그 값에 딸려 있어서다.
 #define NAV_X      (FRAME + GAP)                            // 13
 #define NAV_W      (WIN_W - NAV_X - GAP - SB_W - FRAME)     // 722
-#define ROW_PORT_W 40
-#define ROW_PORT_H 48
+// 초상화는 칸 왼쪽을 세로로 꽉 채운다. 원본이 80x96(5:6)이라 세로를 정하면 가로가 따라온다 —
+// 칸 높이가 98(NAV_ROW_H - 4)이므로 위아래 4px 만 남기고 90, 그러면 가로가 75다.
+#define ROW_PORT_W 75
+#define ROW_PORT_H 90
+// 칸 하나의 폭. 두 열 사이에 6px 을 둔다(ui.h 의 NAV_COLS / NAV_ROW_H 참고).
+#define NAV_CELL_W ((NAV_W - 6) / NAV_COLS)
+#define NAV_LINES  ((g_count + NAV_COLS - 1) / NAV_COLS)   // 전체 줄 수
 
 // 승무원 네 자리 줄 — 275명 + "없음" 중에서 고른다. 목록이 길어 휠로 굴린다.
 #define CR_COLS    2
@@ -193,7 +198,7 @@ static RECT RcLvPanel(void)
     return r;
 }
 
-static int MaxScroll(void) { int m = g_count - NAV_ROWS; return m < 0 ? 0 : m; }
+static int MaxScroll(void) { int m = NAV_LINES - NAV_ROWS; return m < 0 ? 0 : m; }   // 줄 단위
 
 static void AppendSkill(wchar_t* buf, int cap, int id, int lv)
 {
@@ -309,20 +314,30 @@ static void DrawPanel(HDC dc)
     }
 }
 
-// 줄 y 의 생년 상자. 목록 줄 3행 오른쪽, 언어 특기 왼쪽에 놓는다.
-static RECT RcYearBox(int y)
+// 화면에 보이는 v번째 칸(0 ~ NAV_PAGE-1)의 자리. 왼쪽 위부터 오른쪽으로 채운다.
+static RECT RcCell(int v)
 {
     RECT r;
-    r.left = NAV_X + 52 + YR_BOX_X; r.right = r.left + YR_BOX_W;
-    r.top = y + 40; r.bottom = y + 60;
+    r.left = NAV_X + (v % NAV_COLS) * (NAV_CELL_W + 6);
+    r.right = r.left + NAV_CELL_W;
+    r.top = NAV_Y + (v / NAV_COLS) * NAV_ROW_H;
+    r.bottom = r.top + NAV_ROW_H - 4;
     return r;
 }
-// 줄 y 의 [특기] 버튼. 2행(능력치 줄) 오른쪽 끝.
-static RECT RcSkillBtn(int y)
+// 칸의 생년 상자. 넷째 줄(소재) 오른쪽 끝.
+static RECT RcYearBox(RECT cell)
 {
     RECT r;
-    r.right = NAV_X + NAV_W - 6; r.left = r.right - SK_BTN_W;
-    r.top = y + 24; r.bottom = y + 42;
+    r.right = cell.right - 6; r.left = r.right - YR_BOX_W;
+    r.top = cell.top + 59; r.bottom = r.top + 20;
+    return r;
+}
+// 칸의 [특기] 버튼. 둘째 줄(능력치) 오른쪽 끝.
+static RECT RcSkillBtn(RECT cell)
+{
+    RECT r;
+    r.right = cell.right - 6; r.left = r.right - SK_BTN_W;
+    r.top = cell.top + 23; r.bottom = r.top + 18;
     return r;
 }
 
@@ -533,60 +548,65 @@ static void SkillPanelHit(POINT pt, int* id, int* lv)
     *id = i + 1; *lv = k;
 }
 
-static void PaintRow(HDC dc, int y, int ci, const SaveChar* c, int selected)
+static void PaintCell(HDC dc, RECT cell, int ci, const SaveChar* c, int selected)
 {
     RECT r, tr;
     HBRUSH br;
     COLORREF fg = COL_TEXT;
     wchar_t buf[192], gen[128], lang[128];
     int k, poor = (c->fame > MyFame());
-    int tx = NAV_X + 52;
-    int right = NAV_X + NAV_W;
+    int tx = cell.left + ROW_PORT_W + 10;
+    int right = cell.right;
 
-    r.left = NAV_X; r.right = right; r.top = y; r.bottom = y + NAV_ROW_H;
+    r = cell;
     if (selected)   { br = CreateSolidBrush(COL_SEL_BG); fg = RGB(250,244,228); }
     else if (poor)  { br = CreateSolidBrush(COL_WARN_BG); fg = COL_WARN_TX; }
     else            { br = CreateSolidBrush(COL_DISP_BG); }
     FillRect(dc, &r, br); DeleteObject(br);
     br = CreateSolidBrush(COL_DARK); FrameRect(dc, &r, br); DeleteObject(br);
 
-    Face_Draw(dc, NAV_X + 5, y + 8, ROW_PORT_W, ROW_PORT_H, c->faceGender, c->faceCode);
+    Face_Draw(dc, cell.left + 4, cell.top + 4, ROW_PORT_W, ROW_PORT_H, c->faceGender, c->faceCode);
 
     // 1행: 이름 / 명성
-    tr.left = tx; tr.right = right - 150; tr.top = y + 5; tr.bottom = y + 24;
+    tr.left = tx; tr.right = right - 104; tr.top = cell.top + 4; tr.bottom = cell.top + 22;
     UI_Text(dc, tr, c->name, g_font, fg, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
 
     wsprintfW(buf, poor ? L"명성 %d (부족)" : L"명성 %d", c->fame);
-    tr.left = right - 148; tr.right = right - 6;
-    UI_Text(dc, tr, buf, g_font, fg, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    tr.left = right - 102; tr.right = right - 6;
+    UI_Text(dc, tr, buf, g_smallFont, fg, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
-    // 2행: 능력치 + 일반 특기
-    gen[0] = 0;
-    for (k = 1; k < SAVE_SKILL_LANG0; k++)
-        if (c->skill[k]) AppendSkill(gen, 128, k, c->skill[k]);
-    wsprintfW(buf, L"체%d 지%d 무%d 매%d 운%d   %s",
-              c->hp, c->intel, c->str, c->chm, c->luk, gen);
-    tr.left = tx; tr.right = right - 6; tr.top = y + 24; tr.bottom = y + 42;
+    // 2행: 능력치  (오른쪽 끝에 [특기])
+    wsprintfW(buf, L"체%d 지%d 무%d 매%d 운%d",
+              c->hp, c->intel, c->str, c->chm, c->luk);
+    tr.left = tx; tr.right = right - 6; tr.top = cell.top + 23; tr.bottom = cell.top + 41;
     if (LiveSlotOf(ci) >= 0) {                       // 고칠 수 있는 인물만 버튼을 준다
         tr.right = right - SK_BTN_W - 12;
-        UI_Button(dc, RcSkillBtn(y), L"특기", g_open == 4 && g_skChar == ci);
+        UI_Button(dc, RcSkillBtn(cell), L"특기", g_open == 4 && g_skChar == ci);
     }
     UI_Text(dc, tr, buf, g_smallFont, fg, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
 
-    // 3행: 소재 / 건물 / 나이 + [생년] + 언어 특기
+    // 3행: 일반 특기 (초상화 오른쪽 마지막 줄)
+    gen[0] = 0;
+    for (k = 1; k < SAVE_SKILL_LANG0; k++)
+        if (c->skill[k]) AppendSkill(gen, 128, k, c->skill[k]);
+    tr.left = tx; tr.right = right - 6; tr.top = cell.top + 41; tr.bottom = cell.top + 59;
+    UI_Text(dc, tr, gen, g_smallFont, fg, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+
+    // 4행: 소재 / 건물 / 나이 + [생년]   (초상화 아래라 칸 왼쪽 끝부터 쓴다)
     {
         const wchar_t* bn = Save_BuildingName(c->bldg);
         int age = AgeOf(ci), now = NowYear();
         if (bn[0]) wsprintfW(buf, L"%s · %s · %d세", Save_CityName(c->loc), bn, age);
         else       wsprintfW(buf, L"%s · %d세", Save_CityName(c->loc), age);
-        tr.left = tx; tr.right = tx + YR_BOX_X - 6; tr.top = y + 42; tr.bottom = y + 60;
+        tr.left = tx; tr.right = right - YR_BOX_W - 10;
+        tr.top = cell.top + 59; tr.bottom = cell.top + 79;
         UI_Text(dc, tr, buf, g_smallFont, fg, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
 
         // 나이는 해가 바뀌면 오르므로 (지금연도 - 나이) 가 곧 생년이다. 등장연도가 아니다 —
         // 인물은 18세가 되어야 술집에 나오니 등장은 생년 + 18 쯤이 된다(IsGray 가 18세
         // 미만을 접어 두는 것도 같은 이유). 여급 표(maids.c)의 값도 같은 뜻이다.
         if (now) {
-            RECT yb = RcYearBox(y);
+            RECT yb = RcYearBox(cell);
             wchar_t ys[24];
             wsprintfW(ys, L"생년 %d", now - age);
             if (LiveSlotOf(ci) >= 0)
@@ -598,11 +618,13 @@ static void PaintRow(HDC dc, int y, int ci, const SaveChar* c, int selected)
             }
         }
     }
+    // 5행: 언어 특기
     lang[0] = 0;
     for (k = SAVE_SKILL_LANG0; k <= SAVE_SKILL_MAX; k++)
         if (c->skill[k]) AppendSkill(lang, 128, k, c->skill[k]);
     if (lang[0]) {
-        tr.left = tx + YR_BOX_X + YR_BOX_W + 6; tr.right = right - 6;
+        tr.left = tx; tr.right = right - 6;
+        tr.top = cell.top + 78; tr.bottom = cell.bottom - 2;
         UI_Text(dc, tr, lang, g_smallFont, selected ? fg : COL_LANG_TX,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
     }
@@ -664,13 +686,13 @@ void Nav_Paint(HDC dc)
         return;
     }
 
-    for (r = 0; r < NAV_ROWS; r++) {
-        int i = g_scroll + r;
+    for (r = 0; r < NAV_PAGE; r++) {
+        int i = g_scroll * NAV_COLS + r;
         if (i >= g_count) break;
-        PaintRow(dc, NAV_Y + r * NAV_ROW_H, g_list[i], &g_save.chars[g_list[i]], i == g_sel);
+        PaintCell(dc, RcCell(r), g_list[i], &g_save.chars[g_list[i]], i == g_sel);
     }
 
-    UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), NAV_ROWS, g_count);
+    UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), NAV_ROWS, NAV_LINES);
     DrawPanel(dc);        // 목록 위에 덮어 그린다
     DrawSkillPanel(dc);
     DrawCrewPanel(dc);
@@ -805,11 +827,16 @@ int Nav_Click(HWND h, POINT pt)
     }
 
     if (pt.x >= NAV_X && pt.x < NAV_X + NAV_W && pt.y >= NAV_Y && pt.y < NAV_Y + NAV_H) {
-        int i = g_scroll + (pt.y - NAV_Y) / NAV_ROW_H;
+        int line = (pt.y - NAV_Y) / NAV_ROW_H;
+        int col  = (pt.x - NAV_X) / (NAV_CELL_W + 6);
+        int v, i;
+        if (col >= NAV_COLS) col = NAV_COLS - 1;
+        v = line * NAV_COLS + col;
+        i = g_scroll * NAV_COLS + v;
         if (i < g_count) {
-            // 그 줄의 생년 상자 / [특기] 버튼(실행 중 배열에서 짝을 찾은 인물만).
-            int ry = NAV_Y + (i - g_scroll) * NAV_ROW_H;
-            RECT yb = RcYearBox(ry), sb = RcSkillBtn(ry);
+            // 그 칸의 생년 상자 / [특기] 버튼(실행 중 배열에서 짝을 찾은 인물만).
+            RECT cell = RcCell(v);
+            RECT yb = RcYearBox(cell), sb = RcSkillBtn(cell);
             int ci = g_list[i];
             if (LiveSlotOf(ci) >= 0) {
                 if (PtInRect(&yb, pt)) { OpenYearPanel(ci, yb); InvalidateRect(h,NULL,FALSE); return 1; }

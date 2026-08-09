@@ -35,9 +35,12 @@
 // 목록이 그만큼 내려간다. 창 높이는 두 탭 중 더 큰 쪽에 맞춘다.
 #define CREW_H    28
 #define CREW_Y    (FRAME + TITLE_H + TAB_H + FILTER_H + 1)
-#define NAV_ROW_H 64
-#define NAV_ROWS  8
-#define NAV_H     (NAV_ROW_H * NAV_ROWS)                                   // 512
+// 소지품처럼 두 열로 늘어놓는다 — 한 칸에 초상화 + 이름·명성 + 능력치 + 특기 + 소재 + 언어.
+#define NAV_COLS  2
+#define NAV_ROW_H 102
+#define NAV_ROWS  5                                                        // 보이는 줄 수
+#define NAV_PAGE  (NAV_ROWS * NAV_COLS)                                    // 한 판에 10명
+#define NAV_H     (NAV_ROW_H * NAV_ROWS)                                   // 510
 #define NAV_Y     (FRAME + TITLE_H + TAB_H + FILTER_H + CREW_H + 6)        // 119
 
 // ---- 퀘스트 탭 ----

@@ -94,3 +94,29 @@ int Patron_SetYear(int row, int year)
     VirtualProtect(p, sizeof(int), old, &old);
     return 1;
 }
+
+// ---- 실행 중에만 있는 값(친밀도 · 자금) ----
+// EXE 표(.rdata)가 아니라 .data 뒷부분이라 세이브를 불러와야 생긴다. 읽기 전에 확인한다.
+static const int* LiveField(int row, int off)
+{
+    const unsigned char* base = (const unsigned char*)GetModuleHandleW(NULL);
+    const unsigned char* p;
+    if (!base || row < 0 || row >= PATRON_COUNT) return NULL;
+    p = base + PATRON_LIVE_RVA + (unsigned)row * PATRON_LIVE_SZ + off;
+    return Readable(p, sizeof(int)) ? (const int*)p : NULL;
+}
+
+int Patron_Intimacy(int row)
+{
+    const int* p = LiveField(row, 0);
+    if (!p) return -1;
+    // 세이브 전에는 커밋만 돼 있고 값이 안 채워진 자리라 말이 안 되는 수가 나온다.
+    return (*p >= 0 && *p <= 1000) ? *p : -1;
+}
+
+int Patron_Money(int row)
+{
+    const int* p = LiveField(row, 4);
+    if (!p) return -1;
+    return (*p >= 0) ? *p : -1;
+}

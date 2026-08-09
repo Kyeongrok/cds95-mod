@@ -86,7 +86,11 @@ int ItemPic_Draw(HDC dc, int x, int y, int w, int h, int pic)
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 24;
     bi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(dc, COLORONCOLOR);
+    // 줄여 그릴 때(소지품 줄의 작은 그림)는 HALFTONE 으로 섞어야 알아볼 수 있다 —
+    // COLORONCOLOR 는 점을 버리기만 해서 1/5 로 줄이면 형체가 안 남는다.
+    // 늘릴 때는 그대로 COLORONCOLOR — 원본 도트가 살아 있는 편이 이 그림들에 맞는다.
+    if (w < ITEMPIC_W || h < ITEMPIC_H) { SetStretchBltMode(dc, HALFTONE); SetBrushOrgEx(dc, 0, 0, NULL); }
+    else SetStretchBltMode(dc, COLORONCOLOR);
     StretchDIBits(dc, x, y, w, h, 0, 0, ITEMPIC_W, ITEMPIC_H, g_rgb, &bi, DIB_RGB_COLORS, SRCCOPY);
     return 1;
 }

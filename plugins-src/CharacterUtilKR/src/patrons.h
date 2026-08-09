@@ -38,4 +38,13 @@ int Patron_Ready(void);
 int Patron_Find(int gender, int face);
 
 int Patron_Year(int row);                  // 등장연도. 실패하면 0
+
+// 주인공과의 친밀도. 이 값은 EXE 표가 아니라 실행 중에만 생기는 자리에 있다 —
+// 세이브를 불러오기 전에는 못 읽는다(그때는 -1).
+//   모듈 + 0x229AF8 + row*0x48   (+0x04 자금, +0x08 인식, +0x10 남은일수)
+//   ce/CDS_95.CT "후원자 정보" 의 친밀도 81개가 이 규칙에 하나도 안 어긋난다.
+#define PATRON_LIVE_RVA 0x229AF8u
+#define PATRON_LIVE_SZ  0x48
+int Patron_Intimacy(int row);              // 못 읽으면 -1
+int Patron_Money(int row);                 // 지금 자금. 못 읽으면 -1
 int Patron_SetYear(int row, int year);     // 로드된 EXE 이미지에 직접 쓴다(파일은 그대로). 성공 1

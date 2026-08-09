@@ -10,6 +10,7 @@
 #include "invview.h"
 #include "playerview.h"
 #include "questdb.h"     // Quest_Init — 창을 열기 전에 quests.json 을 반영해야 한다
+#include "hkjson.h"      // HotkeyUtilKR/src — 탭에 적을 단축키를 hotkeys.json 에서 읽는다
 #include <windowsx.h>
 
 // fb15/fb16: 인물(얼굴) 코드 브라우저 — 갤러리(2열, 스크롤) + 남/여/카테고리 필터.
@@ -58,6 +59,7 @@ static int     g_gender = FACE_MALE;  // [도감] 탭에서만 쓴다. [여급] 
 static int     g_scroll = 0;   // 맨 위에 보이는 행
 static int     g_catFilter = 0;// 0=전체 1=인물 4=기타 (여급·스폰서는 독립 탭으로 뺐다)
 static int     g_prefFilter = 0; // 스폰서 취향 추리기. 0=전체, 그 밖은 (취향비트 + 1)
+static int     g_pcityFilter = 0; // 스폰서 도시 추리기. 0=전체, 그 밖은 (도시목록 색인 + 1)
 // 스폰서 정렬. 0=자금 많은 순(기본) 1=자금 적은 순 2=얼굴코드 순
 #define SORT_N 3
 static int     g_sponsorSort = 0;
@@ -92,6 +94,25 @@ static void Emit(int face, int maid, int patron)
     g_filtCount++;
 }
 
+// 후원자가 실제로 있는 도시만 모은다(226개 중 36곳). 표에 나온 차례대로 담는다 —
+// 나라별로 뭉쳐 있어 그대로가 보기 좋다.
+#define PCITY_MAX 96
+static const wchar_t* g_pcity[PCITY_MAX];
+static int g_pcityN = 0;
+
+static void BuildPatronCities(void)
+{
+    int i, k;
+    if (g_pcityN) return;
+    for (i = 0; i < CharDb_PatronCount(); i++) {
+        const wchar_t* c = CharDb_PatronCity(i);
+        if (!c || !c[0]) continue;
+        for (k = 0; k < g_pcityN; k++) if (!lstrcmpW(g_pcity[k], c)) break;
+        if (k == g_pcityN && g_pcityN < PCITY_MAX) g_pcity[g_pcityN++] = c;
+    }
+}
+static const wchar_t* PCityText(int i) { return i == 0 ? L"(도시 전체)" : g_pcity[i - 1]; }
+
 // 현재 탭에 맞는 항목 목록을 g_filt 에 채운다.
 // [여급]/[스폰서] 는 EXE 표를 행 순서대로 펼친다(얼굴을 나눠 쓰는 사람들이 따로 나온다).
 // [도감] 은 얼굴코드 한 개가 한 칸인 얼굴 카탈로그다.
@@ -102,8 +123,10 @@ static void RebuildFilter(void)
     if (g_tab == TAB_MAID) {
         for (i = 0; i < Maid_Count(); i++) Emit(Maid_At(i)->face, i, -1);
     } else if (g_tab == TAB_PATRON) {
+        BuildPatronCities();
         for (i = 0; i < CharDb_PatronCount(); i++) {
             if (g_prefFilter > 0 && !(CharDb_PatronPrefAt(i) >> (g_prefFilter - 1) & 1)) continue;
+            if (g_pcityFilter > 0 && lstrcmpW(CharDb_PatronCity(i), g_pcity[g_pcityFilter - 1])) continue;
             Emit(CharDb_PatronFace(i), -1, i);
         }
         // 자금으로 줄 세운다. 자금을 모르는 후원자(-1)는 늘 맨 뒤로.
@@ -163,6 +186,33 @@ static const struct { int id; const wchar_t* label; int w; } kTabs[] = {
 };
 #define TAB_N ((int)(sizeof(kTabs)/sizeof(kTabs[0])))
 
+// 탭 단추에 지금 걸린 단축키를 함께 적는다 — "스폰서(P)".
+// HotkeyUtilKR 이 쓰는 CDS95Util\hotkeys.json 을 그대로 읽는다. 기능 이름이 탭 이름과
+// 같아서(정보 · 스폰서 · 교역품 …) 이름만 대면 된다. 그 플러그인이 없으면 파일도 없고,
+// 그때는 예전처럼 이름만 나온다. 창을 열 때마다 다시 읽으므로 키를 바꾸면 바로 따라온다.
+static wchar_t g_tabKey[TAB_N][8];
+
+static void LoadTabKeys(void)
+{
+    wchar_t* buf;
+    int i;
+    for (i = 0; i < TAB_N; i++) g_tabKey[i][0] = 0;
+    buf = HkJson_Read(g_hinst);
+    if (!buf) return;
+    for (i = 0; i < TAB_N; i++)
+        HkJson_KeyOf(buf, kTabs[i].label, g_tabKey[i], 8);
+    HkJson_Free(buf);
+}
+
+// 단추에 적을 글. 키가 걸려 있으면 "스폰서(P)".
+static const wchar_t* TabLabel(int i)
+{
+    static wchar_t t[40];
+    if (!g_tabKey[i][0]) return kTabs[i].label;
+    wsprintfW(t, L"%s(%s)", kTabs[i].label, g_tabKey[i]);
+    return t;
+}
+
 static RECT TabRectAt(int i)
 {
     RECT r; int k, x = 13;
@@ -190,6 +240,8 @@ static RECT SbTrack(void)    { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_
 #define DROP_PREF 4
 //   DROP_PYEAR 스폰서 등장연도 — 여급 생년과 같은 격자를 쓰되 기준연도만 다르다
 #define DROP_PYEAR 5
+//   DROP_PCITY 스폰서 도시 추리기 — 226개 전부가 아니라 후원자가 실제로 있는 36곳만 담는다
+#define DROP_PCITY 6
 
 #define DD_ITEM_H 22
 
@@ -221,6 +273,7 @@ static int DropItemCount(int kind)
            kind == DROP_LANG ? MAID_LANG_N :
            kind == DROP_CITY ? Maid_CityCount() :
            kind == DROP_PREF ? (CHARDB_PREF_N + 1) :
+           kind == DROP_PCITY ? (g_pcityN + 1) :
            kind == DROP_PYEAR ? PATRON_YEAR_N : 0;
 }
 static void DropGeom(int kind, int* cols, int* rows, int* iw)
@@ -229,6 +282,8 @@ static void DropGeom(int kind, int* cols, int* rows, int* iw)
                                 { *cols=YR_COLS; *rows=YR_ROWS; *iw=YR_ITEM_W; }
     else if (kind == DROP_LANG) { *cols=LG_COLS; *rows=LG_ROWS; *iw=LG_ITEM_W; }
     else if (kind == DROP_PREF) { *cols=PF_COLS; *rows=PF_ROWS; *iw=PF_ITEM_W; }
+    // 스폰서 도시는 36곳 + (전체) — 3열 13행이면 스크롤 없이 한 판에 들어간다.
+    else if (kind == DROP_PCITY){ *cols=3; *rows=13; *iw=110; }
     else                        { *cols=CT_COLS; *rows=CT_ROWS; *iw=CT_ITEM_W; }
 }
 
@@ -236,6 +291,8 @@ static void DropGeom(int kind, int* cols, int* rows, int* iw)
 static const wchar_t* PrefText(int i) { return i == 0 ? L"(전체)" : CharDb_PrefName(i - 1); }
 static RECT PrefRect(void) { RECT r; r.left=FRAME+56;  r.right=r.left+100; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
 static RECT SortRect(void) { RECT r; r.left=FRAME+164; r.right=r.left+70;  r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+static RECT PCityRect(void){ RECT r; r.left=FRAME+242; r.right=r.left+110; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+
 static int DropTotalRows(int kind)
 {
     int cols, rows, iw;
@@ -321,6 +378,9 @@ static void PaintDropPanel(HDC dc)
         if (g_drop == DROP_PREF) {
             cur = (i == g_prefFilter);
             label = PrefText(i);
+        } else if (g_drop == DROP_PCITY) {
+            cur = (i == g_pcityFilter);
+            label = PCityText(i);
         } else if (g_drop == DROP_PYEAR) {
             cur = (PATRON_YEAR_MIN + i == Patron_Year(g_dropRow));
             wsprintfW(buf, L"%d", PATRON_YEAR_MIN + i);
@@ -448,6 +508,8 @@ static void PaintGallery(HDC dc)
         UI_Text(dc, ir, L"취향", g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         UI_Select(dc, PrefRect(), PrefText(g_prefFilter), g_drop == DROP_PREF);
         UI_Button(dc, SortRect(), kSortBtn[g_sponsorSort], g_sponsorSort != 2);
+        // 도시 — 226개가 아니라 후원자가 실제로 있는 곳만 담는다(36곳).
+        UI_Select(dc, PCityRect(), PCityText(g_pcityFilter), g_drop == DROP_PCITY);
     } else {
         UI_Button(dc, MaleRect(),   L"남", g_gender==FACE_MALE);
         UI_Button(dc, FemaleRect(), L"여", g_gender==FACE_FEMALE);
@@ -499,6 +561,9 @@ static void PaintGallery(HDC dc)
                 b2=CreateSolidBrush(COL_DARK); FrameRect(dc,&lr,b2); DeleteObject(b2); }
               // 혈액형은 못 고치는 값이라 머리글에 붙여 아래 두 줄을 편집용으로 비운다.
               if (m) wsprintfW(hd, L"%s  #%d · %s형", nm[0]?nm:L"(무명)", face, Maid_BloodName(m->blood));
+              else if (prow >= 0 && Patron_Intimacy(prow) >= 0)
+                     // 친밀도는 실행 중에만 있는 값이라 세이브를 불러오기 전에는 빠진다.
+                     wsprintfW(hd, L"%s  #%d · 친밀 %d", nm[0]?nm:L"(무명)", face, Patron_Intimacy(prow));
               else   wsprintfW(hd, L"%s  #%d", nm[0]?nm:L"(무명)", face);
               lr.left=ix+2; lr.right=ix+INFO_W-2; lr.top=y+3; lr.bottom=y+20;
               UI_Text(dc, lr, hd, g_font, COL_TEXT, DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
@@ -566,7 +631,7 @@ static void OnPaint(HWND h)
     UI_Button(dc, CloseRect(rc), L"×", FALSE);
 
     { int i; for (i = 0; i < TAB_N; i++)
-        UI_Button(dc, TabRectAt(i), kTabs[i].label, g_tab == kTabs[i].id); }
+        UI_Button(dc, TabRectAt(i), TabLabel(i), g_tab == kTabs[i].id); }
 
     if      (g_tab == TAB_NAV)    Nav_Paint(dc);
     else if (g_tab == TAB_QUEST)  Quest_Paint(dc);
@@ -687,6 +752,7 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                     if      (kind == DROP_YEAR)  { Maid_SetYear(row, MAID_YEAR_MIN + i);        CharState_Save(g_hinst); }
                     else if (kind == DROP_CITY)  { Maid_SetCity(row, i);                        CharState_Save(g_hinst); }
                     else if (kind == DROP_PYEAR) { Patron_SetYear(row, PATRON_YEAR_MIN + i);    CharState_Save(g_hinst); }
+                    else if (kind == DROP_PCITY) { g_pcityFilter = i; RebuildFilter(); }
                     else    { g_prefFilter = i; RebuildFilter(); }
                 }
             }
@@ -719,6 +785,8 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
                   if (PtInRect(&r,pt)) {   // 자금↓ -> 자금↑ -> 번호순 -> 자금↓
                       g_sponsorSort = (g_sponsorSort + 1) % SORT_N;
                       RebuildFilter(); InvalidateRect(h,NULL,FALSE); return 0; } }
+                { RECT r=PCityRect();
+                  if (PtInRect(&r,pt)) { BuildPatronCities(); OpenDrop(h, DROP_PCITY, -1, r); return 0; } }
 #if CHARKR_EDIT_PATRON_YEAR
                 // 스폰서 칸의 등장연도 상자
                 { int cx, cy, gi = CellHit(pt, &cx, &cy);
@@ -817,6 +885,7 @@ void CharKR_ShowWindow(HWND owner, HINSTANCE hinst)
         y = orc.top  + ((orc.bottom-orc.top)-WIN_H)/2;
         if (x < 0) x = 0; if (y < 0) y = 0;
     }
+    LoadTabKeys();      // 탭에 적을 단축키 — 창을 열 때마다 다시 읽어 바뀐 키가 바로 보이게
     g_wnd = CreateWindowExW(0, WC_CHAR, L"정보", WS_POPUP, x, y, WIN_W, WIN_H, owner, NULL, hinst, NULL);
     if (g_wnd) {
 #if CHARKR_SHOW_NAV_TAB
