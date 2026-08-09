@@ -1,6 +1,13 @@
 add_library(HotkeyUtilKR SHARED
     src/dllmain.c
     src/hotkey.c
+    src/hkjson.c        # hotkeys.json 읽기. CharacterUtilKR 도 이 파일을 같이 빌드한다
+    # 창은 다른 KR 창들과 같은 세피아 판이다 — 그리기 도구를 복사하지 않고 원본을 같이 빌드한다.
+    ../CharacterUtilKR/src/uikit.c
+)
+
+target_include_directories(HotkeyUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src
 )
 
 # 후킹이 없어 minhook 은 안 쓴다 — 키는 WH_KEYBOARD(user32) 로 잡는다.

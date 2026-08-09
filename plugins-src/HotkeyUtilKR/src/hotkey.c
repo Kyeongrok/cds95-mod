@@ -1,6 +1,9 @@
 #include <windows.h>
 #include "hotkey.h"
 #include "actions.h"
+#include "hkjson.h"   // hotkeys.json 읽기 — 인물 창도 같은 것을 쓴다
+#include "uikit.h"    // CharacterUtilKR/src — 세피아 색표와 위젯을 그대로 나눠 쓴다
+#include <windowsx.h>
 
 // HotkeyUtilKR — 글자 한 개로 KR 플러그인 창을 연다. (hotkey.h 의 설명 참고)
 //
@@ -19,21 +22,10 @@
                                  // Patch=0xB500, Map=0xB600, Mod=0xB700, QMod=0xB800,
                                  // Upd=0xB900, Fatigue=0xBA00 과 안 겹치게.
 
-#define ID_LIST    1101
-#define ID_ENABLE  1102
-#define ID_RESET   1103
-#define ID_STATUS  1104
-#define ID_HELP    1105
-
 #define WC_HOTKEY  L"HotkeyUtilKR_Window"
-#define CLIENT_W   392
-#define CLIENT_H   470
-#define LIST_H     318
 
 static HINSTANCE g_hinst = NULL;
-static HWND      g_wnd = NULL, g_list = NULL;
-static HFONT     g_font = NULL;
-static WNDPROC   g_listProc = NULL;
+static HWND      g_wnd = NULL;
 static HWND      g_gameHwnd = NULL, g_subHwnd = NULL;
 static WNDPROC   g_origProc = NULL;
 static HHOOK     g_hook = NULL;
@@ -82,75 +74,7 @@ static int KeyFromName(const wchar_t* s)
 }
 
 // ------------------------------------------------------------------ hotkeys.json
-
-// 플러그인이 CDS95Util\plugins\<만든이>\ 에 있으면 데이터는 그 위 CDS95Util 에 있다
-// (charstate.c · questjson.c 와 같은 관용구 — 만든이별로 폴더를 나눠도 자료는 한 자리다).
-static void UpToDataDir(wchar_t* dir)
-{
-    wchar_t tmp[MAX_PATH];
-    int n, i, cut2 = -1, cut1 = -1;
-    lstrcpynW(tmp, dir, MAX_PATH);
-    n = lstrlenW(tmp);
-    if (n && tmp[n-1] == L'\\') tmp[--n] = 0;
-    for (i = n - 1; i >= 0; i--) {
-        if (tmp[i] != L'\\') continue;
-        if (cut2 < 0) cut2 = i;
-        else { cut1 = i; break; }
-    }
-    if (cut1 < 0 || cut2 <= cut1) return;
-    tmp[cut2] = 0;
-    if (lstrcmpiW(tmp + cut1 + 1, L"plugins") != 0) return;
-    tmp[cut1 + 1] = 0;
-    lstrcpyW(dir, tmp);
-}
-
-static void JsonPath(wchar_t* out, int cch)
-{
-    wchar_t* q;
-    wchar_t* slash = out;
-    GetModuleFileNameW(g_hinst, out, cch);
-    for (q = out; *q; q++) if (*q == L'\\' || *q == L'/') slash = q;
-    slash[1] = 0;
-    UpToDataDir(out);
-    lstrcatW(out, L"hotkeys.json");
-}
-
-// 파일을 통째로 읽어 와이드 문자열로. 없으면 NULL. 부른 쪽이 HeapFree.
-static wchar_t* ReadWholeW(const wchar_t* path)
-{
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-    DWORD sz, got = 0;
-    char* raw; wchar_t* w; int n; const char* p;
-    if (h == INVALID_HANDLE_VALUE) return NULL;
-    sz = GetFileSize(h, NULL);
-    if (sz == INVALID_FILE_SIZE || sz > 256u * 1024) { CloseHandle(h); return NULL; }
-    raw = (char*)HeapAlloc(GetProcessHeap(), 0, sz + 1);
-    if (!raw) { CloseHandle(h); return NULL; }
-    if (!ReadFile(h, raw, sz, &got, NULL)) { HeapFree(GetProcessHeap(), 0, raw); CloseHandle(h); return NULL; }
-    raw[got] = 0;
-    CloseHandle(h);
-    p = raw;
-    if (got >= 3 && (unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF)
-        p += 3;                                   // UTF-8 BOM
-    n = MultiByteToWideChar(CP_UTF8, 0, p, -1, NULL, 0);
-    w = n > 0 ? (wchar_t*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)n * sizeof(wchar_t)) : NULL;
-    if (w) MultiByteToWideChar(CP_UTF8, 0, p, -1, w, n);
-    HeapFree(GetProcessHeap(), 0, raw);
-    return w;
-}
-
-// p 가 가리키는 곳에서 다음 "따옴표 문자열"을 읽어 out 에 담고, 닫는 따옴표 다음을 돌려준다.
-// 문자열이 더 없으면 NULL. 이스케이프는 다루지 않는다 — 기능 이름과 키 이름뿐이라 쓸 일이 없다.
-static const wchar_t* NextString(const wchar_t* p, wchar_t* out, int cch)
-{
-    int i = 0;
-    while (*p && *p != L'"') { if (*p == L'}') return NULL; p++; }
-    if (!*p) return NULL;
-    p++;
-    while (*p && *p != L'"') { if (i < cch - 1) out[i++] = *p; p++; }
-    out[i] = 0;
-    return *p ? p + 1 : NULL;
-}
+// 읽기는 hkjson.c 가 한다(인물 창도 같은 파일을 읽어야 해서 따로 뺐다). 쓰기는 여기서만 한다.
 
 static void LoadDefaults(void)
 {
@@ -159,55 +83,25 @@ static void LoadDefaults(void)
     g_enabled = 1;
 }
 
-static void LoadJson(void)
+// 파일이 있으면 그대로, 없으면 기본값. 파일이 없었으면 0 을 돌려준다(부른 쪽이 한 벌 써 둔다 —
+// 인물 창이 탭에 키를 적으려면 이 파일이 있어야 한다).
+static int LoadJson(void)
 {
-    wchar_t path[MAX_PATH], name[64], val[16];
     wchar_t* buf;
-    const wchar_t* p;
+    wchar_t val[16];
     int i;
 
     LoadDefaults();
     g_loaded = 1;
-    JsonPath(path, MAX_PATH);
-    buf = ReadWholeW(path);
-    if (!buf) return;                              // 파일이 없으면 기본값 그대로
+    buf = HkJson_Read(g_hinst);
+    if (!buf) return 0;
 
-    // "Enabled": true / false
-    for (p = buf; *p; p++) {
-        wchar_t k[16]; int j = 0; const wchar_t* q;
-        if (*p != L'"') continue;
-        q = p + 1;
-        while (*q && *q != L'"' && j < 15) k[j++] = *q++;
-        k[j] = 0;
-        if (lstrcmpiW(k, L"Enabled")) continue;
-        while (*q && *q != L':') q++;
-        while (*q == L':' || *q == L' ' || *q == L'\t' || *q == L'\r' || *q == L'\n') q++;
-        g_enabled = (*q == L'f' || *q == L'F' || *q == L'0') ? 0 : 1;
-        break;
-    }
-
-    // "Keys" 다음의 { } 안에서 "이름": "키" 짝을 훑는다.
-    for (p = buf; *p; p++) {
-        wchar_t k[16]; int j = 0; const wchar_t* q;
-        if (*p != L'"') continue;
-        q = p + 1;
-        while (*q && *q != L'"' && j < 15) k[j++] = *q++;
-        k[j] = 0;
-        if (!lstrcmpiW(k, L"Keys")) { p = q; break; }
-    }
-    if (!*p) { HeapFree(GetProcessHeap(), 0, buf); return; }
-    while (*p && *p != L'{') p++;
-    if (*p) p++;
-
-    for (;;) {
-        p = NextString(p, name, 64);
-        if (!p) break;
-        p = NextString(p, val, 16);
-        if (!p) break;
-        for (i = 0; i < ACT_N; i++)
-            if (!lstrcmpW(kActions[i].name, name)) { g_key[i] = KeyFromName(val); break; }
-    }
-    HeapFree(GetProcessHeap(), 0, buf);
+    g_enabled = HkJson_Enabled(buf);
+    for (i = 0; i < ACT_N; i++)
+        if (HkJson_KeyOf(buf, kActions[i].name, val, 16))
+            g_key[i] = KeyFromName(val);          // 적혀 있으면 그 값(빈 값이면 떼 놓은 것 = 0)
+    HkJson_Free(buf);
+    return 1;
 }
 
 static void AppendUtf8(char* buf, int cap, int* len, const wchar_t* s)
@@ -238,7 +132,7 @@ static void SaveJson(void)
     }
     AppendUtf8(buf, sizeof(buf), &len, L"  }\r\n}\r\n");
 
-    JsonPath(path, MAX_PATH);
+    HkJson_Path(g_hinst, path, MAX_PATH);
     h = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) { LogW(L"[HotkeyUtilKR] hotkeys.json 을 쓰지 못했습니다."); return; }
     WriteFile(h, buf, (DWORD)len, &wr, NULL);
@@ -284,28 +178,34 @@ static LRESULT CALLBACK KeyHook(int code, WPARAM wp, LPARAM lp)
 }
 
 // ------------------------------------------------------------------ 창
+//
+// 게임 위에 뜨는 다른 KR 창들과 같은 세피아 판이다 — CharacterUtilKR 의 uikit.c 를 그대로
+// 같이 빌드해 색·글꼴·위젯을 나눠 쓴다. 자식 컨트롤(LISTBOX/BUTTON)은 쓰지 않고 직접
+// 그린다(게임 DirectDraw 화면 위에서 자식 컨트롤이 불안정했다 — uikit.h 참고).
+// 창 자신이 초점을 들고 있어 누른 키는 WM_KEYDOWN 으로 바로 받는다.
 
-static void Refresh(void)
-{
-    wchar_t line[128], key[16];
-    int i, sel;
-    if (!g_list) return;
-    sel = (int)SendMessageW(g_list, LB_GETCURSEL, 0, 0);
-    SendMessageW(g_list, WM_SETREDRAW, FALSE, 0);
-    SendMessageW(g_list, LB_RESETCONTENT, 0, 0);
-    for (i = 0; i < ACT_N; i++) {
-        KeyName(g_key[i], key, 16);
-        wsprintfW(line, L"%s\t%s", kActions[i].name, key);
-        SendMessageW(g_list, LB_ADDSTRING, 0, (LPARAM)line);
-    }
-    SendMessageW(g_list, LB_SETCURSEL, (WPARAM)(sel >= 0 && sel < ACT_N ? sel : 0), 0);
-    SendMessageW(g_list, WM_SETREDRAW, TRUE, 0);
-    InvalidateRect(g_list, NULL, TRUE);
-}
+#define HK_ROW_H   22
+#define HK_LIST_Y  (FRAME + TITLE_H + 42)
+#define HK_LIST_H  (HK_ROW_H * ACT_N)
+#define CLIENT_W   360
+#define CLIENT_H   (HK_LIST_Y + HK_LIST_H + 78)
+
+static int     g_sel = 0;                 // 고른 줄
+static wchar_t g_status[160] = L"";
+
+static RECT RcList(void)
+{ RECT r; r.left=FRAME+8; r.right=CLIENT_W-FRAME-8; r.top=HK_LIST_Y; r.bottom=r.top+HK_LIST_H; return r; }
+static RECT RcRowAt(int i)
+{ RECT r = RcList(); r.top = HK_LIST_Y + i*HK_ROW_H; r.bottom = r.top + HK_ROW_H; return r; }
+static RECT RcEnable(void)
+{ RECT r; r.left=FRAME+8; r.right=r.left+130; r.top=HK_LIST_Y+HK_LIST_H+12; r.bottom=r.top+24; return r; }
+static RECT RcReset(void)
+{ RECT r; r.right=CLIENT_W-FRAME-8; r.left=r.right-100; r.top=HK_LIST_Y+HK_LIST_H+12; r.bottom=r.top+24; return r; }
 
 static void Status(const wchar_t* s)
 {
-    if (g_wnd) SetDlgItemTextW(g_wnd, ID_STATUS, s);
+    lstrcpynW(g_status, s, 160);
+    if (g_wnd) InvalidateRect(g_wnd, NULL, FALSE);
 }
 
 // 고른 줄에 키를 건다. 다른 줄이 이미 쓰던 키면 그쪽에서 뗀다(한 키에 한 기능).
@@ -319,103 +219,137 @@ static void Bind(int row, int vk)
         if (i != row && g_key[i] == vk) { g_key[i] = 0; stolen = i; }
     g_key[row] = vk;
     SaveJson();
-    Refresh();
     KeyName(vk, key, 16);
-    if (!vk)          wsprintfW(msg, L"[%s] 단축키를 뗐습니다.", kActions[row].name);
+    if (!vk)              wsprintfW(msg, L"[%s] 단축키를 뗐습니다.", kActions[row].name);
     else if (stolen >= 0) wsprintfW(msg, L"[%s] = %s.  [%s] 에서 가져왔습니다.",
                                     kActions[row].name, key, kActions[stolen].name);
-    else              wsprintfW(msg, L"[%s] = %s.", kActions[row].name, key);
+    else                  wsprintfW(msg, L"[%s] = %s.", kActions[row].name, key);
     Status(msg);
 }
 
-// 목록 창은 글자키를 제 것(맨 앞 글자로 건너뛰기)으로 쓰므로 가로채야 한다.
-static LRESULT CALLBACK ListProc(HWND h, UINT m, WPARAM w, LPARAM l)
+static void HotkeyPaint(HWND h)
 {
-    if (m == WM_KEYDOWN) {
-        int vk = (int)w;
-        switch (vk) {
-        case VK_UP: case VK_DOWN: case VK_PRIOR: case VK_NEXT:
-        case VK_HOME: case VK_END: case VK_TAB: case VK_ESCAPE:
-            break;                                   // 목록 이동은 그대로 둔다
-        case VK_DELETE: case VK_BACK:
-            Bind((int)SendMessageW(h, LB_GETCURSEL, 0, 0), 0);
-            return 0;
-        default:
-            if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) break;
-            Bind((int)SendMessageW(h, LB_GETCURSEL, 0, 0), vk);
-            return 0;
-        }
-    }
-    if (m == WM_CHAR) return 0;                      // 삑 소리 · 글자 건너뛰기 막기
-    return CallWindowProcW(g_listProc, h, m, w, l);
-}
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(h, &ps);
+    UiBuf b;
+    RECT rc, cb, r, box;
+    HDC dc;
+    HBRUSH br;
+    int i;
+    wchar_t key[16];
 
-static HWND MakeCtl(HWND h, const wchar_t* cls, const wchar_t* text, DWORD style,
-                    int x, int y, int cw, int ch, int id)
-{
-    HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style,
-                             x, y, cw, ch, h, (HMENU)(UINT_PTR)id, g_hinst, NULL);
-    if (c && g_font) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
-    return c;
+    GetClientRect(h, &rc);
+    dc = UI_BufBegin(&b, hdc, rc.right, rc.bottom);
+
+    br = CreateSolidBrush(COL_BG); FillRect(dc, &rc, br); DeleteObject(br);
+    UI_WindowFrame(dc, rc, L"단축키", &cb);
+
+    r.left = FRAME + 10; r.right = CLIENT_W - FRAME - 10;
+    r.top = FRAME + TITLE_H + 4; r.bottom = r.top + 36;
+    UI_Text(dc, r, L"줄을 고르고 키를 누르면 그 키로 바뀝니다. Del 은 떼기.\n"
+                   L"Ctrl · Alt 조합과 글자 입력칸은 건드리지 않습니다.",
+            g_smallFont, COL_TEXT, DT_LEFT|DT_TOP|DT_NOPREFIX|DT_WORDBREAK);
+
+    // 목록 — 눌린 판 위에 줄을 직접 그린다(19줄이 다 들어가 스크롤이 없다)
+    box = RcList();
+    br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &box, br); DeleteObject(br);
+    for (i = 0; i < ACT_N; i++) {
+        RECT row = RcRowAt(i), t;
+        COLORREF tx = COL_TEXT;
+        if (i == g_sel)  { br = CreateSolidBrush(COL_SEL_BG); FillRect(dc, &row, br); DeleteObject(br); tx = COL_LIGHT; }
+        else if (i & 1)  { br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &row, br); DeleteObject(br); }
+        t = row; t.left += 10; t.right = t.left + 190;
+        UI_Text(dc, t, kActions[i].name, g_font, tx, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        KeyName(g_key[i], key, 16);
+        t = row; t.right -= 14; t.left = t.right - 60;
+        UI_Text(dc, t, key, g_font, tx, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
+    UI_Bevel(dc, box, TRUE);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &box, br); DeleteObject(br);
+
+    // [단축키 켜기] — 체크박스 컨트롤 대신 눌린 네모에 표시를 찍는다
+    {
+        RECT e = RcEnable(), sq, t;
+        sq.left = e.left; sq.right = sq.left + 16;
+        sq.top = (e.top + e.bottom) / 2 - 8; sq.bottom = sq.top + 16;
+        br = CreateSolidBrush(g_enabled ? COL_SEL_BG : COL_LIGHT); FillRect(dc, &sq, br); DeleteObject(br);
+        UI_Bevel(dc, sq, TRUE);
+        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &sq, br); DeleteObject(br);
+        if (g_enabled) UI_Text(dc, sq, L"V", g_font, COL_LIGHT, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        t = e; t.left = sq.right + 8;
+        UI_Text(dc, t, L"단축키 켜기", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
+    UI_Button(dc, RcReset(), L"기본값으로", FALSE);
+
+    r.left = FRAME + 10; r.right = CLIENT_W - FRAME - 10;
+    r.top = HK_LIST_Y + HK_LIST_H + 42; r.bottom = r.top + 26;
+    UI_Text(dc, r, g_status[0] ? g_status : L"고친 값은 CDS95Util\\hotkeys.json 에 바로 저장됩니다.",
+            g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX|DT_END_ELLIPSIS);
+
+    UI_BufEnd(&b);
+    EndPaint(h, &ps);
 }
 
 static LRESULT CALLBACK HotkeyProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
     switch (m) {
-    case WM_CREATE: {
-        int tabs[1];
-        g_font = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                             DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"맑은 고딕");
-        MakeCtl(h, L"STATIC",
-                L"줄을 고르고 키를 누르면 그 키로 바뀝니다. Del 은 떼기.\n"
-                L"알파벳 · 숫자 · F1~F12 를 걸 수 있고, Ctrl · Alt 조합은 게임 몫으로 둡니다.",
-                0, 12, 10, CLIENT_W - 24, 40, ID_HELP);
-        g_list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
-                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_USETABSTOPS,
-                    12, 56, CLIENT_W - 24, LIST_H, h, (HMENU)(UINT_PTR)ID_LIST, g_hinst, NULL);
-        if (g_list) {
-            if (g_font) SendMessageW(g_list, WM_SETFONT, (WPARAM)g_font, TRUE);
-            tabs[0] = 120;                            // 이름칸 폭. 대화상자 단위(4 = 글자 한 칸) 라 240px 쯤이다
-            SendMessageW(g_list, LB_SETTABSTOPS, 1, (LPARAM)tabs);
-            g_listProc = (WNDPROC)SetWindowLongPtrW(g_list, GWLP_WNDPROC, (LONG_PTR)ListProc);
-        }
-        MakeCtl(h, L"BUTTON", L"단축키 켜기", WS_TABSTOP | BS_AUTOCHECKBOX,
-                12, 56 + LIST_H + 12, 120, 24, ID_ENABLE);
-        MakeCtl(h, L"BUTTON", L"기본값으로", WS_TABSTOP | BS_PUSHBUTTON,
-                CLIENT_W - 12 - 110, 56 + LIST_H + 10, 110, 28, ID_RESET);
-        MakeCtl(h, L"STATIC", L"", 0, 12, 56 + LIST_H + 46, CLIENT_W - 24, 40, ID_STATUS);
-        CheckDlgButton(h, ID_ENABLE, g_enabled ? BST_CHECKED : BST_UNCHECKED);
-        Refresh();
-        Status(L"고친 값은 CDS95Util\\hotkeys.json 에 바로 저장됩니다.");
+    case WM_CREATE:
+        UI_CreateFonts();
+        g_status[0] = 0;
         return 0;
-    }
-    case WM_CTLCOLORSTATIC:
-        SetBkMode((HDC)w, TRANSPARENT);
-        return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
-    case WM_COMMAND:
-        if (LOWORD(w) == ID_ENABLE) {
-            g_enabled = (IsDlgButtonChecked(h, ID_ENABLE) == BST_CHECKED) ? 1 : 0;
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: HotkeyPaint(h); return 0;
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt; RECT rc, cb, r;
+        pt.x = GET_X_LPARAM(l); pt.y = GET_Y_LPARAM(l);
+        GetClientRect(h, &rc);
+        cb.right = rc.right - FRAME - 4; cb.left = cb.right - 22;
+        cb.top = FRAME + 4; cb.bottom = cb.top + 18;
+        if (PtInRect(&cb, pt)) { ShowWindow(h, SW_HIDE); return 0; }
+        r = RcEnable();
+        if (PtInRect(&r, pt)) {
+            g_enabled = !g_enabled;
             SaveJson();
             Status(g_enabled ? L"단축키를 켰습니다."
                              : L"단축키를 껐습니다. 게임에서 글자를 적을 때 이렇게 둡니다.");
             return 0;
         }
-        if (LOWORD(w) == ID_RESET) {
+        r = RcReset();
+        if (PtInRect(&r, pt)) {
             LoadDefaults();
             SaveJson();
-            CheckDlgButton(h, ID_ENABLE, BST_CHECKED);
-            Refresh();
             Status(L"기본 단축키로 되돌렸습니다.");
             return 0;
         }
+        r = RcList();
+        if (PtInRect(&r, pt)) {
+            int i = (pt.y - HK_LIST_Y) / HK_ROW_H;
+            if (i >= 0 && i < ACT_N) { g_sel = i; InvalidateRect(h, NULL, FALSE); }
+            return 0;
+        }
+        if (pt.y < FRAME + TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
         return 0;
-    case WM_CLOSE:
-        ShowWindow(h, SW_HIDE);
+    }
+    case WM_KEYDOWN:
+        switch (w) {
+        case VK_UP:     if (g_sel > 0) { g_sel--; InvalidateRect(h, NULL, FALSE); } return 0;
+        case VK_DOWN:   if (g_sel < ACT_N - 1) { g_sel++; InvalidateRect(h, NULL, FALSE); } return 0;
+        case VK_HOME:   g_sel = 0; InvalidateRect(h, NULL, FALSE); return 0;
+        case VK_END:    g_sel = ACT_N - 1; InvalidateRect(h, NULL, FALSE); return 0;
+        case VK_ESCAPE: ShowWindow(h, SW_HIDE); return 0;
+        case VK_DELETE: case VK_BACK: Bind(g_sel, 0); return 0;
+        default:
+            // Ctrl · Alt 조합은 걸지 않는다 — 그런 키는 게임 몫으로 둔다.
+            if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) break;
+            Bind(g_sel, (int)w);
+            return 0;
+        }
         return 0;
+    case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
     case WM_DESTROY:
-        if (g_list && g_listProc) SetWindowLongPtrW(g_list, GWLP_WNDPROC, (LONG_PTR)g_listProc);
-        if (g_font) { DeleteObject(g_font); g_font = NULL; }
-        g_wnd = NULL; g_list = NULL; g_listProc = NULL;
+        UI_DestroyFonts();
+        g_wnd = NULL;
         return 0;
     }
     return DefWindowProcW(h, m, w, l);
@@ -424,8 +358,8 @@ static LRESULT CALLBACK HotkeyProc(HWND h, UINT m, WPARAM w, LPARAM l)
 static void ShowHotkeyWindow(void)
 {
     static BOOL reg = FALSE;
-    RECT r, orc;
-    int x = CW_USEDEFAULT, y = CW_USEDEFAULT, ww, wh;
+    RECT orc;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
 
     if (!g_wnd) {
         if (!reg) {
@@ -434,29 +368,26 @@ static void ShowHotkeyWindow(void)
             wc.lpfnWndProc = HotkeyProc;
             wc.hInstance = g_hinst;
             wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
-            wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+            wc.hbrBackground = NULL;
             wc.lpszClassName = WC_HOTKEY;
             RegisterClassW(&wc);
             reg = TRUE;
         }
-        r.left = 0; r.top = 0; r.right = CLIENT_W; r.bottom = CLIENT_H;
-        AdjustWindowRect(&r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE);
-        ww = r.right - r.left; wh = r.bottom - r.top;
-        // 게임이 전체화면이라 게임 창을 주인으로 걸어야 위에 뜬다(FatigueUtilKR 과 같다).
+        // 게임이 전체화면이라 게임 창을 주인으로 걸어야 위에 뜬다.
         if (g_gameHwnd && GetWindowRect(g_gameHwnd, &orc)) {
-            x = orc.left + ((orc.right - orc.left) - ww) / 2;
-            y = orc.top  + ((orc.bottom - orc.top) - wh) / 2;
+            x = orc.left + ((orc.right - orc.left) - CLIENT_W) / 2;
+            y = orc.top  + ((orc.bottom - orc.top) - CLIENT_H) / 2;
             if (x < 0) x = 0;
             if (y < 0) y = 0;
         }
-        g_wnd = CreateWindowExW(0, WC_HOTKEY, L"단축키 — 줄을 고르고 키를 누르세요",
-                    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-                    x, y, ww, wh, g_gameHwnd, NULL, g_hinst, NULL);
+        g_wnd = CreateWindowExW(0, WC_HOTKEY, L"단축키", WS_POPUP,
+                    x, y, CLIENT_W, CLIENT_H, g_gameHwnd, NULL, g_hinst, NULL);
     }
     if (g_wnd) {
         ShowWindow(g_wnd, SW_SHOW);
+        UpdateWindow(g_wnd);
         SetForegroundWindow(g_wnd);
-        if (g_list) SetFocus(g_list);
+        SetFocus(g_wnd);          // 누른 키를 창이 직접 받는다
     }
 }
 
@@ -522,7 +453,8 @@ static DWORD WINAPI MenuThread(LPVOID p)
 {
     (void)p;
     LogW(L"[HotkeyUtilKR] menu monitor started.");
-    if (!g_loaded) LoadJson();
+    if (!g_loaded && !LoadJson()) SaveJson();   // 없으면 기본값으로 한 벌 써 둔다 —
+    // 인물 창이 탭에 "스폰서(P)" 를 적으려면 이 파일을 읽어야 한다.
     for (;;) {
         HMENU bar;
         g_gameHwnd = NULL;

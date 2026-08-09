@@ -6,7 +6,7 @@
 // ID 는 KR 플러그인 예약대역(0xB000~0xCFFF)에서 각 플러그인이 제 메뉴에 쓰는 값 그대로다.
 //   Trade=0xB101(교역) 0xB102(교역품) 0xC0xx(워프)   Char=0xB301(정보) 0xB310+탭
 //   Ship=0xB410   Patch=0xB500   Map=0xB600   Mod=0xB700   QMod=0xB800
-//   Upd=0xB900    Fatigue=0xBA00   Hotkey=0xBB00(이 창)
+//   Upd=0xB900    Fatigue=0xBA00   Hotkey=0xBB00(이 창)   Hint=0xBC00
 // 0xB310+탭 은 CharacterUtilKR 이 "그 탭으로 열기"용으로 따로 받아 주는 자리다
 // (character.c 의 ID_CHAR_TAB. 탭 번호는 도감0 항해사1 여급2 스폰서3 퀘스트4 소지품5 플레이어8).
 //
@@ -19,14 +19,16 @@ static const HkAction kActions[] = {
     { L"항해사 찾기",   0xB311, 'N' },
     { L"퀘스트",        0xB314, 'Q' },
     { L"소지품",        0xB315, 'B' },
-    { L"여급",          0xB312, 'M' },
+    { L"여급",          0xB312, 'Y' },   // 지도가 M 을 가져가 여급은 Y 로 옮겼다
     { L"스폰서",        0xB313, 'P' },
     { L"도감",          0xB310, 'G' },
     { L"플레이어",      0xB318, 'H' },
     { L"교역",          0xB101, 'T' },
     { L"교역품",        0xB102, 'O' },
-    { L"지도",          0xB600, 'W' },
+    { L"지도",          0xB600, 'M' },
+    { L"워프",          0xB103, 'W' },   // 도시를 찾아 가는 창(TradeUtilKR). 메뉴 워프도 그대로 있다
     { L"함선",          0xB410, 'S' },
+    { L"힌트",          0xBC00, 'D' },   // 발견물(discovery) — 힌트의 H 는 플레이어가 쓰고 있다
     { L"피로도",        0xBA00, 'F' },
     { L"패치",          0xB500, 'C' },
     { L"퀘스트 모드",   0xB800, 'K' },
