@@ -25,6 +25,9 @@
 //   갤러리 격자/스크롤은 [도감] 과 그대로 공유한다(g_filt 항목 종류만 다르다).
 
 #define ID_CHAR   0xB301
+// 탭을 지정해 여는 자리 — ID_CHAR_TAB + 아래 TAB_* 번호. 메뉴에는 안 붙인다.
+// HotkeyUtilKR 이 단축키 한 방에 [스폰서] 같은 탭을 바로 열려고 게임 창에 던지는 ID 다.
+#define ID_CHAR_TAB 0xB310u
 #define WC_CHAR   L"CharUtilKR_Browser"
 
 #define TAB_GALLERY 0
@@ -826,14 +829,30 @@ void CharKR_ShowWindow(HWND owner, HINSTANCE hinst)
     }
 }
 
+// 탭을 지정해 연다(단축키). 이미 떠 있으면 그 탭으로 옮긴다.
+// 이 빌드에 없는 탭(ui.h 에서 뺀 것)은 아무 일도 하지 않는다.
+void CharKR_ShowTab(HWND owner, HINSTANCE hinst, int tab)
+{
+    int i, ok = 0;
+    for (i = 0; i < TAB_N; i++) if (kTabs[i].id == tab) { ok = 1; break; }
+    if (!ok) return;
+    if (!g_wnd) { g_tab = tab; CharKR_ShowWindow(owner, hinst); return; }
+    SetTab(g_wnd, tab);
+    SetForegroundWindow(g_wnd);
+}
+
 // ---------------- 메뉴 통합 (서브클래싱) ----------------
 
 static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     WNDPROC op = g_origProc;
-    if (msg == WM_COMMAND && LOWORD(wp) == ID_CHAR && HIWORD(wp) == 0) {
-        CharKR_ShowWindow(h, g_hinst);
-        return 0;
+    if (msg == WM_COMMAND && HIWORD(wp) == 0) {
+        UINT id = LOWORD(wp);
+        if (id == ID_CHAR) { CharKR_ShowWindow(h, g_hinst); return 0; }
+        if (id >= ID_CHAR_TAB && id <= ID_CHAR_TAB + TAB_PLAYER) {
+            CharKR_ShowTab(h, g_hinst, (int)(id - ID_CHAR_TAB));
+            return 0;
+        }
     }
     if (msg == WM_NCDESTROY) {
         if (op) SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)op);

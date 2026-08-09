@@ -20,7 +20,7 @@ jobs:
           # 나머지는 만든이별 폴더에 담는다. ModUtilKR 이 뜰 때 그것들을 대신 불러온다.
           mkdir -p "dist/CDS95Util/plugins/록히드매튜"
           cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
-          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR; do
+          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR; do
             cp "CDS95Util/$f.plugin" "dist/CDS95Util/plugins/록히드매튜/"
           done
           # 데이터는 루트 한 자리에 모은다 — 플러그인이 어느 폴더에 있든 여기서 찾는다.
@@ -53,6 +53,8 @@ jobs:
               **컬럼 제목을 누르면 오름차순 → 내림차순 → 정렬 안 함**으로 돌아갑니다(11개 컬럼 전부).
               정렬 중인 컬럼에는 ▲/▼ 가 붙고 위쪽에 현재 상태가 표시됩니다. 라이브 값(규모·시세·건물·
               시장아이템)은 창을 열 때 한 번만 읽어 두고 그걸로 정렬하므로 정렬 도중 값이 흔들리지 않습니다.
+              **[교역품] 목록에서 줄을 더블클릭하면 그 교역품 그림**이 옆 창에 뜹니다 — 게임이 도시정보에
+              띄우는 것과 같은 `ITEM.CDS` 그림입니다(70종이 그림 134~203 에 이름 순서 그대로 있습니다).
             - **CharacterUtilKR** — "파일" 메뉴에 "인물"을 추가. 창은 **[항해사 찾기] [여급] [스폰서] [도감]**
               네 탭이고 **[항해사 찾기]** 로 열립니다.
               **[항해사 찾기]** 는 `SAVEDATA.CDS` 를 **읽기 전용**으로 열어 지금 고용할 수 있는 인물을
@@ -83,6 +85,9 @@ jobs:
               **생년은 select box(1470~1530)로, 언어는 [언어 수정] 의 체크박스로 바꿀 수 있고**,
               고른 값이 곧바로 게임에 반영됩니다(메모리에만 쓰므로 `cds_95.exe` 파일은 그대로이고,
               게임을 끄면 원래대로).
+              **초상화 색을 바로잡았습니다** — 얼굴이 쓰는 팔레트 구간(색인 44~73: 파랑·빨강·초록)이
+              예전 표에서는 통째로 지어낸 올리브색이라 옷과 배경이 세피아로 뭉개져 있었습니다.
+              아이템 그림 206장에서 되짚은 게임 공용 색표로 갈아 끼워 살색·옷 색이 제대로 나옵니다.
               **[도감]** 은 게임 인물/여급 얼굴(MALE/FEMALE.CDS)을 LS12 디코드해 컬러 갤러리로
               표시하고 성별·카테고리(인물/스폰서/기타) 필터를 제공합니다.
               **[스폰서]** 는 후원자 **81명 전원**을 보여줍니다 — 후계자가 선대의 초상화를 물려받아
@@ -163,6 +168,12 @@ jobs:
               **[줄이기]** 를 누르면 지금 쌓인 함대 피로도에서 그만큼 덜어냅니다(0 밑으로는 안 내려갑니다).
               지금 피로도가 창에 함께 표시되고 0.5초마다 갱신됩니다. 후킹 없이 값 하나만 읽고 쓰므로
               항해로 다시 쌓이는 것은 게임이 하던 그대로입니다. 메모리만 고치니 게임을 끄면 원래대로.
+
+            - **HotkeyUtilKR** — "파일" 메뉴에 "단축키"를 추가. **글자 한 개로 위 창들을 엽니다**
+              (기본값 정보=I, 스폰서=P, 교역품=O, 지도=W … 18가지). 창에서 **줄을 고르고 키를 누르면
+              그 키로 바뀌고**(Del 은 떼기) `CDS95Util\hotkeys.json` 에 바로 저장됩니다.
+              Ctrl·Alt 조합과 글자 입력칸(검색칸 등)은 건드리지 않고, 게임에서 글자를 적어야 할 때는
+              **[단축키 켜기]** 를 꺼 두면 됩니다.
 
             > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin` 만 포함됩니다.
             > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
