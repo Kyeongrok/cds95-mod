@@ -1,10 +1,12 @@
 #include "itempic.h"
 #include "ls12.h"
-#include "uikit.h"          // COL_DISP_BG / COL_DARK / UI_Bevel — 빈 액자를 그릴 때만 쓴다
 #include "game_palette.h"   // kGamePalette[768] — 낮은 색인(10~73) 공용 색표
 
 // faces.c 와 같은 모양이다: 아카이브 하나를 열어 두고, 한 장을 풀어 24bpp DIB 로 찍는다.
 // 다른 점은 팔레트가 그림마다 따로 붙어 온다는 것뿐이다(itempic.h 의 규칙 참고).
+//
+// 이 파일은 TradeUtilKR 도 같이 빌드한다(교역품 그림). 그래서 창 꾸미기(액자·테두리·
+// 안내문)는 여기 두지 않는다 — 세피아 색표가 플러그인마다 따로라서, 그리는 건 부르는 쪽 몫이다.
 
 #define PAL_BASE  160          // 그림 제 팔레트가 얹히는 첫 색인
 #define PAL_MAX   258          // 팔레트 파트 크기(86색 x 3바이트)
@@ -74,18 +76,8 @@ static int Decode(int pic)
 int ItemPic_Draw(HDC dc, int x, int y, int w, int h, int pic)
 {
     BITMAPINFO bi;
-    RECT box, in;
-    HBRUSH br;
 
-    box.left = x - 1; box.top = y - 1; box.right = x + w + 1; box.bottom = y + h + 1;
-
-    if (!Decode(pic)) {
-        in.left = x; in.top = y; in.right = x + w; in.bottom = y + h;
-        br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &in, br); DeleteObject(br);
-        UI_Bevel(dc, in, TRUE);
-        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &box, br); DeleteObject(br);
-        return 0;
-    }
+    if (!Decode(pic)) return 0;
 
     ZeroMemory(&bi, sizeof(bi));
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -96,6 +88,5 @@ int ItemPic_Draw(HDC dc, int x, int y, int w, int h, int pic)
     bi.bmiHeader.biCompression = BI_RGB;
     SetStretchBltMode(dc, COLORONCOLOR);
     StretchDIBits(dc, x, y, w, h, 0, 0, ITEMPIC_W, ITEMPIC_H, g_rgb, &bi, DIB_RGB_COLORS, SRCCOPY);
-    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &box, br); DeleteObject(br);
     return 1;
 }

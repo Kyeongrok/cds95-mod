@@ -202,12 +202,17 @@ static void PaintItemPanel(HDC dc, int itemId)
     UI_Text(dc, r, L"아이템 정보", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     UI_Button(dc, RcItemClose(), L"×", FALSE);
 
+    // 액자와 테두리는 여기서 그린다 — itempic.c 는 그림만 찍는다(TradeUtilKR 도 같이 쓴다).
+    r.left = px; r.right = px + ITEMPIC_W; r.top = py; r.bottom = py + ITEMPIC_H;
     if (!ItemPic_Draw(dc, px, py, ITEMPIC_W, ITEMPIC_H, rec ? rec->pic : -1)) {
+        br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &r, br); DeleteObject(br);
+        UI_Bevel(dc, r, TRUE);
         // UI_Text 는 DrawTextW 한 줄짜리라 DT_VCENTER 는 DT_SINGLELINE 과만 먹는다.
-        r.left = px; r.right = px + ITEMPIC_W; r.top = py; r.bottom = py + ITEMPIC_H;
         UI_Text(dc, r, ItemPic_Count() > 0 ? L"그림 없음" : L"ITEM.CDS 없음",
                 g_smallFont, COL_DARK, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
+    { RECT box = r; InflateRect(&box, 1, 1);
+      br = CreateSolidBrush(COL_DARK); FrameRect(dc, &box, br); DeleteObject(br); }
 
     r.left = tx; r.right = tw; r.top = IP_Y + 36; r.bottom = r.top + 24;
     wsprintfW(buf, L"%d  %s", itemId, ItemName(itemId));

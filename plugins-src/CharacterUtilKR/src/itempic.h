@@ -21,5 +21,5 @@ void ItemPic_Load(void);    // ITEM.CDS 를 연다(이미 열었으면 아무 �
 int  ItemPic_Count(void);   // 그림 장수. 0 이면 파일을 못 열었다
 
 // pic 을 (x,y,w,h) 에 늘려 그린다. 성공 1.
-// 못 그리면 빈 액자만 남기고 0 — 안내문은 부르는 쪽이 그 안에 얹는다.
+// 못 풀면 아무 것도 안 그리고 0 — 빈 액자와 안내문은 부르는 쪽 몫이다(창마다 색표가 다르다).
 int  ItemPic_Draw(HDC dc, int x, int y, int w, int h, int pic);

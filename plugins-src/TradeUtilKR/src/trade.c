@@ -7,6 +7,7 @@
 #include "item_names.h"
 #include "goods_names.h"
 #include "warp_data.h"
+#include "itempic.h"        // 교역품 그림 — CharacterUtilKR/src 의 ITEM.CDS 디코더를 같이 빌드한다
 
 // TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
 // 게임 메뉴바에 항목을 추가하고(서브클래싱으로 클릭 가로챔), 클릭 시 전 도시 목록을 표시한다.
@@ -922,8 +923,10 @@ static void PopulateGoods(HWND lv)
         if (f[0] && !WStrContainsCI(gname, f) && !WStrContainsCI(cname, f)
                  && !WStrContainsCI(culn, f) && !WStrContainsCI(kindn, f))
             continue;
-        it.mask = LVIF_TEXT; it.iItem = row; it.iSubItem = 0;
-        it.pszText = (LPWSTR)gname;
+        // lParam 에 g_goods 색인을 달아 둔다 — 필터가 걸리면 화면 행 번호와 어긋나므로,
+        // 더블클릭(그림 보기)에서 눌린 줄이 어느 교역품인지 이걸로 되찾는다.
+        it.mask = LVIF_TEXT | LVIF_PARAM; it.iItem = row; it.iSubItem = 0;
+        it.pszText = (LPWSTR)gname; it.lParam = (LPARAM)i;
         SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&it);
         SetText(lv, row, 1, cname);
         SetText(lv, row, 2, culn);
@@ -1130,6 +1133,133 @@ static void UpdateGoodsSB(void)
     if (g.show) InvalidateRect(g_goodsSB, NULL, TRUE);
 }
 
+// ---------------- 교역품 그림 창 (목록에서 줄을 더블클릭) ----------------
+//
+// 그림은 게임이 도시정보 · 특산품 창에 띄우는 것과 같은 것이다 — 게임 폴더의 ITEM.CDS.
+// 교역품 종류 -> 그림 번호는 GOOD_PIC_BASE + 종류. 70종이 그림 134~203 에 이름 순서
+// 그대로 놓여 있다(206장을 전부 펼쳐 하나씩 맞춰 봤다: 0 밀=134, 11 올리브유=145,
+// 16 금=150, 33 양모=167, 69 노예=203). 아이템 표(kItemNames)와는 딴 표다 —
+// 교역품 이름은 그 표에 아예 없으므로 itemdb 의 그림번호로는 못 찾는다.
+#define GOOD_PIC_BASE 134
+#define WC_GPIC   L"TradeUtilKR_GoodsPic"
+#define GPIC_SZ   200                                  // 화면에 그리는 크기(원본 120x120 을 늘린다)
+#define GPIC_PAD  16
+#define GPIC_W    (GPIC_SZ + 2*(FRAME + GPIC_PAD))
+#define GPIC_H    (FRAME + TITLE_H + 10 + GPIC_SZ + 8 + 44 + FRAME)
+
+static HWND     g_gpicWnd = NULL;
+static GoodsRow g_gpic;                                // 지금 보여 주는 줄의 사본
+static int      g_gpicOk = 0;                          // g_gpic 에 값이 들어 있나
+// 색인이 아니라 사본을 들고 있는 것은, 창을 띄워 둔 채로 목록을 다시 정렬해도
+// 그림과 설명이 딴 교역품으로 바뀌지 않게 하려는 것이다.
+
+static void GoodsPicPaint(HWND h)
+{
+    PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+    RECT rc, tb, cb, cf, tr, in, box; HBRUSH br; HFONT of;
+    int px = FRAME + GPIC_PAD, py = FRAME + TITLE_H + 10;
+    int cult = g_gpicOk ? CityCulture(g_gpic.city) : -1;
+    wchar_t buf[96];
+
+    GetClientRect(h, &rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &rc, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
+
+    tb.left = FRAME; tb.top = FRAME; tb.right = rc.right - FRAME; tb.bottom = FRAME + TITLE_H;
+    VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, tb, FALSE);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_titleFont); tr = tb; tr.left += 8;
+    DrawTextW(dc, g_gpicOk ? kTradeGoods[g_gpic.kind] : L"교역품", -1, &tr,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+
+    in.left = px; in.top = py; in.right = px + GPIC_SZ; in.bottom = py + GPIC_SZ;
+    if (!g_gpicOk || !ItemPic_Draw(dc, px, py, GPIC_SZ, GPIC_SZ, GOOD_PIC_BASE + g_gpic.kind)) {
+        of = (HFONT)SelectObject(dc, g_listFont);
+        br = CreateSolidBrush(COL_LIGHT); FillRect(dc, &in, br); DeleteObject(br);
+        Bevel(dc, in, TRUE);
+        DrawTextW(dc, ItemPic_Count() > 0 ? L"그림이 없습니다" : L"ITEM.CDS 를 열지 못했습니다",
+                  -1, &in, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, of);
+    }
+    box = in; InflateRect(&box, 1, 1);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &box, br); DeleteObject(br);
+
+    if (g_gpicOk) {
+        of = (HFONT)SelectObject(dc, g_listFont);
+        tr.left = px; tr.right = rc.right - FRAME - GPIC_PAD;
+        tr.top = in.bottom + 8; tr.bottom = tr.top + 20;
+        wsprintfW(buf, L"%s · %s", kCities[g_gpic.city].name,
+                  (cult >= 0 && cult < 11) ? kSpheres[cult] : L"?");
+        DrawTextW(dc, buf, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        tr.top = tr.bottom; tr.bottom = tr.top + 20;
+        DrawTextW(dc, g_gpic.isSpec ? L"특산품" : L"문화권 공통 교역품", -1, &tr,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, of);
+    }
+
+    cb = CloseRect(rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &cb, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &cb, br); DeleteObject(br);
+    cf = cb; InflateRect(&cf, -2, -2); VGradient(dc, cf, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, cf, FALSE);
+    of = (HFONT)SelectObject(dc, g_titleFont);
+    DrawTextW(dc, L"×", -1, &cb, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+
+    EndPaint(h, &ps);
+}
+
+static LRESULT CALLBACK GoodsPicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: GoodsPicPaint(h); return 0;
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt; RECT rc, cb; pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
+        GetClientRect(h, &rc); cb = CloseRect(rc);
+        if (PtInRect(&cb, pt)) { DestroyWindow(h); return 0; }
+        if (pt.y < FRAME + TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
+        return 0;
+    }
+    case WM_CLOSE: DestroyWindow(h); return 0;
+    case WM_DESTROY: g_gpicWnd = NULL; g_gpicOk = 0; return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+// 목록 창(owner) 옆에 그림 창을 띄운다. 이미 떠 있으면 내용만 갈아 끼운다.
+static void ShowGoodsPic(HWND owner, int gi)
+{
+    static BOOL reg = FALSE;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT; RECT orc;
+
+    if (gi < 0 || gi >= g_goodsCount) return;
+    EnsureFonts();
+    ItemPic_Load();
+    g_gpic = g_goods[gi]; g_gpicOk = 1;
+    if (g_gpicWnd) { InvalidateRect(g_gpicWnd, NULL, TRUE); return; }
+
+    if (!reg) {
+        WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = GoodsPicProc; wc.hInstance = g_hinst; wc.lpszClassName = WC_GPIC;
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW); wc.hbrBackground = NULL;
+        RegisterClassW(&wc);
+        reg = TRUE;
+    }
+    if (owner && GetWindowRect(owner, &orc)) {          // 목록을 가리지 않게 오른쪽에 붙인다
+        x = orc.right + 6; y = orc.top;
+        if (x + GPIC_W > GetSystemMetrics(SM_CXSCREEN)) x = orc.left - GPIC_W - 6;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+    }
+    g_gpicWnd = CreateWindowExW(0, WC_GPIC, L"교역품 그림", WS_POPUP, x, y, GPIC_W, GPIC_H,
+                                owner, NULL, g_hinst, NULL);
+    // 목록에 초점을 그대로 둔다 — 그림을 띄운 뒤에도 검색창·화살표로 계속 고를 수 있게.
+    if (g_gpicWnd) ShowWindow(g_gpicWnd, SW_SHOWNOACTIVATE);
+}
+
 static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m)
@@ -1204,6 +1334,16 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             }}
             return CDRF_DODEFAULT;
         }
+        if (nh->idFrom == 1 && nh->code == NM_DBLCLK) {          // 줄을 두 번 누르면 그림
+            LPNMITEMACTIVATE ia = (LPNMITEMACTIVATE)lp;
+            LVITEMW it; ZeroMemory(&it, sizeof(it));
+            if (ia->iItem >= 0) {
+                it.mask = LVIF_PARAM; it.iItem = ia->iItem;
+                if (SendMessageW(g_goodsList, LVM_GETITEMW, 0, (LPARAM)&it))
+                    ShowGoodsPic(h, (int)it.lParam);
+            }
+            return 0;
+        }
         if (nh->idFrom == 1 && nh->code == LVN_COLUMNCLICK) {
             LPNMLISTVIEW nlv = (LPNMLISTVIEW)lp;
             int col = nlv->iSubItem;
@@ -1226,6 +1366,7 @@ static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     }
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY:
+        if (g_gpicWnd) DestroyWindow(g_gpicWnd);       // 목록을 닫으면 그림도 같이 닫는다
         if (g_goodsHdr && g_goodsOrigHdr) SetWindowLongPtrW(g_goodsHdr, GWLP_WNDPROC, (LONG_PTR)g_goodsOrigHdr);
         if (g_goodsList && g_goodsListOrig) SetWindowLongPtrW(g_goodsList, GWLP_WNDPROC, (LONG_PTR)g_goodsListOrig);
         if (g_goodsFilterBr) { DeleteObject(g_goodsFilterBr); g_goodsFilterBr = NULL; }
