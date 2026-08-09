@@ -20,7 +20,7 @@ jobs:
           # 나머지는 만든이별 폴더에 담는다. ModUtilKR 이 뜰 때 그것들을 대신 불러온다.
           mkdir -p "dist/CDS95Util/plugins/록히드매튜"
           cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
-          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR; do
+          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR; do
             cp "CDS95Util/$f.plugin" "dist/CDS95Util/plugins/록히드매튜/"
           done
           # 데이터는 루트 한 자리에 모은다 — 플러그인이 어느 폴더에 있든 여기서 찾는다.
@@ -158,6 +158,11 @@ jobs:
               (**반영은 항상 다음 실행부터**). 게임이 켜져 있어도 됩니다.
               설정 파일은 없습니다 — `CDS95Util` 폴더에 있는 파일이 곧 목록이고, 아는 플러그인은 설명도
               함께 보여줍니다. 로더인 `DDrawWrapper` 와 이 창 자신은 끌 수 없게 잠겨 있습니다.
+
+            - **FatigueUtilKR** — "파일" 메뉴에 "피로도"를 추가. 창에 **줄일 값(기본 20)** 을 적고
+              **[줄이기]** 를 누르면 지금 쌓인 함대 피로도에서 그만큼 덜어냅니다(0 밑으로는 안 내려갑니다).
+              지금 피로도가 창에 함께 표시되고 0.5초마다 갱신됩니다. 후킹 없이 값 하나만 읽고 쓰므로
+              항해로 다시 쌓이는 것은 게임이 하던 그대로입니다. 메모리만 고치니 게임을 끄면 원래대로.
 
             > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin` 만 포함됩니다.
             > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
