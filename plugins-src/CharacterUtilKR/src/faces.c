@@ -2,7 +2,7 @@
 #include "ls12.h"
 #include "ui.h"
 #include "imgio.h"
-#include "face_palette.h"   // kFacePalette[768]
+#include "game_palette.h"   // kGamePalette[768] — 아이템 그림에서 되짚은 게임 공용 색표
 
 static Ls12File g_male, g_female;
 static int      g_loaded = 0;
@@ -81,9 +81,9 @@ void Face_Draw(HDC dc, int x, int y, int w, int h, int gender, int code)
 
     for (i = 0; i < LS12_FACE_SZ; i++) {
         unsigned char v = g_idx[i];
-        rgb[i*3+0] = kFacePalette[v*3+2];
-        rgb[i*3+1] = kFacePalette[v*3+1];
-        rgb[i*3+2] = kFacePalette[v*3+0];
+        rgb[i*3+0] = kGamePalette[v*3+2];
+        rgb[i*3+1] = kGamePalette[v*3+1];
+        rgb[i*3+2] = kGamePalette[v*3+0];
     }
     ZeroMemory(&bi, sizeof(bi));
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -99,22 +99,22 @@ void Face_Draw(HDC dc, int x, int y, int w, int h, int gender, int code)
 
 // ================================================================== 내보내기 / 갈아 끼우기
 
-// 얼굴이 실제로 쓰는 팔레트 자리. MALE/FEMALE.CDS 의 파트를 표본으로 전수 확인한 값이다
-// (남 10~73, 여 10~74). 0~9 는 게임이 딴 데 쓰는 자리라 얼굴에 섞이면 안 된다 —
+// 얼굴이 실제로 쓰는 팔레트 자리. MALE/FEMALE.CDS 의 파트를 전수로 확인한 값이다
+// (남 0·10~73, 여 10~74). 0~9 는 게임이 딴 데 쓰는 자리라 얼굴에 섞이면 안 된다 —
 // 실제로 7680점 중 52점만 0번으로 넘어갔는데 게임 초상화가 통째로 안 나왔다.
-// (팔레트에 같은 색이 두 번 있어서 그랬다: kFacePalette[0] == kFacePalette[10].
-//  0번부터 훑으면 원본이 쓰던 10번 대신 0번을 집는다.)
+// 위는 73 에서 끊는다. 74 는 여자 얼굴 144장을 통틀어 106점뿐이라 공용 색표를 되짚을 때
+// 색이 안 잡힌 자리다(채움값이 들어 있다) — 후보로 두면 어두운 점이 그리로 몰린다.
 #define FACE_IDX_MIN 10
-#define FACE_IDX_MAX 74
+#define FACE_IDX_MAX 73
 
 // RGB 한 점을 팔레트에서 가장 가까운 인덱스로. 얼굴이 쓰는 자리만 후보로 둔다.
 static unsigned char NearestIndex(int r, int g, int b)
 {
     int best = FACE_IDX_MIN, bestd = 0x7FFFFFFF, i;
     for (i = FACE_IDX_MIN; i <= FACE_IDX_MAX; i++) {
-        int dr = r - kFacePalette[i*3+0];
-        int dg = g - kFacePalette[i*3+1];
-        int db = b - kFacePalette[i*3+2];
+        int dr = r - kGamePalette[i*3+0];
+        int dg = g - kGamePalette[i*3+1];
+        int db = b - kGamePalette[i*3+2];
         int d  = dr*dr + dg*dg + db*db;
         if (d < bestd) { bestd = d; best = i; if (!d) break; }
     }
@@ -135,9 +135,9 @@ int Face_ExportPng(int gender, int code, const wchar_t* path)
 
     for (i = 0; i < LS12_FACE_SZ; i++) {
         unsigned char v = idx[i];
-        rgb[i*3+0] = kFacePalette[v*3+0];
-        rgb[i*3+1] = kFacePalette[v*3+1];
-        rgb[i*3+2] = kFacePalette[v*3+2];
+        rgb[i*3+0] = kGamePalette[v*3+0];
+        rgb[i*3+1] = kGamePalette[v*3+1];
+        rgb[i*3+2] = kGamePalette[v*3+2];
     }
     return Img_SavePng(path, LS12_FACE_W, LS12_FACE_H, rgb) ? FACE_ERR_OK : FACE_ERR_WRITE;
 }
@@ -210,11 +210,12 @@ static int ImportInto(int gender, int index, const wchar_t* path, int* newCode)
     Face_Load();
     if (!g_loaded || FileOf(gender)->count <= 0) return FACE_ERR_ARCHIVE;
 
-    // 바탕은 얼굴 배경색(팔레트 FACE_IDX_MIN)으로 깐다 — 투명한 PNG 를 넣어도 액자처럼 보이게.
+    // 투명한 PNG 를 넣어도 액자처럼 보이게 바탕을 미리 깐다 — 얼굴이 쓰는 첫 색(FACE_IDX_MIN,
+    // 밝은 아이보리)이다. 색인으로 되돌릴 때 그대로 그 자리에 떨어지므로 얼룩이 안 생긴다.
     if (!Img_LoadScaled(path, LS12_FACE_W, LS12_FACE_H,
-                        kFacePalette[FACE_IDX_MIN*3+0],
-                        kFacePalette[FACE_IDX_MIN*3+1],
-                        kFacePalette[FACE_IDX_MIN*3+2], rgb))
+                        kGamePalette[FACE_IDX_MIN*3+0],
+                        kGamePalette[FACE_IDX_MIN*3+1],
+                        kGamePalette[FACE_IDX_MIN*3+2], rgb))
         return FACE_ERR_IMAGE;
 
     for (i = 0; i < LS12_FACE_SZ; i++)

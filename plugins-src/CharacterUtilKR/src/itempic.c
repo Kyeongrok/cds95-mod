@@ -1,7 +1,7 @@
 #include "itempic.h"
 #include "ls12.h"
 #include "uikit.h"          // COL_DISP_BG / COL_DARK / UI_Bevel — 빈 액자를 그릴 때만 쓴다
-#include "item_palette.h"   // kItemPalette[768] — 낮은 색인(10~73) 공용 색표
+#include "game_palette.h"   // kGamePalette[768] — 낮은 색인(10~73) 공용 색표
 
 // faces.c 와 같은 모양이다: 아카이브 하나를 열어 두고, 한 장을 풀어 24bpp DIB 로 찍는다.
 // 다른 점은 팔레트가 그림마다 따로 붙어 온다는 것뿐이다(itempic.h 의 규칙 참고).
@@ -62,9 +62,9 @@ static int Decode(int pic)
             g_rgb[i*3+1] = g_pal[k*3+2];    // G
             g_rgb[i*3+2] = g_pal[k*3+1];    // R
         } else {
-            g_rgb[i*3+0] = kItemPalette[v*3+2];
-            g_rgb[i*3+1] = kItemPalette[v*3+1];
-            g_rgb[i*3+2] = kItemPalette[v*3+0];
+            g_rgb[i*3+0] = kGamePalette[v*3+2];
+            g_rgb[i*3+1] = kGamePalette[v*3+1];
+            g_rgb[i*3+2] = kGamePalette[v*3+0];
         }
     }
     g_cached = pic;
