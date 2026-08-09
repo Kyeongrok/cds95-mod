@@ -1,6 +1,9 @@
 #include "invview.h"
 #include "inventory.h"
 #include "ui.h"
+#include "itemdb.h"        // exe 안 아이템 표 — 그림 번호 · 분류 · 설명문
+#include "itempic.h"       // ITEM.CDS 그림
+#include "fleet.h"         // 함대 피로도 — 아래 kItemUse 가 쓴다
 #include "item_names.h"    // TradeUtilKR/src — kItemNames[286]
 
 // 칸마다 한 줄. 소지 16칸을 먼저 늘어놓고 보관 99칸이 이어진다.
@@ -18,8 +21,23 @@
 #define DD_ITEM_W  150
 #define DD_N       (INV_ITEM_N + 1)           // 맨 앞이 "(비움)"
 
+// [정보] 판. 목록 위에 덮어 그린다(questview 의 상세 판과 같은 방식).
+#define IP_W 520
+#define IP_H 210
+#define IP_X ((WIN_W - IP_W) / 2)
+#define IP_Y (IV_Y + 40)
+
+// 정보 판에서 바로 써먹을 수 있는 아이템. 여기 적힌 것만 판에 단추가 하나 더 붙는다.
+// 아이템을 없애지는 않는다 — 몇 번이고 누를 수 있다.
+static const struct { int item; int fatigue; const wchar_t* label; } kItemUse[] = {
+    { 34, 20, L"피로 20 줄이기" },      // 육분의
+};
+#define ITEM_USE_N ((int)(sizeof(kItemUse)/sizeof(kItemUse[0])))
+
 static int  g_scroll = 0;
 static int  g_open = -1;        // 아이템 목록을 펼친 칸 번호. -1 = 안 펼침
+static int  g_info = -1;        // [정보] 판에 띄운 아이템 번호. -1 = 안 띄움
+static wchar_t g_useMsg[96] = L"";   // 판 안에서 단추를 누른 결과 한 줄
 static int  g_ddScroll = 0;
 static RECT g_ddRc;
 static wchar_t g_msg[128] = L"";
@@ -54,6 +72,23 @@ static RECT RcSlot(int vis)
 { RECT r; r.left=Q_X+120; r.right=r.left+240; r.top=IV_Y+vis*IV_ROW_H+1; r.bottom=r.top+20; return r; }
 static RECT RcClear(int vis)
 { RECT r; r.left=Q_X+370; r.right=r.left+52; r.top=IV_Y+vis*IV_ROW_H+1; r.bottom=r.top+20; return r; }
+// [비우기] 오른쪽. 줄은 Q_X+Q_W(735)까지 있고 스크롤바는 743부터라 이 자리는 비어 있다.
+static RECT RcDetail(int vis)
+{ RECT r; r.left=Q_X+430; r.right=r.left+52; r.top=IV_Y+vis*IV_ROW_H+1; r.bottom=r.top+20; return r; }
+static RECT RcItemPanel(void)
+{ RECT r; r.left=IP_X; r.right=IP_X+IP_W; r.top=IP_Y; r.bottom=IP_Y+IP_H; return r; }
+static RECT RcItemClose(void)
+{ RECT r; r.right=IP_X+IP_W-6; r.left=r.right-22; r.top=IP_Y+4; r.bottom=r.top+18; return r; }
+static RECT RcItemUse(void)
+{ RECT r; r.right=IP_X+IP_W-16; r.left=r.right-132; r.bottom=IP_Y+IP_H-10; r.top=r.bottom-26; return r; }
+
+// 이 아이템이 kItemUse 에 있나. 없으면 -1.
+static int UseOf(int item)
+{
+    int i;
+    for (i = 0; i < ITEM_USE_N; i++) if (kItemUse[i].item == item) return i;
+    return -1;
+}
 static RECT RcTrack(void)
 { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_W; r.top=IV_Y; r.bottom=IV_Y+IV_LIST_H; return r; }
 
@@ -66,6 +101,7 @@ static void OpenDrop(int slot, RECT anchor)
     int w = DD_COLS * DD_ITEM_W, h = DD_ROWS * DD_ITEM_H;
     RECT p;
     int cur = Inv_Get(KindOf(slot), IndexOf(slot));
+    g_info = -1;                    // 목록과 정보 판이 같이 뜨는 일은 없게 한다
     p.left = anchor.left; p.right = p.left + w;
     p.top = anchor.bottom; p.bottom = p.top + h;
     if (p.right > WIN_W - FRAME)  { int d = p.right - (WIN_W - FRAME); p.left -= d; p.right -= d; }
@@ -119,6 +155,91 @@ static int DropHit(POINT pt)
     r = (pt.y - g_ddRc.top) / DD_ITEM_H;
     i = (g_ddScroll + r) * DD_COLS + c;
     return (i >= 0 && i < DD_N) ? i : -1;
+}
+
+// kItemUse[u] 를 써먹는다. 결과는 판 아래 한 줄로 알린다.
+static void UseItem(int u)
+{
+    int cur = Fleet_Fatigue();
+    if (cur < 0) {
+        lstrcpyW(g_useMsg, L"피로도를 읽지 못했습니다. 세이브를 불러온 뒤에 눌러 주세요.");
+        return;
+    }
+    if (cur == 0) { lstrcpyW(g_useMsg, L"피로도가 이미 0 입니다."); return; }
+    {
+        int next = cur - kItemUse[u].fatigue;
+        if (next < 0) next = 0;
+        if (!Fleet_SetFatigue(next)) { lstrcpyW(g_useMsg, L"피로도를 쓰지 못했습니다."); return; }
+        wsprintfW(g_useMsg, L"피로도 %d → %d", cur, next);
+    }
+}
+
+static void OpenItemInfo(int item)
+{
+    g_open = -1;
+    g_useMsg[0] = 0;
+    ItemDb_Load();      // 둘 다 여러 번 불러도 되고, 처음 한 번만 실제로 일한다
+    ItemPic_Load();
+    g_info = item;
+}
+
+// 그림 한 장 + 설명 한 토막. 바깥 상태는 안 본다 — 아이템 번호만 받는다.
+static void PaintItemPanel(HDC dc, int itemId)
+{
+    const ItemRec* rec = ItemDb_At(itemId);
+    const wchar_t* desc = ItemDb_Desc(itemId);
+    RECT p = RcItemPanel(), r;
+    HBRUSH br;
+    wchar_t buf[160];
+    int px = IP_X + 16, py = IP_Y + 38;      // 그림 자리
+    int tx = IP_X + 152, tw = IP_X + IP_W - 16;
+
+    UI_VGradient(dc, p, COL_FACE_TOP, COL_FACE_BOT);
+    UI_Bevel(dc, p, FALSE);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &p, br); DeleteObject(br);
+
+    r = p; r.left += 10; r.bottom = r.top + 26;
+    UI_Text(dc, r, L"아이템 정보", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    UI_Button(dc, RcItemClose(), L"×", FALSE);
+
+    if (!ItemPic_Draw(dc, px, py, ITEMPIC_W, ITEMPIC_H, rec ? rec->pic : -1)) {
+        // UI_Text 는 DrawTextW 한 줄짜리라 DT_VCENTER 는 DT_SINGLELINE 과만 먹는다.
+        r.left = px; r.right = px + ITEMPIC_W; r.top = py; r.bottom = py + ITEMPIC_H;
+        UI_Text(dc, r, ItemPic_Count() > 0 ? L"그림 없음" : L"ITEM.CDS 없음",
+                g_smallFont, COL_DARK, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
+
+    r.left = tx; r.right = tw; r.top = IP_Y + 36; r.bottom = r.top + 24;
+    wsprintfW(buf, L"%d  %s", itemId, ItemName(itemId));
+    UI_Text(dc, r, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+
+    r.top = r.bottom; r.bottom = r.top + 20;
+    if (rec) wsprintfW(buf, L"%s · 값 %d / %d", ItemDb_CatName(rec->cat), rec->valA, rec->valB);
+    else     lstrcpyW(buf, L"이 실행 파일에서는 아이템 표를 찾지 못했습니다(다른 판인 듯합니다).");
+    UI_Text(dc, r, buf, g_smallFont, COL_DARK, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+
+    if (desc) {
+        r.top = IP_Y + 84; r.bottom = IP_Y + IP_H - 42;
+        UI_Text(dc, r, desc, g_smallFont, COL_TEXT,
+                DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL);
+    }
+
+    { int u = UseOf(itemId);
+      RECT bottom;
+      bottom.left = IP_X + 16; bottom.top = IP_Y + IP_H - 34; bottom.bottom = bottom.top + 24;
+      bottom.right = IP_X + IP_W - 16;
+      if (u >= 0) {
+          RECT b = RcItemUse();
+          UI_Button(dc, b, kItemUse[u].label, FALSE);
+          bottom.right = b.left - 8;       // 안내문이 단추를 파고들지 않게
+      }
+      if (g_useMsg[0])
+          UI_Text(dc, bottom, g_useMsg, g_smallFont, COL_TEXT,
+                  DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+      else if (ItemPic_Count() <= 0)
+          UI_Text(dc, bottom, L"게임 폴더의 ITEM.CDS 를 열지 못해 그림은 못 보여 줍니다.",
+                  g_smallFont, COL_WARN_TX, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
 }
 
 void Inv_Paint(HDC dc)
@@ -185,11 +306,16 @@ void Inv_Paint(HDC dc)
         if (item < 0) lstrcpyW(name, L"(비움)");
         else          wsprintfW(name, L"%d  %s", item, ItemName(item));
         UI_Select(dc, RcSlot(r), name, g_open == i);
-        if (item >= 0) UI_Button(dc, RcClear(r), L"비우기", FALSE);
+        if (item >= 0) {
+            UI_Button(dc, RcClear(r), L"비우기", FALSE);
+            // 그림이 없는 아이템에도 그대로 둔다 — 있다 없다 하면 목록이 들쭉날쭉해진다.
+            UI_Button(dc, RcDetail(r), L"정보", FALSE);
+        }
       } }
 
     UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), IV_ROWS, IV_N);
     PaintDrop(dc);
+    if (g_info >= 0) PaintItemPanel(dc, g_info);
 }
 
 static void ScrollTo(HWND h, int row)
@@ -205,7 +331,8 @@ void Inv_Activate(HWND h, int active)
     if (!active) return;
     // 켤 때마다 다시 잡는다 — 세이브를 나중에 불러왔을 수 있다.
     Inv_Load();
-    g_open = -1; g_msg[0] = 0;
+    ItemDb_Reset();     // 지난번에 표를 못 찾았어도 다시 해 본다
+    g_open = -1; g_info = -1; g_msg[0] = 0; g_useMsg[0] = 0;
     if (g_scroll > MaxScroll()) g_scroll = MaxScroll();
     if (h) InvalidateRect(h, NULL, FALSE);
 }
@@ -223,6 +350,16 @@ int Inv_Click(HWND h, POINT pt)
             Inv_Set(KindOf(slot), IndexOf(slot), DropValue(k));
             g_msg[0] = 0;
         }
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
+
+    // 정보 판이 떠 있으면 그 다음. × 나 판 바깥을 누르면 닫고, 판 안은 삼킨다.
+    if (g_info >= 0) {
+        RECT p = RcItemPanel(), x = RcItemClose(), b = RcItemUse();
+        int u = UseOf(g_info);
+        if (PtInRect(&x, pt) || !PtInRect(&p, pt)) { g_info = -1; g_useMsg[0] = 0; }
+        else if (u >= 0 && PtInRect(&b, pt))       UseItem(u);
         InvalidateRect(h, NULL, FALSE);
         return 1;
     }
@@ -261,13 +398,23 @@ int Inv_Click(HWND h, POINT pt)
             InvalidateRect(h, NULL, FALSE);
             return 1;
         }
+        r = RcDetail(row);
+        if (PtInRect(&r, pt)) {
+            int item = Inv_Get(KindOf(slot), IndexOf(slot));
+            if (item >= 0) { OpenItemInfo(item); InvalidateRect(h, NULL, FALSE); }
+            return 1;
+        }
       } }
     return 0;
 }
 
 int Inv_Key(HWND h, WPARAM wp)
 {
-    if (wp == VK_ESCAPE && g_open >= 0) { g_open = -1; InvalidateRect(h, NULL, FALSE); return 1; }
+    if (wp == VK_ESCAPE && (g_open >= 0 || g_info >= 0)) {
+        g_open = -1; g_info = -1; g_useMsg[0] = 0; InvalidateRect(h, NULL, FALSE); return 1;
+    }
+    // 판은 고정 자리에 그리므로 떠 있는 동안 목록이 움직이면 어긋난다.
+    if (g_info >= 0) return 1;
     switch (wp) {
     case VK_UP:    ScrollTo(h, g_scroll - 1); return 1;
     case VK_DOWN:  ScrollTo(h, g_scroll + 1); return 1;
@@ -282,6 +429,7 @@ int Inv_Key(HWND h, WPARAM wp)
 
 void Inv_Wheel(HWND h, int notches)
 {
+    if (g_info >= 0) return;        // 판이 떠 있는 동안은 목록을 안 움직인다
     if (g_open >= 0) {              // 286개짜리 목록은 휠로 굴린다
         int maxs = (DD_N + DD_COLS - 1) / DD_COLS - DD_ROWS, s;
         if (maxs < 0) maxs = 0;

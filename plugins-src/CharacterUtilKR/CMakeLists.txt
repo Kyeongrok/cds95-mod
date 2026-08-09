@@ -5,6 +5,9 @@ add_library(CharacterUtilKR SHARED
     src/questview.c
     src/invview.c
     src/inventory.c
+    src/itemdb.c
+    src/itempic.c
+    src/fleet.c
     src/playerview.c
     src/imgio.c
     src/questjson.c
