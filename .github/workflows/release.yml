@@ -20,7 +20,7 @@ jobs:
           # 나머지는 만든이별 폴더에 담는다. ModUtilKR 이 뜰 때 그것들을 대신 불러온다.
           mkdir -p "dist/CDS95Util/plugins/록히드매튜"
           cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
-          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR; do
+          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR HintUtilKR; do
             cp "CDS95Util/$f.plugin" "dist/CDS95Util/plugins/록히드매튜/"
           done
           # 데이터는 루트 한 자리에 모은다 — 플러그인이 어느 폴더에 있든 여기서 찾는다.
@@ -170,7 +170,7 @@ jobs:
               항해로 다시 쌓이는 것은 게임이 하던 그대로입니다. 메모리만 고치니 게임을 끄면 원래대로.
 
             - **HotkeyUtilKR** — "파일" 메뉴에 "단축키"를 추가. **글자 한 개로 위 창들을 엽니다**
-              (기본값 정보=I, 스폰서=P, 교역품=O, 지도=W … 18가지). 창에서 **줄을 고르고 키를 누르면
+              (기본값 정보=I, 스폰서=P, 교역품=O, 지도=M … 18가지). 창에서 **줄을 고르고 키를 누르면
               그 키로 바뀌고**(Del 은 떼기) `CDS95Util\hotkeys.json` 에 바로 저장됩니다.
               Ctrl·Alt 조합과 글자 입력칸(검색칸 등)은 건드리지 않고, 게임에서 글자를 적어야 할 때는
               **[단축키 켜기]** 를 꺼 두면 됩니다.

@@ -31,6 +31,7 @@ static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"ShipSkinKR",      L"함선 스킨 + 성능(등장시기 포함) 편집." },
     { L"PatchUtilKR",     L"patches.json 의 메모리 패치를 켜고 끈다." },
     { L"HotkeyUtilKR",    L"단축키 — 글자 한 개로 위 창들을 연다. hotkeys.json 에 남는다." },
+    { L"HintUtilKR",      L"힌트 — 발견물 274개를 분류·가치·상태로 본다." },
     { L"CDROMUtil",       L"(원본) CD-ROM 접근을 하드디스크로 돌린다." },
     { L"CPUPatch",        L"(원본) CPU 점유율을 낮춘다." },
     { L"MemoryFix",       L"(원본) 게임의 메모리 버그를 고친다." },
