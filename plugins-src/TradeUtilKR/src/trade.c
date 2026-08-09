@@ -17,6 +17,7 @@
 
 #define ID_TRADE_SISE 0xB101
 #define ID_TRADE_GOODS 0xB102       // fb21: 교역품 관리
+#define ID_TRADE_WARP  0xB103       // 워프 창 — 226개를 지역 서브메뉴로 뒤지지 않고 찾아서 간다
 #define ID_WARP_BASE  0xC000        // 워프 메뉴 항목 ID = ID_WARP_BASE + kWarps 인덱스
 #define WC_SISE       L"TradeUtilKR_Sise"
 #define CITY_COUNT    (int)(sizeof(kCities)/sizeof(kCities[0]))
@@ -1401,6 +1402,298 @@ static void ShowTradeGoodsWindow(HWND owner)
     if (g_goodsWnd) { ShowWindow(g_goodsWnd, SW_SHOW); UpdateWindow(g_goodsWnd); }
 }
 
+// ---------------- 워프 창 (단축키 W / 워프 메뉴 맨 위) ----------------
+//
+// 워프 자체는 메뉴에도 그대로 있다. 다만 226개를 지역 서브메뉴로 뒤지는 게 번거로워
+// 도시 이름 몇 글자로 찾아 바로 가는 창을 따로 둔다. 가는 길은 같다(DoWarp).
+// 문화권 탭 한 줄(전체 + 11) 아래에 검색칸, 그 아래가 목록이다. 도시 이름 옆에는
+// 시세 일람과 같은 라이브 값(규모 · 시세 · 교역소 · 조선소 · 도서관 · 조합)을 붙인다 —
+// 워프 index 가 곧 도시 번호라(kWarps 와 kCities 가 같은 차례다) 그대로 읽어 쓴다.
+#define WC_WARP    L"TradeUtilKR_Warp"
+#define WTAB_H     26
+#define WTAB_COLS  6
+#define WTAB_W     92
+#define WWIN_W     (WTAB_COLS * (WTAB_W + 2) + 2*FRAME + 10)      // 574
+#define WWIN_H     520
+#define WTAB_Y     (FRAME + TITLE_H + 4)
+#define WFILTER_Y  (WTAB_Y + 2*WTAB_H + 4)
+#define WLIST_Y    (WFILTER_Y + FILTER_H)
+
+#define WCOL_N 7
+static const wchar_t* kWCols[WCOL_N] = { L"도시", L"규모", L"시세", L"교역소", L"조선소", L"도서관", L"조합" };
+static const int      kWColW[WCOL_N] = { 150,     46,      50,      56,        56,        56,        50 };
+
+static HWND    g_warpWnd = NULL, g_warpList = NULL, g_warpFilter = NULL;
+static HBRUSH  g_warpFilterBr = NULL;
+static WNDPROC g_warpEditOrig = NULL;
+static wchar_t g_warpText[64] = L"";
+static int     g_warpRegion = 0;         // 0 = 전체, 그 밖은 (지역 목록 색인 + 1)
+
+// 워프 목록의 지역 이름 — kWarps 에 나온 차례대로 모은다(메뉴의 서브메뉴 순서와 같다).
+#define WREGION_MAX 16
+static const wchar_t* g_wregion[WREGION_MAX];
+static int g_wregionN = 0;
+
+static void BuildWarpRegions(void)
+{
+    int i, k;
+    if (g_wregionN) return;
+    for (i = 0; i < WARP_COUNT && g_wregionN < WREGION_MAX; i++) {
+        const wchar_t* s = kWarps[i].region;
+        if (!s || !s[0]) continue;
+        for (k = 0; k < g_wregionN; k++) if (!lstrcmpW(g_wregion[k], s)) break;
+        if (k == g_wregionN) g_wregion[g_wregionN++] = s;
+    }
+}
+
+static RECT WTabRect(int i)
+{
+    RECT r;
+    r.left = FRAME + 5 + (i % WTAB_COLS) * (WTAB_W + 2);
+    r.right = r.left + WTAB_W;
+    r.top = WTAB_Y + (i / WTAB_COLS) * WTAB_H;
+    r.bottom = r.top + WTAB_H - 3;
+    return r;
+}
+
+static void PopulateWarp(void)
+{
+    int i, row = 0;
+    const wchar_t* f = g_warpText;
+    if (!g_warpList) return;
+    SendMessageW(g_warpList, WM_SETREDRAW, FALSE, 0);
+    SendMessageW(g_warpList, LVM_DELETEALLITEMS, 0, 0);
+    for (i = 0; i < WARP_COUNT; i++) {
+        LVITEMW it;
+        wchar_t buf[16];
+        if (g_warpRegion > 0 && lstrcmpW(kWarps[i].region, g_wregion[g_warpRegion - 1])) continue;
+        if (f[0] && !WStrContainsCI(kWarps[i].city, f) && !WStrContainsCI(kWarps[i].region, f)) continue;
+        ZeroMemory(&it, sizeof(it));
+        it.mask = LVIF_TEXT | LVIF_PARAM; it.iItem = row; it.iSubItem = 0;
+        it.pszText = (LPWSTR)kWarps[i].city; it.lParam = (LPARAM)i;
+        SendMessageW(g_warpList, LVM_INSERTITEMW, 0, (LPARAM)&it);
+        // 도시 번호 = 워프 index. 라이브 값이라 세이브 전에는 "-" 로 나온다.
+        { int v = ReadScale(i); if (v < 0) lstrcpyW(buf, L"-"); else wsprintfW(buf, L"%d", v); }
+        SetText(g_warpList, row, 1, buf);
+        { int v = ReadSise(i);  if (v < 0) lstrcpyW(buf, L"-"); else wsprintfW(buf, L"%d", v); }
+        SetText(g_warpList, row, 2, buf);
+        SetText(g_warpList, row, 3, BitMark(ReadBuildingBit(i, BIT_TRADE)));
+        SetText(g_warpList, row, 4, BitMark(ReadBuildingBit(i, BIT_SHIPYARD)));
+        SetText(g_warpList, row, 5, BitMark(ReadBuildingBit(i, BIT_LIBRARY)));
+        SetText(g_warpList, row, 6, BitMark(ReadBuildingBit(i, BIT_GUILD)));
+        row++;
+    }
+    SendMessageW(g_warpList, WM_SETREDRAW, TRUE, 0);
+    if (row > 0) {   // 맨 윗줄을 골라 둔다 — 검색칸에서 엔터만 쳐도 거기로 간다
+        LVITEMW s; ZeroMemory(&s, sizeof(s));
+        s.mask = LVIF_STATE; s.state = LVIS_SELECTED | LVIS_FOCUSED;
+        s.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+        SendMessageW(g_warpList, LVM_SETITEMSTATE, 0, (LPARAM)&s);
+    }
+}
+
+// row 번째 줄의 도시로 간다. 갔으면 창을 닫는다(계속 열어 둘 이유가 없다).
+static void WarpToRow(HWND h, int row)
+{
+    LVITEMW it; ZeroMemory(&it, sizeof(it));
+    if (row < 0) return;
+    it.mask = LVIF_PARAM; it.iItem = row;
+    if (!SendMessageW(g_warpList, LVM_GETITEMW, 0, (LPARAM)&it)) return;
+    DoWarp((int)it.lParam);
+    DestroyWindow(h);
+}
+
+// 검색칸에서 바로 골라 가게 한다 — 엔터는 고른 줄로 워프, ↓ 는 목록으로, Esc 는 닫기.
+// 게임 메시지 루프는 우리 창에 IsDialogMessage 를 돌려주지 않아 직접 받는다.
+static LRESULT CALLBACK WarpEditProc(HWND h, UINT m, WPARAM w, LPARAM l)
+{
+    if (m == WM_KEYDOWN) {
+        if (w == VK_RETURN) {
+            WarpToRow(GetParent(h), (int)SendMessageW(g_warpList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED));
+            return 0;
+        }
+        if (w == VK_ESCAPE) { DestroyWindow(GetParent(h)); return 0; }
+        if (w == VK_DOWN)   { SetFocus(g_warpList); return 0; }
+    }
+    if (m == WM_CHAR && (w == VK_RETURN || w == VK_ESCAPE)) return 0;   // 삑 소리 막기
+    return CallWindowProcW(g_warpEditOrig, h, m, w, l);
+}
+
+static void WarpPaintFrame(HWND h)
+{
+    PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+    RECT rc, tb, cb, cf, tr; HBRUSH br; HFONT of;
+    GetClientRect(h, &rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &rc, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
+    tb.left = FRAME; tb.top = FRAME; tb.right = rc.right - FRAME; tb.bottom = FRAME + TITLE_H;
+    VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, tb, FALSE);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, COL_TEXT);
+    of = (HFONT)SelectObject(dc, g_titleFont); tr = tb; tr.left += 8;
+    DrawTextW(dc, L"워프 — 문화권을 고르거나 이름을 쳐서 엔터", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+
+    // 문화권 탭 — 맨 앞은 [전체]
+    {
+        int i;
+        of = (HFONT)SelectObject(dc, g_listFont);
+        for (i = 0; i <= g_wregionN; i++) {
+            RECT t = WTabRect(i);
+            BOOL on = (i == g_warpRegion);
+            VGradient(dc, t, on ? COL_SEL_BG : COL_FACE_TOP, on ? COL_SEL_BG : COL_FACE_BOT);
+            Bevel(dc, t, on);
+            SetTextColor(dc, on ? COL_SEL_TX : COL_TEXT);
+            DrawTextW(dc, i == 0 ? L"전체" : g_wregion[i - 1], -1, &t,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        SetTextColor(dc, COL_TEXT);
+        SelectObject(dc, of);
+    }
+
+    cb = CloseRect(rc);
+    br = CreateSolidBrush(COL_BG);   FillRect(dc, &cb, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &cb, br); DeleteObject(br);
+    cf = cb; InflateRect(&cf, -2, -2); VGradient(dc, cf, COL_FACE_TOP, COL_FACE_BOT); Bevel(dc, cf, FALSE);
+    DrawTextW(dc, L"×", -1, &cb, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, of);
+    EndPaint(h, &ps);
+}
+
+static LRESULT CALLBACK WarpProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m)
+    {
+    case WM_CREATE:
+    {
+        int c;
+        EnsureFonts();
+        BuildWarpRegions();
+        g_warpText[0] = 0;
+        g_warpFilter = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+            FRAME + 5, WFILTER_Y, WWIN_W - 2*FRAME - 10, FILTER_H - 4,
+            h, (HMENU)2, g_hinst, NULL);
+        SendMessageW(g_warpFilter, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_warpFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"도시 이름 몇 글자 → 엔터");
+        g_warpEditOrig = (WNDPROC)SetWindowLongPtrW(g_warpFilter, GWLP_WNDPROC, (LONG_PTR)WarpEditProc);
+        g_warpList = CreateWindowExW(0, L"SysListView32", L"",
+            WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
+            FRAME, WLIST_Y, WWIN_W - 2*FRAME, WWIN_H - FRAME - WLIST_Y,
+            h, (HMENU)1, g_hinst, NULL);
+        SendMessageW(g_warpList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
+        SendMessageW(g_warpList, WM_SETFONT, (WPARAM)g_listFont, TRUE);
+        SendMessageW(g_warpList, LVM_SETBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        SendMessageW(g_warpList, LVM_SETTEXTBKCOLOR, 0, (LPARAM)COL_ROW_A);
+        for (c = 0; c < WCOL_N; c++) AddCol(g_warpList, c, kWCols[c], kWColW[c]);
+        { HWND hdr = (HWND)SendMessageW(g_warpList, LVM_GETHEADER, 0, 0);
+          if (hdr) SendMessageW(hdr, WM_SETFONT, (WPARAM)g_hdrFont, TRUE); }
+        PopulateWarp();
+        return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: WarpPaintFrame(h); return 0;
+    case WM_COMMAND:
+        if (LOWORD(wp) == 2 && HIWORD(wp) == EN_CHANGE) {
+            GetWindowTextW(g_warpFilter, g_warpText, 64);
+            PopulateWarp();
+            return 0;
+        }
+        return 0;
+    case WM_CTLCOLOREDIT:
+    {
+        HDC dc = (HDC)wp;
+        SetTextColor(dc, COL_TEXT);
+        SetBkColor(dc, COL_LIGHT);
+        if (!g_warpFilterBr) g_warpFilterBr = CreateSolidBrush(COL_LIGHT);
+        return (LRESULT)g_warpFilterBr;
+    }
+    case WM_NOTIFY:
+    {
+        LPNMHDR nh = (LPNMHDR)lp;
+        if (nh->idFrom != 1) return 0;
+        if (nh->code == NM_CUSTOMDRAW) {
+            LPNMLVCUSTOMDRAW cd = (LPNMLVCUSTOMDRAW)lp;
+            switch (cd->nmcd.dwDrawStage) {
+            case CDDS_PREPAINT: return CDRF_NOTIFYITEMDRAW;
+            case CDDS_ITEMPREPAINT: {
+                int i = (int)cd->nmcd.dwItemSpec;
+                BOOL sel = (ListView_GetItemState(g_warpList, i, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+                if (sel) { cd->clrText = COL_SEL_TX; cd->clrTextBk = COL_SEL_BG; }
+                else     { cd->clrText = COL_TEXT;   cd->clrTextBk = (i & 1) ? COL_ROW_B : COL_ROW_A; }
+                SelectObject(cd->nmcd.hdc, g_listFont);
+                return CDRF_NEWFONT;
+            }}
+            return CDRF_DODEFAULT;
+        }
+        if (nh->code == NM_DBLCLK) {
+            WarpToRow(h, ((LPNMITEMACTIVATE)lp)->iItem);
+            return 0;
+        }
+        if (nh->code == LVN_KEYDOWN) {
+            LPNMLVKEYDOWN kd = (LPNMLVKEYDOWN)lp;
+            if (kd->wVKey == VK_RETURN)
+                WarpToRow(h, (int)SendMessageW(g_warpList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED));
+            else if (kd->wVKey == VK_ESCAPE) DestroyWindow(h);
+            return 0;
+        }
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt; RECT rc, cb; int i;
+        pt.x = GET_X_LPARAM(lp); pt.y = GET_Y_LPARAM(lp);
+        GetClientRect(h, &rc); cb = CloseRect(rc);
+        if (PtInRect(&cb, pt)) { DestroyWindow(h); return 0; }
+        for (i = 0; i <= g_wregionN; i++) {          // 문화권 탭
+            RECT t = WTabRect(i);
+            if (!PtInRect(&t, pt)) continue;
+            g_warpRegion = i;
+            PopulateWarp();
+            InvalidateRect(h, NULL, FALSE);
+            SetFocus(g_warpFilter);
+            return 0;
+        }
+        if (pt.y < FRAME + TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
+        return 0;
+    }
+    case WM_CLOSE: DestroyWindow(h); return 0;
+    case WM_DESTROY:
+        if (g_warpFilter && g_warpEditOrig)
+            SetWindowLongPtrW(g_warpFilter, GWLP_WNDPROC, (LONG_PTR)g_warpEditOrig);
+        if (g_warpFilterBr) { DeleteObject(g_warpFilterBr); g_warpFilterBr = NULL; }
+        g_warpWnd = NULL; g_warpList = NULL; g_warpFilter = NULL; g_warpEditOrig = NULL;
+        g_warpText[0] = 0;
+        return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+static void ShowWarpWindow(HWND owner)
+{
+    static BOOL reg = FALSE;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT; RECT orc;
+    if (g_warpWnd) { SetForegroundWindow(g_warpWnd); SetFocus(g_warpFilter); return; }
+    if (!reg) {
+        WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = WarpProc; wc.hInstance = g_hinst; wc.lpszClassName = WC_WARP;
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW); wc.hbrBackground = NULL;
+        RegisterClassW(&wc);
+        reg = TRUE;
+    }
+    if (owner && GetWindowRect(owner, &orc)) {
+        x = orc.left + ((orc.right - orc.left) - WWIN_W) / 2;
+        y = orc.top  + ((orc.bottom - orc.top) - WWIN_H) / 2;
+        if (x < 0) x = 0; if (y < 0) y = 0;
+    }
+    g_warpWnd = CreateWindowExW(0, WC_WARP, L"워프", WS_POPUP, x, y, WWIN_W, WWIN_H, owner, NULL, g_hinst, NULL);
+    if (g_warpWnd) {
+        ShowWindow(g_warpWnd, SW_SHOW);
+        UpdateWindow(g_warpWnd);
+        SetForegroundWindow(g_warpWnd);
+        SetFocus(g_warpFilter);          // 열자마자 바로 도시 이름을 칠 수 있게
+    }
+}
+
 // ---------------- 메뉴 통합 (서브클래싱) ----------------
 
 static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
@@ -1414,6 +1707,7 @@ static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         WORD id = LOWORD(wp);
         if (id == ID_TRADE_SISE)  { ShowSiseWindow(h); return 0; }
         if (id == ID_TRADE_GOODS) { ShowTradeGoodsWindow(h); return 0; }
+        if (id == ID_TRADE_WARP)  { ShowWarpWindow(h); return 0; }
         if (id >= ID_WARP_BASE && id < ID_WARP_BASE + WARP_COUNT)
         {
             DoWarp(id - ID_WARP_BASE);
@@ -1517,6 +1811,9 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                     // [정보] 쪽에서 그 ID 로 WM_COMMAND 를 보내면 열린다.
                     // fb14: "워프" — 지역별 서브메뉴로 목적지 선택 → 클릭 시 순간이동.
                     warp = CreatePopupMenu();
+                    // 맨 위는 찾아서 가는 창(단축키 W). 아래 지역 서브메뉴는 그대로 둔다.
+                    AppendMenuW(warp, MF_STRING, ID_TRADE_WARP, L"찾아서 가기…");
+                    AppendMenuW(warp, MF_SEPARATOR, 0, NULL);
                     // 최근 다녀온 곳을 맨 위에. 항목은 펼칠 때마다 새로 채운다(RebuildRecentMenu).
                     g_recentMenu = CreatePopupMenu();
                     AppendMenuW(g_recentMenu, MF_STRING | MF_GRAYED, 0, L"(아직 없음)");
