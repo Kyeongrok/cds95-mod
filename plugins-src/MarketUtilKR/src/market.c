@@ -36,20 +36,41 @@ static HWND      g_gameHwnd = NULL, g_subHwnd = NULL;
 static WNDPROC   g_origProc = NULL;
 
 #define MKT_ROWS_MAX 16
-#define STEP_N 4
-static const wchar_t* kStepName[STEP_N] = { L"1", L"10", L"100", L"절반" };
-static const int      kStepVal[STEP_N]  = { 1, 10, 100, -1 };   // -1 = 총량의 절반
+#define STEP_N 3
+static const wchar_t* kStepName[STEP_N] = { L"1", L"10", L"100" };
+static const int      kStepVal[STEP_N]  = { 1, 10, 100 };
+// "절반" 은 단위에 두지 않는다 — 줄을 두 번 누르는 것이 그 몫이다.
 
 static int g_city = -1;
 static int g_rows = 0, g_cargo = 0;
 static int g_qty[MKT_ROWS_MAX];          // 왼쪽 줄마다 담은 수량(살 것)
 static int g_sell[32];                   // 오른쪽 줄마다 담은 수량(팔 것)
-static int g_step = 3;                   // 기본은 절반
+static int g_step = 1;                   // 기본 10
 static int g_spent = 0;                  // 이 창을 연 뒤 쓴 돈
+static int g_rightRows = 0;              // 오른쪽에 실제로 그린 줄 수(짐 + 담는 중)
 static wchar_t g_msg[160] = L"";
 static int g_msgWarn = 0;
 
 static void LogW(const wchar_t* s) { OutputDebugStringW(s); }
+
+// 세 자리마다 쉼표. 한 줄에 여러 번 쓰므로 버퍼를 여섯 개 돌려 쓴다.
+static const wchar_t* N(int v)
+{
+    static wchar_t ring[6][24];
+    static int k = 0;
+    wchar_t raw[16], *out = ring[k = (k + 1) % 6];
+    int i, len, o = 0, neg = (v < 0);
+    if (neg) v = -v;
+    wsprintfW(raw, L"%d", v);
+    len = lstrlenW(raw);
+    if (neg) out[o++] = L'-';
+    for (i = 0; i < len; i++) {
+        if (i && (len - i) % 3 == 0) out[o++] = L',';
+        out[o++] = raw[i];
+    }
+    out[o] = 0;
+    return out;
+}
 
 static RECT RcRow(int side, int v)       // side 0 = 왼쪽(살 것), 1 = 오른쪽(내 짐)
 {
@@ -111,12 +132,7 @@ static void SellAdd(int v, int n)
     if (g_sell[v] > c->count) g_sell[v] = c->count;
     if (g_sell[v] < 0) g_sell[v] = 0;
 }
-static int SellStepOf(int v)
-{
-    const MktCargo* c = Mkt_CargoAt(v);
-    if (kStepVal[g_step] > 0) return kStepVal[g_step];
-    return c ? (c->count + 1) / 2 : 1;
-}
+static int SellStepOf(int v) { (void)v; return kStepVal[g_step]; }
 // 왼쪽에서 담은 것 중 이 교역품 · 이 원산지에 해당하는 수량. 오른쪽에 미리 비춰 준다.
 static int PendingFor(int kind, int origin)
 {
@@ -124,6 +140,21 @@ static int PendingFor(int kind, int origin)
     for (i = 0; i < g_rows && i < MKT_ROWS_MAX; i++) {
         const MktRow* w = Mkt_At(i);
         if (w && g_qty[i] > 0 && w->kind == kind && w->origin == origin) sum += g_qty[i];
+    }
+    return sum;
+}
+
+// 팔아서 남는 것 — (매각가 − 원산지 매입가) x 수량. 매입가를 모르면 그 줄은 뺀다.
+static int SellProfit(void)
+{
+    int i, sum = 0;
+    for (i = 0; i < g_cargo && i < 32; i++) {
+        const MktCargo* c = Mkt_CargoAt(i);
+        if (c && g_sell[i] > 0) {
+            int sp = Mkt_SellPrice(g_city, c->kind);
+            int bp = Mkt_BuyPriceAt(c->origin, c->kind);
+            if (sp > 0 && bp > 0) sum += g_sell[i] * (sp - bp);
+        }
     }
     return sum;
 }
@@ -150,12 +181,7 @@ static void CartAdd(int v, int n)
     if (g_qty[v] > w->supply) g_qty[v] = w->supply;
     if (g_qty[v] < 0) g_qty[v] = 0;
 }
-static int StepOf(int v)
-{
-    const MktRow* w = Mkt_At(v);
-    if (kStepVal[g_step] > 0) return kStepVal[g_step];
-    return w ? (w->supply + 1) / 2 : 1;      // 절반 — 두 번이면 전량이 되게 올림
-}
+static int StepOf(int v) { (void)v; return kStepVal[g_step]; }
 
 static void Reload(HWND h)
 {
@@ -191,7 +217,7 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
 
     t.top = t.bottom; t.bottom = t.top + 18;
     if (side == 0) {
-        wsprintfW(buf, L"단가 %d닢 · 공급 %d", a, b);
+        wsprintfW(buf, L"단가 %s닢 · 공급 %s", N(a), N(b));
         UI_Text(dc, t, buf, g_smallFont, COL_TEXT,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
     }
@@ -199,10 +225,10 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
         // 매각가와 원산지 매입가를 나란히 — 얼마 남고 얼마 밑지는지 바로 보이게.
         int buyp = Mkt_BuyPriceAt(origin, kind), diff = (buyp > 0) ? b - buyp : 0;
         if (a > 0 && buyp > 0)
-            wsprintfW(buf, L"%d개 · 매각 %d닢 · 매입 %d닢 (%s%d)", a, b, buyp,
-                      diff >= 0 ? L"+" : L"−", diff >= 0 ? diff : -diff);
-        else if (a > 0) wsprintfW(buf, L"%d개 · 매각 %d닢", a, b);
-        else            wsprintfW(buf, L"아직 없음 · 매각 %d닢", b > 0 ? b : 0);
+            wsprintfW(buf, L"%s개 · 매각 %s닢 · 매입 %s닢 (%s%s)", N(a), N(b), N(buyp),
+                      diff >= 0 ? L"+" : L"−", N(diff >= 0 ? diff : -diff));
+        else if (a > 0) wsprintfW(buf, L"%s개 · 매각 %s닢", N(a), N(b));
+        else            wsprintfW(buf, L"아직 없음 · 매각 %s닢", N(b > 0 ? b : 0));
         UI_Text(dc, t, buf, g_smallFont,
                 (a > 0 && buyp > 0) ? (diff >= 0 ? COL_LANG_TX : COL_WARN_TX) : COL_TEXT,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
@@ -211,8 +237,8 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
     t.top = t.bottom; t.bottom = t.top + 18;
     if (side == 0) {
         int q = (v < MKT_ROWS_MAX) ? g_qty[v] : 0;
-        if (q > 0) wsprintfW(buf, L"%s산 · 담은 것 %d개 (%d닢)", Mkt_CityName(origin), q, q * a);
-        else       wsprintfW(buf, L"%s산 · 두 번 누르면 %d개 담김", Mkt_CityName(origin), (b + 1) / 2);
+        if (q > 0) wsprintfW(buf, L"%s산 · 담은 것 %s개 (%s닢)", Mkt_CityName(origin), N(q), N(q * a));
+        else       wsprintfW(buf, L"%s산 · 두 번 누르면 %s개 담김", Mkt_CityName(origin), N((b + 1) / 2));
         UI_Text(dc, t, buf, g_smallFont, q > 0 ? COL_WARN_TX : COL_DARK,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         UI_Button(dc, RcMinus(v), L"−", FALSE);
@@ -220,10 +246,10 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
     } else {
         int q = (v < 32) ? g_sell[v] : 0;
         int pend = PendingFor(kind, origin);
-        if (q > 0)         wsprintfW(buf, L"%s산 · 팔 것 %d개 (%d닢)", Mkt_CityName(origin), q, q * b);
-        else if (pend > 0) wsprintfW(buf, L"%s산 · 담는 중 +%d개", Mkt_CityName(origin), pend);
-        else               wsprintfW(buf, L"%s산 · 두 번 누르면 %d개 담김",
-                                     origin >= 0 ? Mkt_CityName(origin) : L"?", (a + 1) / 2);
+        if (q > 0)         wsprintfW(buf, L"%s산 · 팔 것 %s개 (%s닢)", Mkt_CityName(origin), N(q), N(q * b));
+        else if (pend > 0) wsprintfW(buf, L"%s산 · 담는 중 +%s개", Mkt_CityName(origin), N(pend));
+        else               wsprintfW(buf, L"%s산 · 두 번 누르면 %s개 담김",
+                                     origin >= 0 ? Mkt_CityName(origin) : L"?", N((a + 1) / 2));
         UI_Text(dc, t, buf, g_smallFont, (q > 0 || pend > 0) ? COL_WARN_TX : COL_DARK,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         if (a > 0) {     // 아직 없는 물건(담는 중만 있는 줄)에는 파는 단추를 안 붙인다
@@ -273,6 +299,7 @@ static void Paint(HWND h)
     { RECT p; p.left = RIGHT_X; p.right = RIGHT_X + COL_W; p.top = LIST_Y; p.bottom = LIST_Y + LIST_H;
       br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
       { int v = 0;
+        g_rightRows = 0;
         for (i = 0; i < g_cargo && v < ROWS_VIS; i++) {
             const MktCargo* c = Mkt_CargoAt(i);
             int here;
@@ -291,9 +318,10 @@ static void Paint(HWND h)
             }
             if (have) continue;
             PaintRow(dc, 1, v++, w->kind, 0, Mkt_SellPrice(g_city, w->kind), w->origin);
-        } }
+        }
+        g_rightRows = v; }
       br = CreateSolidBrush(COL_DARK); FrameRect(dc, &p, br); DeleteObject(br);
-      if (!g_cargo) {
+      if (!g_rightRows) {
           int raw[4];
           Mkt_CargoRaw(0, raw);
           if (raw[0] < 0 || raw[1] <= 0) {        // 빈 칸 모양(-1 0 -1 0) — 정말 비었다
@@ -317,7 +345,7 @@ static void Paint(HWND h)
 
     r.left = LEFT_X; r.right = CLIENT_W - FRAME - 8;
     r.top = LIST_Y + LIST_H + 6; r.bottom = r.top + 22;
-    if (money >= 0) wsprintfW(buf, L"소지금 %d닢 · 이 창에서 쓴 돈 %d닢", money, g_spent);
+    if (money >= 0) wsprintfW(buf, L"소지금 %s닢 · 이 창에서 쓴 돈 %s닢", N(money), N(g_spent));
     else            lstrcpyW(buf, L"소지금을 읽지 못했습니다 — 세이브를 불러온 뒤에 열어 주세요.");
     UI_Text(dc, r, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
@@ -337,8 +365,11 @@ static void Paint(HWND h)
         for (k = 0; k < STEP_N; k++) UI_Button(dc, RcStep(k), kStepName[k], g_step == k);
 
         lb.left = RcStep(STEP_N - 1).right + 16; lb.right = RcClear().left - 12;
-        { int gain = SellGain();
-          wsprintfW(buf, L"지출 %d닢 · 수입 %d닢", cost, gain);
+        { int gain = SellGain(), prof = SellProfit();
+          if (gain > 0) wsprintfW(buf, L"지출 %s닢 · 수입 %s닢 · 수익 %s%s닢",
+                                  N(cost), N(gain), prof >= 0 ? L"+" : L"−",
+                                  N(prof >= 0 ? prof : -prof));
+          else          wsprintfW(buf, L"지출 %s닢 · 수입 %s닢", N(cost), N(gain));
           UI_Text(dc, lb, buf, g_font, (cost || gain) ? COL_WARN_TX : COL_TEXT,
                   DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX); }
         UI_Button(dc, RcClear(), L"비우기", FALSE);
@@ -376,8 +407,8 @@ static void CartApply(HWND h)
                 got == MKT_E_MONEY  ? L"소지금이 모자랍니다" :
                 got == MKT_E_FULL   ? L"짐 칸이 없습니다" :
                 got == MKT_E_SUPPLY ? L"공급량이 모자랍니다" : L"자리를 읽지 못했습니다";
-            wsprintfW(buf, L"%s 에서 멈췄습니다 — %s. (%d개 %d닢까지 샀습니다)",
-                      Mkt_GoodsName(w->kind), why, bought, total);
+            wsprintfW(buf, L"%s 에서 멈췄습니다 — %s. (%s개 %s닢까지 샀습니다)",
+                      Mkt_GoodsName(w->kind), why, N(bought), N(total));
             Say(buf, 1);
             CartClear();
             Reload(h);
@@ -387,8 +418,8 @@ static void CartApply(HWND h)
     }
     if (!bought) { Say(L"담은 것이 없습니다.", 1); InvalidateRect(h, NULL, FALSE); return; }
     g_spent += total;
-    if (total >= 0) wsprintfW(buf, L"%d개 · 지출 %d닢.", bought, total);
-    else            wsprintfW(buf, L"%d개 · %d닢 남았습니다.", bought, -total);
+    if (total >= 0) wsprintfW(buf, L"%s개 · 지출 %s닢.", N(bought), N(total));
+    else            wsprintfW(buf, L"%s개 · %s닢 남았습니다.", N(bought), N(-total));
     Say(buf, 0);
     CartClear();
     Reload(h);
