@@ -3,6 +3,10 @@
 #include "hint.h"
 #include "hintdb.h"
 #include "disc.h"
+#include "patronpick.h"
+#include "chardb.h"   // CharacterUtilKR/src — 후원자 이름·도시·직업·자금
+#include "patrons.h"  // CharacterUtilKR/src — 실행 중 친밀도
+#include "faces.h"    // CharacterUtilKR/src — 초상화(MALE/FEMALE.CDS)
 #include "uikit.h"     // CharacterUtilKR/src — 세피아 색표와 위젯을 그대로 나눠 쓴다
 
 // HintUtilKR — 게임의 "취득 힌트 일람"은 이름만 여덟 줄 늘어놓고 만다. 여기서는
@@ -17,17 +21,30 @@
                                // Fatigue=0xBA00, Hotkey=0xBB00 과 안 겹치게.
 
 #define WC_HINT    L"HintUtilKR_Window"
-#define CLIENT_W   600
 #define ROW_H      22
 #define ROWS_VIS   18
 #define TAB_Y      (FRAME + TITLE_H + 4)
 #define TAB_H      24
 #define FILT_Y     (TAB_Y + TAB_H + 4)
 #define FILT_H     24
+#define LIST_X     (FRAME + 8)
+#define LIST_W     566
 #define LIST_Y     (FILT_Y + FILT_H + 6)
 #define LIST_H     (ROW_H * ROWS_VIS)
-#define CLIENT_H   (LIST_Y + LIST_H + 34)
 #define SBW        12
+// 오른쪽 판 — 고른 줄의 분류를 좋아하는 후원자. 도시를 누르면 그리로 워프한다.
+#define PANEL_X    (LIST_X + LIST_W + SBW + 12)
+#define PANEL_W    330
+#define PANEL_HEAD_H 44        // 판 위 제목 두 줄
+#define PROW_H     58          // 이름 / 도시·자금 / 친밀도 세 줄
+#define PFACE_W    38          // 초상화(원본 80x96 의 비를 지킨다)
+#define PFACE_H    46
+#define PROWS_VIS  ((LIST_H - PANEL_HEAD_H) / PROW_H)
+// 줄을 고르기 전에는 판을 아예 안 낸다 — 창이 목록 너비로 좁아진다.
+#define CLIENT_W_NARROW (LIST_X + LIST_W + SBW + FRAME + 8)
+#define CLIENT_W   (PANEL_X + PANEL_W + FRAME + 8)
+#define CLIENT_H   (LIST_Y + LIST_H + 34)
+#define ID_WARP_BASE 0xC000u   // TradeUtilKR 이 가로채는 워프 커맨드 = 이 값 + 도시 번호
 
 #define MODE_HINT 0
 #define MODE_DISC 1
@@ -52,8 +69,30 @@ static int g_filt = F_A;        // 힌트는 [힌트만] 으로 연다 — 이 �
 static int g_scroll = 0;
 static int g_view[DISC_N];      // 걸러 낸 번호(힌트 186 보다 발견물 274 가 크다)
 static int g_viewN = 0;
+static int g_pick = -1;         // 오른쪽 판에 띄운 줄(힌트/발견물 번호). -1 = 아직 안 고름
+static int g_pscroll = 0;       // 오른쪽 판 스크롤
 
 static void LogW(const wchar_t* s) { OutputDebugStringW(s); }
+
+// 줄을 고르면 판만큼 넓히고, 풀면 도로 좁힌다.
+// 친밀도가 높으면 눈에 띄게. 게임에서 후원 문턱이 대략 이쯤이라 눈대중으로 나눴다.
+static COLORREF im_col(int row)
+{
+    int v = Patron_Intimacy(row);
+    if (v < 0)  return COL_DARK;
+    if (v >= 60) return COL_WARN_TX;
+    return COL_TEXT;
+}
+
+static void SizeToPick(HWND h)
+{
+    RECT rc;
+    int want = (g_pick >= 0) ? CLIENT_W : CLIENT_W_NARROW;
+    if (!h || !GetWindowRect(h, &rc)) return;
+    if (rc.right - rc.left == want) return;
+    SetWindowPos(h, NULL, 0, 0, want, CLIENT_H, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    InvalidateRect(h, NULL, TRUE);
+}
 
 // ---- 지금 보는 것에 따라 갈리는 자리 ----
 static int Count(void)            { return g_mode == MODE_DISC ? Disc_Count() : HINT_N; }
@@ -71,8 +110,8 @@ static RECT RcMode(int i)
 static RECT RcTab(int i)        // i = 0 이면 [전체], 그 밖은 분류 i-1
 {
     RECT r;
-    int w = (CLIENT_W - 2*FRAME - 16 - 8 * 2) / (HINT_CAT_N + 1);
-    r.left = FRAME + 8 + i * (w + 2); r.right = r.left + w;
+    int w = (LIST_W + SBW - 8 * 2) / (HINT_CAT_N + 1);
+    r.left = LIST_X + i * (w + 2); r.right = r.left + w;
     r.top = TAB_Y; r.bottom = TAB_Y + TAB_H - 2;
     return r;
 }
@@ -84,9 +123,17 @@ static RECT RcFilt(int i)
     return r;
 }
 static RECT RcList(void)
-{ RECT r; r.left=FRAME+8; r.right=CLIENT_W-FRAME-8-SBW; r.top=LIST_Y; r.bottom=LIST_Y+LIST_H; return r; }
+{ RECT r; r.left=LIST_X; r.right=LIST_X+LIST_W; r.top=LIST_Y; r.bottom=LIST_Y+LIST_H; return r; }
 static RECT RcTrack(void)
-{ RECT r; r.right=CLIENT_W-FRAME-8; r.left=r.right-SBW; r.top=LIST_Y; r.bottom=LIST_Y+LIST_H; return r; }
+{ RECT r; r.left=LIST_X+LIST_W; r.right=r.left+SBW; r.top=LIST_Y; r.bottom=LIST_Y+LIST_H; return r; }
+// 오른쪽 판
+static RECT RcPanel(void)
+{ RECT r; r.left=PANEL_X; r.right=PANEL_X+PANEL_W; r.top=LIST_Y; r.bottom=LIST_Y+LIST_H; return r; }
+static RECT RcPRow(int v)
+{ RECT r=RcPanel(); r.top=LIST_Y+v*PROW_H; r.bottom=r.top+PROW_H-2; return r; }
+// 워프 단추에는 갈 도시 이름을 적는다 — 어디로 가는지 보이게.
+static RECT RcPWarp(int v)
+{ RECT r=RcPRow(v); RECT b; b.right=r.right-8; b.left=b.right-92; b.top=r.top+18; b.bottom=b.top+24; return b; }
 static RECT RcRow(int v)
 { RECT r = RcList(); r.top = LIST_Y + v*ROW_H; r.bottom = r.top + ROW_H; return r; }
 
@@ -168,7 +215,7 @@ static void Paint(HWND h)
                                        : L"%d개 — SAVEDATA.CDS 를 못 읽었습니다", g_viewN);
     else
         wsprintfW(buf, HintDb_Live() ? L"%d개" : L"%d개 — 세이브를 불러오면 상태가 나옵니다", g_viewN);
-    r.left = FRAME + 8 + 132 + FILT_N*84; r.right = CLIENT_W - FRAME - 10;
+    r.left = LIST_X + 132 + FILT_N*84; r.right = LIST_X + LIST_W + SBW;
     r.top = FILT_Y; r.bottom = FILT_Y + FILT_H - 2;
     UI_Text(dc, r, buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX|DT_END_ELLIPSIS);
 
@@ -212,7 +259,65 @@ static void Paint(HWND h)
     br = CreateSolidBrush(COL_DARK); FrameRect(dc, &r, br); DeleteObject(br);
     UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), ROWS_VIS, g_viewN);
 
-    r.left = FRAME + 10; r.right = CLIENT_W - FRAME - 10;
+    // ---- 오른쪽 판: 고른 줄의 분류를 좋아하는 후원자 ----
+    if (g_pick >= 0) {
+        RECT p = RcPanel(), t2;
+        int n = PPick_Count(), v;
+        br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
+
+        t2 = p; t2.left += 8; t2.right -= 8; t2.top += 4; t2.bottom = t2.top + 20;
+        {
+            wsprintfW(buf, L"%s · %s", Name(g_pick), HintDb_CatName(Cat(g_pick)));
+            UI_Text(dc, t2, buf, g_font, COL_TEXT,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            t2.top += 19; t2.bottom += 19;
+            wsprintfW(buf, L"이 분류를 좋아하는 스폰서 %d명 — 오른쪽 도시를 누르면 워프", n);
+            UI_Text(dc, t2, buf, g_smallFont, COL_DARK,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        }
+
+        for (v = 0; v < PROWS_VIS; v++) {
+            int k = g_pscroll + v, row2, wi;
+            RECT pr, tt;
+            if (g_pick < 0 || k >= n) break;
+            row2 = PPick_Row(k);
+            wi   = PPick_WarpIndex(k);
+            pr = RcPRow(v); pr.top += PANEL_HEAD_H; pr.bottom += PANEL_HEAD_H;
+            if (pr.bottom > p.bottom) break;
+            if (v & 1) { br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &pr, br); DeleteObject(br); }
+            Face_Draw(dc, pr.left + 6, pr.top + 3, PFACE_W, PFACE_H,
+                      CharDb_PatronGender(row2), CharDb_PatronFace(row2));
+            tt = pr; tt.left = pr.left + PFACE_W + 12; tt.right = pr.right - 104;
+            tt.top = pr.top + 2; tt.bottom = tt.top + 19;
+            UI_Text(dc, tt, CharDb_PatronName(row2), g_font, COL_TEXT,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            tt.top = tt.bottom; tt.bottom = tt.top + 17;
+            wsprintfW(buf, L"%s · %d만", CharDb_PatronCity(row2),
+                      CharDb_PatronWealthAt(row2) / 10000);
+            UI_Text(dc, tt, buf, g_smallFont, COL_DARK,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            // 친밀도는 실행 중에만 있는 값이라 세이브를 불러오기 전에는 "—" 다.
+            tt.top = tt.bottom; tt.bottom = tt.top + 17;
+            { int im = Patron_Intimacy(row2);
+              if (im >= 0) wsprintfW(buf, L"나와의 친밀도 %d", im);
+              else         lstrcpyW(buf, L"나와의 친밀도 —"); }
+            UI_Text(dc, tt, buf, g_smallFont, im_col(row2),
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            { RECT wb = RcPWarp(v); wb.top += PANEL_HEAD_H; wb.bottom += PANEL_HEAD_H;
+              if (wi >= 0) UI_Button(dc, wb, CharDb_PatronCity(row2), FALSE);
+              else UI_Text(dc, wb, CharDb_PatronCity(row2), g_smallFont, COL_DARK,
+                           DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX); }
+        }
+        if (g_pick >= 0 && n > PROWS_VIS) {
+            t2 = p; t2.left += 8; t2.right -= 8; t2.bottom = p.bottom - 2; t2.top = t2.bottom - 18;
+            wsprintfW(buf, L"%d/%d — 판 위에서 휠", g_pscroll + 1, n);
+            UI_Text(dc, t2, buf, g_smallFont, COL_DARK,
+                    DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        }
+        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &p, br); DeleteObject(br);
+    }
+
+    r.left = FRAME + 10; r.right = rc.right - FRAME - 10;
     r.top = LIST_Y + LIST_H + 6; r.bottom = r.top + 22;
     UI_Text(dc, r,
             g_mode == MODE_DISC
@@ -245,6 +350,7 @@ static LRESULT CALLBACK HintProc(HWND h, UINT m, WPARAM w, LPARAM l)
     switch (m) {
     case WM_CREATE:
         UI_CreateFonts();
+        Face_Load();          // 오른쪽 판의 스폰서 초상화
         HintDb_Load();
         Disc_Load();
         Rebuild();
@@ -252,8 +358,22 @@ static LRESULT CALLBACK HintProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: Paint(h); return 0;
     case WM_MOUSEWHEEL:
-        ScrollTo(h, g_scroll - (GET_WHEEL_DELTA_WPARAM(w) > 0 ? 3 : -3));
+    {
+        POINT pt; RECT pr = RcPanel();
+        int d = (GET_WHEEL_DELTA_WPARAM(w) > 0 ? -3 : 3);
+        pt.x = GET_X_LPARAM(l); pt.y = GET_Y_LPARAM(l);
+        ScreenToClient(h, &pt);
+        if (PtInRect(&pr, pt)) {                        // 판 위에서는 판을 굴린다
+            int mx = PPick_Count() - PROWS_VIS;
+            g_pscroll += d;
+            if (g_pscroll > mx) g_pscroll = mx;
+            if (g_pscroll < 0) g_pscroll = 0;
+            InvalidateRect(h, NULL, FALSE);
+            return 0;
+        }
+        ScrollTo(h, g_scroll + d);
         return 0;
+    }
     case WM_LBUTTONDOWN:
     {
         POINT pt; RECT rc, cb, r;
@@ -269,7 +389,7 @@ static LRESULT CALLBACK HintProc(HWND h, UINT m, WPARAM w, LPARAM l)
             if (g_mode != i) {
                 g_mode = i;
                 g_filt = (i == MODE_HINT) ? F_A : F_ALL;   // 힌트는 [힌트만], 발견물은 [전체]
-                g_scroll = 0; Rebuild(); InvalidateRect(h, NULL, FALSE);
+                g_scroll = 0; g_pick = -1; Rebuild(); SizeToPick(h); InvalidateRect(h, NULL, FALSE);
             }
             return 0;
         }
@@ -277,20 +397,47 @@ static LRESULT CALLBACK HintProc(HWND h, UINT m, WPARAM w, LPARAM l)
             r = RcTab(i);
             if (!PtInRect(&r, pt)) continue;
             g_cat = (i == 0) ? -1 : i - 1;
-            g_scroll = 0; Rebuild(); InvalidateRect(h, NULL, FALSE);
+            g_scroll = 0; g_pick = -1; Rebuild(); SizeToPick(h); InvalidateRect(h, NULL, FALSE);
             return 0;
         }
         for (i = 0; i < FILT_N; i++) {
             r = RcFilt(i);
             if (!PtInRect(&r, pt)) continue;
             g_filt = i;
-            g_scroll = 0; Rebuild(); InvalidateRect(h, NULL, FALSE);
+            g_scroll = 0; g_pick = -1; Rebuild(); SizeToPick(h); InvalidateRect(h, NULL, FALSE);
             return 0;
         }
         r = RcTrack();
         if (PtInRect(&r, pt)) {
             int mid = (r.top + r.bottom) / 2;
             ScrollTo(h, g_scroll + (pt.y < mid ? -ROWS_VIS : ROWS_VIS));
+            return 0;
+        }
+        r = RcList();                                   // 줄을 고르면 오른쪽 판을 채운다
+        if (PtInRect(&r, pt)) {
+            int k = g_scroll + (pt.y - LIST_Y) / ROW_H;
+            if (k >= 0 && k < g_viewN) {
+                g_pick = g_view[k];
+                g_pscroll = 0;
+                PPick_Build(Cat(g_pick));
+                SizeToPick(h);
+                InvalidateRect(h, NULL, FALSE);
+            }
+            return 0;
+        }
+        r = RcPanel();                                  // 판의 [워프]
+        if (PtInRect(&r, pt) && g_pick >= 0) {
+            int v;
+            for (v = 0; v < PROWS_VIS; v++) {
+                RECT wb = RcPWarp(v);
+                int wi = PPick_WarpIndex(g_pscroll + v);
+                wb.top += PANEL_HEAD_H; wb.bottom += PANEL_HEAD_H;
+                if (!PtInRect(&wb, pt) || wi < 0) continue;
+                // 워프는 TradeUtilKR 이 게임 창에서 가로챈다 — 그쪽이 없으면 아무 일도 안 난다.
+                if (g_gameHwnd)
+                    PostMessageW(g_gameHwnd, WM_COMMAND, MAKEWPARAM(ID_WARP_BASE + wi, 0), 0);
+                return 0;
+            }
             return 0;
         }
         if (pt.y < FRAME + TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
@@ -305,7 +452,7 @@ static LRESULT CALLBACK HintProc(HWND h, UINT m, WPARAM w, LPARAM l)
         case VK_HOME:   ScrollTo(h, 0); return 0;
         case VK_END:    ScrollTo(h, MaxScroll()); return 0;
         case VK_TAB:    g_mode = !g_mode; g_filt = (g_mode == MODE_HINT) ? F_A : F_ALL; g_scroll = 0;
-                        Rebuild(); InvalidateRect(h, NULL, FALSE); return 0;
+                        g_pick = -1; Rebuild(); SizeToPick(h); InvalidateRect(h, NULL, FALSE); return 0;
         case VK_F5:     Reload(h); return 0;
         case VK_ESCAPE: ShowWindow(h, SW_HIDE); return 0;
         }
@@ -339,13 +486,13 @@ static void ShowHintWindow(void)
         }
         // 게임이 전체화면이라 게임 창을 주인으로 걸어야 위에 뜬다.
         if (g_gameHwnd && GetWindowRect(g_gameHwnd, &orc)) {
-            x = orc.left + ((orc.right - orc.left) - CLIENT_W) / 2;
+            x = orc.left + ((orc.right - orc.left) - CLIENT_W_NARROW) / 2;
             y = orc.top  + ((orc.bottom - orc.top) - CLIENT_H) / 2;
             if (x < 0) x = 0;
             if (y < 0) y = 0;
         }
         g_wnd = CreateWindowExW(0, WC_HINT, L"힌트", WS_POPUP,
-                    x, y, CLIENT_W, CLIENT_H, g_gameHwnd, NULL, g_hinst, NULL);
+                    x, y, CLIENT_W_NARROW, CLIENT_H, g_gameHwnd, NULL, g_hinst, NULL);
     } else {
         Reload(g_wnd);      // 그 사이 저장했거나 세이브를 불러왔을 수 있다
     }
