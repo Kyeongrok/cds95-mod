@@ -9,8 +9,10 @@
 static unsigned char* g_base = NULL;
 static MktRow   g_row[16];
 static int      g_rowN = 0;
-static MktCargo g_cargo[MKT_CARGO_N];
+static MktCargo g_cargo[MKT_CARGO_MAX];
 static int      g_cargoN = 0;
+
+static int ShipInFleet(int i);          // 아래에 있다 — 짐을 읽을 때부터 쓴다
 
 static int Readable(const void* p, unsigned n)
 {
@@ -135,7 +137,7 @@ int Mkt_BuildList(int city)
         if (!Sellable(kind)) continue;
         f = CityField(city, 0x44 + n * 4);
         stock = f ? *f : 0;
-        if (stock <= 0) continue;
+        if (stock < 0) stock = 0;      // 재고 0 도 게임 구입창처럼 줄은 보여 준다
         g_row[g_rowN].kind   = kind;
         g_row[g_rowN].price  = UnitPrice(BasePrice(region, kind));
         g_row[g_rowN].supply = stock;
@@ -168,7 +170,7 @@ static void AddSpecialty(int from, int to)
         const int* pv = CityField(from, 0x14);
         const int* ps = CityField(from, 0x18);
         int stock = ps ? *ps : 0;
-        if (stock <= 0) return;
+        if (stock < 0) stock = 0;      // 위와 같다 — 0 개도 줄은 나온다
         // 이미 공통품으로 들어와 있으면 게임도 그쪽을 뺀다(중복 제외).
         for (i = 0; i < g_rowN; i++) if (g_row[i].kind == spec) return;
         g_row[g_rowN].kind   = spec;
@@ -187,25 +189,102 @@ int Mkt_LoadCargo(void)
     int i;
     g_cargoN = 0;
     if (!Base()) return 0;
-    // 종류 · 갯수 · 원산지 셋만 본다. 넷째 칸(내구도로 적힌 자리)은 뜻이 확실치 않아 안 본다.
-    // 빈 칸은 건너뛰되, 말이 안 되는 칸이 잇달아 셋 나오면 거기서 끝으로 본다
-    // (끝을 안 지키면 뒤쪽 딴 자료가 "밀 5022432개" 처럼 딸려 나온다).
-    { int miss = 0;
-      for (i = 0; i < MKT_CARGO_N && miss < 3; i++) {
-        const int* p = (const int*)(g_base + MKT_CARGO_RVA + (unsigned)i * 16);
-        if (!Readable(p, 16)) break;
-        if (p[0] < 0 || p[0] >= MKT_GOODS_N ||
-            p[1] <= 0 || p[1] > 9999 ||
-            p[2] < 0 || p[2] >= MKT_CITY_N) { miss++; continue; }
-        miss = 0;
-        g_cargo[g_cargoN].kind   = p[0];
-        g_cargo[g_cargoN].count  = p[1];
-        g_cargo[g_cargoN].origin = p[2];
-        g_cargo[g_cargoN].cond   = p[3];
-        g_cargo[g_cargoN].slot   = i;
-        g_cargoN++;
-      } }
+    // 함대에 편입된 배들의 여덟 칸씩만 본다 — 도크에 둔 배의 짐은 게임 매각창에도 안 나온다.
+    // 칸 번호는 배*8 + 칸 그대로 두어(g_cargo[].slot) 팔 때 자리를 바로 찾는다.
+    for (i = 0; i < MKT_SHIP_N; i++) {
+        int k;
+        if (!ShipInFleet(i)) continue;
+        for (k = 0; k < MKT_CARGO_SLOTS && g_cargoN < MKT_CARGO_MAX; k++) {
+            int slot = i * MKT_CARGO_SLOTS + k;
+            const int* p = (const int*)(g_base + MKT_CARGO_RVA + (unsigned)slot * 16);
+            if (!Readable(p, 16)) break;
+            if (p[0] < 0 || p[0] >= MKT_GOODS_N) continue;      // 빈 칸
+            if (p[1] <= 0 || p[1] > 9999) continue;
+            if (p[2] < 0 || p[2] >= MKT_CITY_N) continue;
+            if (p[3] < 0 || p[3] > MKT_COND_MAX) continue;      // 내구도 밖이면 짐 칸이 아니다
+            g_cargo[g_cargoN].kind   = p[0];
+            g_cargo[g_cargoN].count  = p[1];
+            g_cargo[g_cargoN].origin = p[2];
+            g_cargo[g_cargoN].cond   = p[3];
+            g_cargo[g_cargoN].slot   = slot;
+            g_cargoN++;
+        }
+    }
     return g_cargoN;
+}
+
+// 그 칸이 함대에 편입된 배인가. 가진 배는 열 척까지지만 짐은 편입된 배에만 실린다.
+// 빈 칸은 최대내구도가 0 이거나 함선종류가 0~7 밖이고, 도크에 둔 배는 +0x60 이 -1 이다.
+static int ShipInFleet(int i)
+{
+    const unsigned char* s;
+    int type, hull;
+    if (!Base() || i < 0 || i >= MKT_SHIP_N) return 0;
+    s = g_base + MKT_SHIP_RVA + (unsigned)i * MKT_SHIP_SZ;
+    if (!Readable(s, MKT_SHIP_SZ)) return 0;
+    type = *(const int*)(s + MKT_SHIP_TYPE);
+    hull = *(const int*)(s + MKT_SHIP_HULLMX);
+    if (type < 0 || type > 7) return 0;
+    if (hull <= 0 || hull > 9999) return 0;
+    return *(const int*)(s + MKT_SHIP_FLEET) != -1;
+}
+
+int Mkt_Hold(int* ships, int* mass, int* cap)
+{
+    int i, sm = 0, sc = 0, n = 0, ok = 0;
+    if (ships) *ships = 0;
+    if (mass)  *mass = 0;
+    if (cap)   *cap = 0;
+    if (!Base()) return 0;
+    for (i = 0; i < MKT_SHIP_N; i++) {
+        const unsigned char* s = g_base + MKT_SHIP_RVA + (unsigned)i * MKT_SHIP_SZ;
+        int m, c;
+        if (!Readable(s, MKT_SHIP_SZ)) break;
+        ok = 1;
+        if (!ShipInFleet(i)) continue;
+        m = *(const int*)(s + MKT_SHIP_MASS);
+        c = *(const int*)(s + MKT_SHIP_CAP);
+        if (m < 0 || m > 99999 || c < 0 || c > 99999) continue;
+        sm += m; sc += c; n++;
+    }
+    if (!ok || !n) return 0;
+    if (ships) *ships = n;
+    if (mass)  *mass = sm;
+    if (cap)   *cap = sc;
+    return 1;
+}
+
+// 물·식량·자재·포탄 넷의 합. off 는 MKT_FLEET_MASS(중량) 또는 MKT_FLEET_VOL(용량).
+static int SupplySum(int off)
+{
+    const int* p;
+    int i, sum = 0;
+    if (!Base()) return -1;
+    p = (const int*)(g_base + MKT_FLEET_RVA + (unsigned)off);
+    if (!Readable(p, 16)) return -1;
+    for (i = 0; i < 4; i++) {
+        if (p[i] < 0 || p[i] > 999999) return -1;
+        sum += p[i];
+    }
+    return sum;
+}
+int Mkt_SupplyMass(void)   { return SupplySum(MKT_FLEET_MASS); }
+int Mkt_SupplyVolume(void) { return SupplySum(MKT_FLEET_VOL); }
+
+int Mkt_CitySise(int city)
+{
+    const int* p = CityField(city, 0x0C);
+    return (p && *p > 0 && *p < 10000) ? *p : -1;
+}
+int Mkt_CityState(int city)
+{
+    const int* p = CityField(city, 0x40);
+    return p ? *p : -1;
+}
+int Mkt_CitySpecial(int city)
+{
+    const int* p = CityField(city, 0x10);
+    return (p && *p >= 0 && *p < MKT_GOODS_N) ? *p : -1;
 }
 
 void Mkt_CargoRaw(int slot, int out[4])
@@ -221,14 +300,19 @@ void Mkt_CargoRaw(int slot, int out[4])
 const MktCargo* Mkt_CargoAt(int i) { return (i >= 0 && i < g_cargoN) ? &g_cargo[i] : NULL; }
 
 // 같은 교역품 + 같은 원산지 칸을 찾고, 없으면 빈 칸을 찾는다. 없으면 -1.
+// 함대에 편입된 배의 칸만 본다 — 도크에 둔 배에 짐을 얹으면 게임은 그것을 안 본다.
 static int CargoSlotFor(int kind, int origin)
 {
-    int i, empty = -1;
-    for (i = 0; i < MKT_CARGO_N; i++) {
-        int* p = (int*)(g_base + MKT_CARGO_RVA + (unsigned)i * 16);
-        if (!Readable(p, 16)) break;
-        if (p[0] == kind && p[2] == origin && p[1] > 0 && p[1] <= 9999) return i;
-        if (empty < 0 && (p[1] <= 0 || p[0] < 0 || p[0] >= MKT_GOODS_N)) empty = i;
+    int i, k, empty = -1;
+    for (i = 0; i < MKT_SHIP_N; i++) {
+        if (!ShipInFleet(i)) continue;
+        for (k = 0; k < MKT_CARGO_SLOTS; k++) {
+            int slot = i * MKT_CARGO_SLOTS + k;
+            int* p = (int*)(g_base + MKT_CARGO_RVA + (unsigned)slot * 16);
+            if (!Readable(p, 16)) break;
+            if (p[0] == kind && p[2] == origin && p[1] > 0 && p[1] <= 9999) return slot;
+            if (empty < 0 && (p[1] <= 0 || p[0] < 0 || p[0] >= MKT_GOODS_N)) empty = slot;
+        }
     }
     return empty;
 }
@@ -313,12 +397,18 @@ int Mkt_Sell(int city, int idx, int qty)
     gain = price * qty;
     p[1] -= qty;
     if (p[1] <= 0) {
-        for (i = c->slot; i < MKT_CARGO_N - 1; i++) {
+        // 다 팔았으면 그 배 안에서만 뒤를 당겨 붙인다(짐 칸은 배마다 여덟이다).
+        int last = (c->slot / MKT_CARGO_SLOTS) * MKT_CARGO_SLOTS + MKT_CARGO_SLOTS - 1;
+        for (i = c->slot; i < last; i++) {
             int* a = (int*)(g_base + MKT_CARGO_RVA + (unsigned)i * 16);
             int* b = a + 4;
             if (!Writable(a, 16) || !Readable(b, 16)) break;
             a[0] = b[0]; a[1] = b[1]; a[2] = b[2]; a[3] = b[3];
             if (b[0] < 0 || b[0] >= MKT_GOODS_N || b[1] <= 0) break;
+        }
+        {   // 마지막 칸은 비워 둔다 — 안 그러면 끝 칸이 두 번 남는다.
+            int* z = (int*)(g_base + MKT_CARGO_RVA + (unsigned)last * 16);
+            if (Writable(z, 16)) { z[0] = -1; z[1] = 0; z[2] = -1; z[3] = 0; }
         }
     }
     *money += gain;
@@ -336,4 +426,14 @@ const wchar_t* Mkt_CityName(int city)
 int Mkt_GoodsPic(int kind)
 {
     return (kind >= 0 && kind < MKT_GOODS_N) ? GOOD_PIC_BASE + kind : -1;
+}
+
+// 한 개 무게 — 교역품 레코드 +0x70. 게임 구입창의 "중량" 칸과 같은 값이다.
+int Mkt_GoodsMass(int kind)
+{
+    const int* p;
+    if (!Base() || kind < 0 || kind >= MKT_GOODS_N) return -1;
+    p = (const int*)(g_base + MKT_PRICE_RVA + (unsigned)kind * MKT_GOODS_REC + MKT_GOODS_MASS);
+    if (!Readable(p, 4)) return -1;
+    return (*p > 0 && *p < 10000) ? *p : -1;
 }

@@ -20,7 +20,7 @@
 
 #define ID_HOTKEY_OPEN 0xBB00u   // Trade=0xB101/0xB102, Char=0xB301/0xB310+, Ship=0xB410,
                                  // Patch=0xB500, Map=0xB600, Mod=0xB700, QMod=0xB800,
-                                 // Upd=0xB900, Fatigue=0xBA00 과 안 겹치게.
+                                 // Upd=0xB900, Fatigue=0xBA00, Hint=0xBC00, Market=0xBD00 과 안 겹치게.
 
 #define WC_HOTKEY  L"HotkeyUtilKR_Window"
 
@@ -250,7 +250,7 @@ static void HotkeyPaint(HWND h)
                    L"Ctrl · Alt 조합과 글자 입력칸은 건드리지 않습니다.",
             g_smallFont, COL_TEXT, DT_LEFT|DT_TOP|DT_NOPREFIX|DT_WORDBREAK);
 
-    // 목록 — 눌린 판 위에 줄을 직접 그린다(19줄이 다 들어가 스크롤이 없다)
+    // 목록 — 눌린 판 위에 줄을 직접 그린다(20줄이 다 들어가 스크롤이 없다)
     box = RcList();
     br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &box, br); DeleteObject(br);
     for (i = 0; i < ACT_N; i++) {

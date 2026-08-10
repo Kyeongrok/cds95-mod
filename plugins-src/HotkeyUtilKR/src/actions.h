@@ -6,7 +6,7 @@
 // ID 는 KR 플러그인 예약대역(0xB000~0xCFFF)에서 각 플러그인이 제 메뉴에 쓰는 값 그대로다.
 //   Trade=0xB101(교역) 0xB102(교역품) 0xC0xx(워프)   Char=0xB301(정보) 0xB310+탭
 //   Ship=0xB410   Patch=0xB500   Map=0xB600   Mod=0xB700   QMod=0xB800
-//   Upd=0xB900    Fatigue=0xBA00   Hotkey=0xBB00(이 창)   Hint=0xBC00
+//   Upd=0xB900    Fatigue=0xBA00   Hotkey=0xBB00(이 창)   Hint=0xBC00   Market=0xBD00
 // 0xB310+탭 은 CharacterUtilKR 이 "그 탭으로 열기"용으로 따로 받아 주는 자리다
 // (character.c 의 ID_CHAR_TAB. 탭 번호는 도감0 항해사1 여급2 스폰서3 퀘스트4 소지품5 플레이어8).
 //
@@ -27,6 +27,7 @@ static const HkAction kActions[] = {
     // 탭을 되살리면 { L"플레이어", 0xB318, 'H' } 를 이 자리에 다시 넣으면 된다.
     { L"교역",          0xB101, 'T' },
     { L"교역품",        0xB102, 'O' },
+    { L"매매",          0xBD00, 'E' },   // 교역소 매매(MarketUtilKR)
     { L"지도",          0xB600, 'M' },
     { L"워프",          0xB103, 'W' },   // 도시를 찾아 가는 창(TradeUtilKR). 메뉴 워프도 그대로 있다
     { L"함선",          0xB410, 'S' },

@@ -12,7 +12,8 @@
 // 게임 구입창과 같은 방식이다 — 담아 두었다가 [결정] 을 눌러야 실제로 산다.
 //   · 줄을 두 번 누르면 "총량의 절반" 을 담는다. 두 번 하면 전량이 된다
 //   · [-] [+] 는 아래에서 고른 단위(1 / 10 / 100 / 절반)만큼 담고 뺀다
-//   · [결정] 을 누를 때 소지금 · 재고 · 짐을 고친다(세이브 파일은 그대로)
+//   · [모두 팔기] 는 이 도시가 사 주는 짐을 통째로 담는다(다시 누르면 도로 뺀다)
+//   · [결정] 을 누를 때 소지금 · 재고 · 짐을 고치고 창을 닫는다(세이브 파일은 그대로)
 
 #define ID_MARKET_OPEN 0xBD00u   // Trade=0xB10x, Char=0xB301/0xB310+, Ship=0xB410, Patch=0xB500,
                                  // Map=0xB600, Mod=0xB700, QMod=0xB800, Upd=0xB900,
@@ -44,9 +45,8 @@ static const int      kStepVal[STEP_N]  = { 1, 10, 100 };
 static int g_city = -1;
 static int g_rows = 0, g_cargo = 0;
 static int g_qty[MKT_ROWS_MAX];          // 왼쪽 줄마다 담은 수량(살 것)
-static int g_sell[32];                   // 오른쪽 줄마다 담은 수량(팔 것)
+static int g_sell[MKT_CARGO_MAX];                   // 오른쪽 줄마다 담은 수량(팔 것)
 static int g_step = 1;                   // 기본 10
-static int g_spent = 0;                  // 이 창을 연 뒤 쓴 돈
 static int g_rightRows = 0;              // 오른쪽에 실제로 그린 줄 수(짐 + 담는 중)
 static wchar_t g_msg[160] = L"";
 static int g_msgWarn = 0;
@@ -72,6 +72,19 @@ static const wchar_t* N(int v)
     return out;
 }
 
+// 도시 상태(도시struct +0x40). 게임 도시정보의 "상태" 줄과 같은 값이다.
+// 스톡홀름이 "통상" 일 때의 값만 눈으로 맞춰 봤다 — 나머지 이름은 그 상태를 만나는 대로
+// 채운다. 모르는 값은 숫자를 그대로 보여 줘야 무엇을 채울지 알 수 있다.
+static const wchar_t* StateName(int v)
+{
+    static wchar_t buf[24];
+    switch (v) {
+    case 0: return L"통상";
+    case -1: return L"상태 ?";
+    default: wsprintfW(buf, L"상태 %d", v); return buf;
+    }
+}
+
 static RECT RcRow(int side, int v)       // side 0 = 왼쪽(살 것), 1 = 오른쪽(내 짐)
 {
     RECT r;
@@ -84,18 +97,16 @@ static RECT RcRow(int side, int v)       // side 0 = 왼쪽(살 것), 1 = 오른
 
 static void Say(const wchar_t* s, int warn) { lstrcpynW(g_msg, s, 160); g_msgWarn = warn; }
 
-static RECT RcMinus(int v)
-{ RECT r = RcRow(0, v); RECT b; b.right = r.right - 92; b.left = b.right - 26;
+// 줄 오른쪽 끝의 단추 셋 — [−] [+] [모두]. 양쪽 칸이 같은 자리를 쓴다.
+static RECT RcBtn(int side, int v, int dxRight, int w)
+{ RECT r = RcRow(side, v); RECT b; b.right = r.right - dxRight; b.left = b.right - w;
   b.top = r.top + 18; b.bottom = b.top + 24; return b; }
-static RECT RcPlus(int v)
-{ RECT r = RcRow(0, v); RECT b; b.right = r.right - 8; b.left = b.right - 26;
-  b.top = r.top + 18; b.bottom = b.top + 24; return b; }
-static RECT RcMinus2(int v)
-{ RECT r = RcRow(1, v); RECT b; b.right = r.right - 92; b.left = b.right - 26;
-  b.top = r.top + 18; b.bottom = b.top + 24; return b; }
-static RECT RcPlus2(int v)
-{ RECT r = RcRow(1, v); RECT b; b.right = r.right - 8; b.left = b.right - 26;
-  b.top = r.top + 18; b.bottom = b.top + 24; return b; }
+static RECT RcMinus(int v)  { return RcBtn(0, v, 118, 26); }
+static RECT RcPlus(int v)   { return RcBtn(0, v,  84, 26); }
+static RECT RcAllBuy(int v) { return RcBtn(0, v,   8, 62); }   // 공급 전량 담기
+static RECT RcMinus2(int v) { return RcBtn(1, v, 118, 26); }
+static RECT RcPlus2(int v)  { return RcBtn(1, v,  84, 26); }
+static RECT RcRowAll(int v) { return RcBtn(1, v,   8, 62); }   // 이 품목만 통째로
 static RECT RcStep(int i)
 { RECT r; r.left = LEFT_X + 92 + i * 46; r.right = r.left + 42;
   r.top = LIST_Y + LIST_H + 54; r.bottom = r.top + 24; return r; }
@@ -105,6 +116,10 @@ static RECT RcApply(void)
 static RECT RcClear(void)
 { RECT r; r.right = RIGHT_X + COL_W - 98; r.left = r.right - 90;
   r.top = LIST_Y + LIST_H + 54; r.bottom = r.top + 26; return r; }
+// [모두 팔기] — 내 짐 칸 이름표 줄 오른쪽 끝. 짐을 통째로 팔 것에 담는다.
+static RECT RcSellAll(void)
+{ RECT r; r.right = RIGHT_X + COL_W; r.left = r.right - 90;
+  r.top = FRAME + TITLE_H + 3; r.bottom = r.top + 22; return r; }
 
 // 담은 것의 총액.
 static int CartCost(void)
@@ -120,19 +135,39 @@ static void CartClear(void)
 {
     int i;
     for (i = 0; i < MKT_ROWS_MAX; i++) g_qty[i] = 0;
-    for (i = 0; i < 32; i++) g_sell[i] = 0;
+    for (i = 0; i < MKT_CARGO_MAX; i++) g_sell[i] = 0;
 }
 
 // 매각 담기 — 짐 칸 하나에서 뺄 수량.
 static void SellAdd(int v, int n)
 {
     const MktCargo* c = Mkt_CargoAt(v);
-    if (!c || v < 0 || v >= 32) return;
+    if (!c || v < 0 || v >= MKT_CARGO_MAX) return;
     g_sell[v] += n;
     if (g_sell[v] > c->count) g_sell[v] = c->count;
     if (g_sell[v] < 0) g_sell[v] = 0;
 }
 static int SellStepOf(int v) { (void)v; return kStepVal[g_step]; }
+
+// [모두 팔기] — 이 도시가 사 주는 짐을 통째로 담는다. 이미 다 담겨 있으면 도로 뺀다(다시 누르면 취소).
+// 사 주지 않는 것(매각가가 없는 것)은 건드리지 않는다 — 담아 봐야 [결정] 에서 안 팔린다.
+static int SellAll(void)
+{
+    int i, n = 0, all = 1;
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++) {
+        const MktCargo* c = Mkt_CargoAt(i);
+        if (!c || c->count <= 0 || Mkt_SellPrice(g_city, c->kind) <= 0) continue;
+        n += c->count;
+        if (g_sell[i] < c->count) all = 0;
+    }
+    if (!n) return 0;
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++) {
+        const MktCargo* c = Mkt_CargoAt(i);
+        if (!c || c->count <= 0 || Mkt_SellPrice(g_city, c->kind) <= 0) continue;
+        g_sell[i] = all ? 0 : c->count;
+    }
+    return all ? -n : n;      // 뺐으면 음수
+}
 // 왼쪽에서 담은 것 중 이 교역품 · 이 원산지에 해당하는 수량. 오른쪽에 미리 비춰 준다.
 static int PendingFor(int kind, int origin)
 {
@@ -148,7 +183,7 @@ static int PendingFor(int kind, int origin)
 static int SellProfit(void)
 {
     int i, sum = 0;
-    for (i = 0; i < g_cargo && i < 32; i++) {
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++) {
         const MktCargo* c = Mkt_CargoAt(i);
         if (c && g_sell[i] > 0) {
             int sp = Mkt_SellPrice(g_city, c->kind);
@@ -162,12 +197,56 @@ static int SellProfit(void)
 static int SellGain(void)
 {
     int i, sum = 0;
-    for (i = 0; i < g_cargo && i < 32; i++) {
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++) {
         const MktCargo* c = Mkt_CargoAt(i);
         if (c && g_sell[i] > 0) {
             int pr = Mkt_SellPrice(g_city, c->kind);
             if (pr > 0) sum += g_sell[i] * pr;
         }
+    }
+    return sum;
+}
+
+// 짐칸 셈 — 지금 실은 갯수, 담아 둔 것(살 것 − 팔 것).
+static int CargoCount(void)
+{
+    int i, sum = 0;
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++) {
+        const MktCargo* c = Mkt_CargoAt(i);
+        if (c) sum += c->count;
+    }
+    return sum;
+}
+static int CartQty(void)
+{
+    int i, sum = 0;
+    for (i = 0; i < g_rows && i < MKT_ROWS_MAX; i++) sum += g_qty[i];
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++)          sum -= g_sell[i];
+    return sum;
+}
+// 무게는 품목마다 다르다(교역품 레코드 +0x70). 갯수 x 그 무게를 더한다.
+static int CargoMass(void)
+{
+    int i, sum = 0;
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++) {
+        const MktCargo* c = Mkt_CargoAt(i);
+        int m = c ? Mkt_GoodsMass(c->kind) : -1;
+        if (c && m > 0) sum += c->count * m;
+    }
+    return sum;
+}
+static int CartMass(void)
+{
+    int i, sum = 0;
+    for (i = 0; i < g_rows && i < MKT_ROWS_MAX; i++) {
+        const MktRow* w = Mkt_At(i);
+        int m = w ? Mkt_GoodsMass(w->kind) : -1;
+        if (w && m > 0) sum += g_qty[i] * m;
+    }
+    for (i = 0; i < g_cargo && i < MKT_CARGO_MAX; i++) {
+        const MktCargo* c = Mkt_CargoAt(i);
+        int m = c ? Mkt_GoodsMass(c->kind) : -1;
+        if (c && m > 0) sum -= g_sell[i] * m;
     }
     return sum;
 }
@@ -192,6 +271,51 @@ static void Reload(HWND h)
     if (h) InvalidateRect(h, NULL, FALSE);
 }
 
+// 짐칸 막대 — [이름] [막대] [실은 것 → 담은 뒤 / 총량].
+// used = 이미 실은 것, add = 이번에 담은 것(음수면 파는 것), max = 총량.
+static void PaintBar(HDC dc, RECT r, const wchar_t* name, int used, int add, int max)
+{
+    RECT lb = r, bar = r, tx = r, in;
+    HBRUSH br;
+    wchar_t buf[96];
+    int after = used + add, w, p1, p2;
+
+    lb.right = lb.left + 44;
+    UI_Text(dc, lb, name, g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+
+    // 숫자는 막대 바로 뒤에 붙인다 — 오른쪽 끝에 밀어 두면 막대와 멀어져 눈이 헤맨다.
+    tx.left = r.right - 140;
+    bar.left = lb.right + 4; bar.right = tx.left - 8;
+    bar.top += 3; bar.bottom -= 3;
+    br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &bar, br); DeleteObject(br);
+
+    in = bar; InflateRect(&in, -2, -2);
+    w = in.right - in.left;
+    if (max <= 0) max = 1;
+    p1 = used  >= max ? w : (int)((__int64)w * used  / max);
+    p2 = after >= max ? w : (int)((__int64)w * after / max);
+    if (p1 < 0) p1 = 0;
+    if (p2 < 0) p2 = 0;
+    if (p2 > p1) {                       // 담은 만큼 늘어난 자리
+        RECT s = in; s.left = in.left + p1; s.right = in.left + p2;
+        br = CreateSolidBrush(after > max ? COL_WARN_TX : COL_LANG_TX);
+        FillRect(dc, &s, br); DeleteObject(br);
+    }
+    else if (p2 < p1) {                  // 파느라 비는 자리
+        RECT s = in; s.left = in.left + p2; s.right = in.left + p1;
+        br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &s, br); DeleteObject(br);
+    }
+    { RECT s = in; s.right = in.left + (p1 < p2 ? p1 : p2);
+      br = CreateSolidBrush(RGB(150, 55, 20)); FillRect(dc, &s, br); DeleteObject(br); }
+    UI_Bevel(dc, bar, TRUE);
+    br = CreateSolidBrush(COL_DARK); FrameRect(dc, &bar, br); DeleteObject(br);
+
+    if (add) wsprintfW(buf, L"%s → %s / %s", N(used), N(after), N(max));
+    else     wsprintfW(buf, L"%s / %s", N(used), N(max));
+    UI_Text(dc, tx, buf, g_smallFont, after > max ? COL_WARN_TX : COL_TEXT,
+            DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+}
+
 // 한 줄 그리기. 왼쪽은 살 것, 오른쪽은 내 짐.
 static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin)
 {
@@ -210,51 +334,72 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
     { RECT f = box; InflateRect(&f, 1, 1);
       br = CreateSolidBrush(COL_DARK); FrameRect(dc, &f, br); DeleteObject(br); }
 
-    t = r; t.left = box.right + 12; t.right = r.right - 128;
+    t = r; t.left = box.right + 12;
+    t.right = r.right - 152;                  // 단추 셋([−][+][모두]) 자리는 비워 둔다
     t.top = r.top + 4; t.bottom = t.top + 22;
-    UI_Text(dc, t, Mkt_GoodsName(kind), g_font, COL_TEXT,
-            DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+    {   // 이 도시 특산품이면 이름 앞에 ★ — 게임 도시정보의 "특산품" 과 같은 자리(+0x10)다.
+        wchar_t nm[80];
+        if (g_city >= 0 && kind == Mkt_CitySpecial(g_city))
+             wsprintfW(nm, L"★ %s", Mkt_GoodsName(kind));
+        else lstrcpynW(nm, Mkt_GoodsName(kind), 80);
+        UI_Text(dc, t, nm, g_font, COL_TEXT,
+                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+    }
 
     t.top = t.bottom; t.bottom = t.top + 18;
     if (side == 0) {
-        wsprintfW(buf, L"단가 %s닢 · 공급 %s", N(a), N(b));
+        int gm = Mkt_GoodsMass(kind);
+        if (gm > 0) wsprintfW(buf, L"단가 %s닢 · 공급 %s · 무게 %d", N(a), N(b), gm);
+        else        wsprintfW(buf, L"단가 %s닢 · 공급 %s", N(a), N(b));
         UI_Text(dc, t, buf, g_smallFont, COL_TEXT,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
     }
     else {
         // 매각가와 원산지 매입가를 나란히 — 얼마 남고 얼마 밑지는지 바로 보이게.
         int buyp = Mkt_BuyPriceAt(origin, kind), diff = (buyp > 0) ? b - buyp : 0;
-        if (a > 0 && buyp > 0)
-            wsprintfW(buf, L"%s개 · 매각 %s닢 · 매입 %s닢 (%s%s)", N(a), N(b), N(buyp),
-                      diff >= 0 ? L"+" : L"−", N(diff >= 0 ? diff : -diff));
-        else if (a > 0) wsprintfW(buf, L"%s개 · 매각 %s닢", N(a), N(b));
-        else            wsprintfW(buf, L"아직 없음 · 매각 %s닢", N(b > 0 ? b : 0));
-        UI_Text(dc, t, buf, g_smallFont,
-                (a > 0 && buyp > 0) ? (diff >= 0 ? COL_LANG_TX : COL_WARN_TX) : COL_TEXT,
-                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        COLORREF col = (a > 0 && buyp > 0) ? (diff >= 0 ? COL_LANG_TX : COL_WARN_TX) : COL_TEXT;
+        if (a > 0 && buyp > 0) {
+            // 남는 값(+19)이 제일 중요한데 줄이 길면 그 자리가 잘려 나간다.
+            // 그래서 오른쪽 끝에 따로 붙여 두고, 잘리는 것은 앞의 값들 쪽이 되게 한다.
+            RECT tx = t, dr = t;
+            dr.left = t.right - 64; tx.right = dr.left - 6;
+            wsprintfW(buf, L"%s개 · 매각 %s닢 · 매입 %s닢", N(a), N(b), N(buyp));
+            UI_Text(dc, tx, buf, g_smallFont, col,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            wsprintfW(buf, L"%s%s", diff >= 0 ? L"+" : L"−", N(diff >= 0 ? diff : -diff));
+            UI_Text(dc, dr, buf, g_smallFont, col,
+                    DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        }
+        else {
+            if (a > 0) wsprintfW(buf, L"%s개 · 매각 %s닢", N(a), N(b));
+            else       wsprintfW(buf, L"아직 없음 · 매각 %s닢", N(b > 0 ? b : 0));
+            UI_Text(dc, t, buf, g_smallFont, col,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        }
     }
 
     t.top = t.bottom; t.bottom = t.top + 18;
     if (side == 0) {
         int q = (v < MKT_ROWS_MAX) ? g_qty[v] : 0;
         if (q > 0) wsprintfW(buf, L"%s산 · 담은 것 %s개 (%s닢)", Mkt_CityName(origin), N(q), N(q * a));
-        else       wsprintfW(buf, L"%s산 · 두 번 누르면 %s개 담김", Mkt_CityName(origin), N((b + 1) / 2));
+        else       wsprintfW(buf, L"%s산", Mkt_CityName(origin));
         UI_Text(dc, t, buf, g_smallFont, q > 0 ? COL_WARN_TX : COL_DARK,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
-        UI_Button(dc, RcMinus(v), L"−", FALSE);
-        UI_Button(dc, RcPlus(v),  L"+", FALSE);
+        UI_Button(dc, RcMinus(v),  L"−", FALSE);
+        UI_Button(dc, RcPlus(v),   L"+", FALSE);
+        UI_Button(dc, RcAllBuy(v), L"모두", q >= b && b > 0);
     } else {
-        int q = (v < 32) ? g_sell[v] : 0;
+        int q = (v < MKT_CARGO_MAX) ? g_sell[v] : 0;
         int pend = PendingFor(kind, origin);
         if (q > 0)         wsprintfW(buf, L"%s산 · 팔 것 %s개 (%s닢)", Mkt_CityName(origin), N(q), N(q * b));
         else if (pend > 0) wsprintfW(buf, L"%s산 · 담는 중 +%s개", Mkt_CityName(origin), N(pend));
-        else               wsprintfW(buf, L"%s산 · 두 번 누르면 %s개 담김",
-                                     origin >= 0 ? Mkt_CityName(origin) : L"?", N((a + 1) / 2));
+        else               wsprintfW(buf, L"%s산", origin >= 0 ? Mkt_CityName(origin) : L"?");
         UI_Text(dc, t, buf, g_smallFont, (q > 0 || pend > 0) ? COL_WARN_TX : COL_DARK,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         if (a > 0) {     // 아직 없는 물건(담는 중만 있는 줄)에는 파는 단추를 안 붙인다
             UI_Button(dc, RcMinus2(v), L"−", FALSE);
             UI_Button(dc, RcPlus2(v),  L"+", FALSE);
+            UI_Button(dc, RcRowAll(v), L"모두", q >= a);
         }
     }
 }
@@ -273,14 +418,20 @@ static void Paint(HWND h)
     GetClientRect(h, &rc);
     dc = UI_BufBegin(&b, hdc, rc.right, rc.bottom);
     br = CreateSolidBrush(COL_BG); FillRect(dc, &rc, br); DeleteObject(br);
-    if (g_city >= 0) wsprintfW(buf, L"매매 — %s", Mkt_CityName(g_city));
-    else             lstrcpyW(buf, L"매매");
+    if (g_city >= 0) {
+        int sise = Mkt_CitySise(g_city);
+        const wchar_t* st = StateName(Mkt_CityState(g_city));
+        if (sise > 0) wsprintfW(buf, L"매매 — %s · 시세 %d · %s", Mkt_CityName(g_city), sise, st);
+        else          wsprintfW(buf, L"매매 — %s · %s", Mkt_CityName(g_city), st);
+    }
+    else lstrcpyW(buf, L"매매");
     UI_WindowFrame(dc, rc, buf, &cb);
 
     r.left = LEFT_X; r.right = LEFT_X + COL_W; r.top = FRAME + TITLE_H + 4; r.bottom = r.top + 22;
     UI_Text(dc, r, L"이 도시가 파는 것", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-    r.left = RIGHT_X; r.right = RIGHT_X + COL_W;
+    r.left = RIGHT_X; r.right = RcSellAll().left - 8;
     UI_Text(dc, r, L"내 짐", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    if (g_cargo > 0) UI_Button(dc, RcSellAll(), L"모두 팔기", FALSE);
 
     { RECT p; p.left = LEFT_X; p.right = LEFT_X + COL_W; p.top = LIST_Y; p.bottom = LIST_Y + LIST_H;
       br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
@@ -345,13 +496,20 @@ static void Paint(HWND h)
 
     r.left = LEFT_X; r.right = CLIENT_W - FRAME - 8;
     r.top = LIST_Y + LIST_H + 6; r.bottom = r.top + 22;
-    if (money >= 0) wsprintfW(buf, L"소지금 %s닢 · 이 창에서 쓴 돈 %s닢", N(money), N(g_spent));
-    else            lstrcpyW(buf, L"소지금을 읽지 못했습니다 — 세이브를 불러온 뒤에 열어 주세요.");
-    UI_Text(dc, r, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    {   // 왼쪽 소지금 · 오른쪽 배 척수. 짐칸은 아래 막대 두 줄이 보여 준다.
+        int ships = 0;
+        if (money >= 0) wsprintfW(buf, L"소지금 %s닢", N(money));
+        else            lstrcpyW(buf, L"소지금을 읽지 못했습니다 — 세이브를 불러온 뒤에 열어 주세요.");
+        UI_Text(dc, r, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        if (Mkt_Hold(&ships, NULL, NULL)) {
+            wsprintfW(buf, L"배 %d척", ships);
+            UI_Text(dc, r, buf, g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        }
+    }
 
     r.top = r.bottom; r.bottom = r.top + 20;
     UI_Text(dc, r, g_msg[0] ? g_msg
-                            : L"줄을 두 번 누르면 총량의 절반이 담깁니다(두 번이면 전량). [결정] 에 사고 팝니다. 매각가는 어림값입니다.",
+                            : L"[모두] 는 전량, 줄을 두 번 누르면 절반이 담깁니다. [결정] 에 사고 팔고 창이 닫힙니다. 매각가는 어림값입니다.",
             g_smallFont, g_msgWarn ? COL_WARN_TX : COL_DARK,
             DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
 
@@ -376,6 +534,23 @@ static void Paint(HWND h)
         UI_Button(dc, RcApply(), L"결정", (cost > 0 || SellGain() > 0));
     }
 
+    {   // 짐칸 막대 두 줄 — 게임 함대 화면과 같은 눈금이다. 왼쪽이 중량, 오른쪽이 용량.
+        //   이미 실은 것 = 짙은 빨강, 이번에 담은 것 = 파랑, 남는 자리 = 빈 칸.
+        int ships = 0, massMax = 0, capMax = 0;
+        if (Mkt_Hold(&ships, &massMax, &capMax)) {
+            int supV = Mkt_SupplyVolume(), supM = Mkt_SupplyMass();
+            int cnt = CargoCount(), net = CartQty();
+            RECT b;
+            b.top = LIST_Y + LIST_H + 84; b.bottom = b.top + 20;
+            b.left = LEFT_X; b.right = LEFT_X + COL_W;
+            if (supM >= 0)
+                PaintBar(dc, b, L"중량", supM + CargoMass(), CartMass(), massMax);
+            b.left = RIGHT_X; b.right = RIGHT_X + COL_W;
+            if (supV >= 0)
+                PaintBar(dc, b, L"용량", supV + cnt, net, capMax);
+        }
+    }
+
     UI_BufEnd(&b);
     EndPaint(h, &ps);
 }
@@ -389,7 +564,7 @@ static void CartApply(HWND h)
     wchar_t buf[160];
 
     // 먼저 판다 — 번 돈으로 이어서 살 수 있게. 뒤에서부터 팔아야 칸이 당겨져도 번호가 안 어긋난다.
-    for (i = (g_cargo < 32 ? g_cargo : 32) - 1; i >= 0; i--) {
+    for (i = (g_cargo < MKT_CARGO_MAX ? g_cargo : MKT_CARGO_MAX) - 1; i >= 0; i--) {
         int got;
         if (g_sell[i] <= 0) continue;
         got = Mkt_Sell(g_city, i, g_sell[i]);
@@ -417,12 +592,41 @@ static void CartApply(HWND h)
         total += got; bought += g_qty[i];
     }
     if (!bought) { Say(L"담은 것이 없습니다.", 1); InvalidateRect(h, NULL, FALSE); return; }
-    g_spent += total;
     if (total >= 0) wsprintfW(buf, L"%s개 · 지출 %s닢.", N(bought), N(total));
     else            wsprintfW(buf, L"%s개 · %s닢 남았습니다.", N(bought), N(-total));
     Say(buf, 0);
     CartClear();
     Reload(h);
+    // 다 사고 팔았으면 창을 닫는다 — 게임 구입창처럼 [결정] 한 번으로 끝난다.
+    // (막힌 자리에서 멈췄을 때는 위에서 이미 돌아갔다 — 무엇이 문제였는지 창에 남는다.)
+    ShowWindow(h, SW_HIDE);
+}
+
+// 줄의 [모두] — 그 품목만 통째로 담는다(왼쪽은 공급 전량, 오른쪽은 짐 전량).
+// 이미 다 담겨 있으면 도로 뺀다. 누르고 또 누르는 것이 더블클릭으로 가 버리므로
+// 두 자리(WM_LBUTTONDOWN · DBLCLK)에서 다 본다.
+static int RowAllHit(HWND h, POINT pt)
+{
+    int v;
+    for (v = 0; v < ROWS_VIS && v < g_rows && v < MKT_ROWS_MAX; v++) {
+        RECT b = RcAllBuy(v);
+        const MktRow* w;
+        if (!PtInRect(&b, pt)) continue;
+        w = Mkt_At(v);
+        if (w && w->supply > 0) g_qty[v] = (g_qty[v] >= w->supply) ? 0 : w->supply;
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
+    for (v = 0; v < ROWS_VIS && v < g_cargo; v++) {
+        RECT b = RcRowAll(v);
+        const MktCargo* c;
+        if (!PtInRect(&b, pt)) continue;
+        c = Mkt_CargoAt(v);
+        if (c && c->count > 0 && v < MKT_CARGO_MAX) g_sell[v] = (g_sell[v] >= c->count) ? 0 : c->count;
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
+    return 0;
 }
 
 static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
@@ -431,7 +635,7 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_CREATE:
         UI_CreateFonts();
         ItemPic_Load();
-        g_msg[0] = 0; g_spent = 0;
+        g_msg[0] = 0;
         CartClear();
         Reload(NULL);
         return 0;
@@ -441,6 +645,7 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
     {
         POINT pt; int v;
         pt.x = GET_X_LPARAM(l); pt.y = GET_Y_LPARAM(l);
+        if (RowAllHit(h, pt)) return 0;
         for (v = 0; v < ROWS_VIS && v < g_rows; v++) {
             RECT r = RcRow(0, v);
             const MktRow* w;
@@ -475,6 +680,7 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
                 if (PtInRect(&a, pt))  { CartAdd(v, -StepOf(v)); InvalidateRect(h, NULL, FALSE); return 0; }
                 if (PtInRect(&b2, pt)) { CartAdd(v,  StepOf(v)); InvalidateRect(h, NULL, FALSE); return 0; }
             }
+            if (RowAllHit(h, pt)) return 0;
             for (v = 0; v < ROWS_VIS && v < g_cargo; v++) {
                 RECT a = RcMinus2(v), b2 = RcPlus2(v);
                 if (PtInRect(&a, pt))  { SellAdd(v, -SellStepOf(v)); InvalidateRect(h, NULL, FALSE); return 0; }
@@ -485,6 +691,16 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
                 if (PtInRect(&s, pt)) { g_step = v; InvalidateRect(h, NULL, FALSE); return 0; }
             }
         }
+        { RECT s = RcSellAll();
+          if (g_cargo > 0 && PtInRect(&s, pt)) {
+              int n = SellAll();
+              wchar_t buf[96];
+              if (!n)       Say(L"이 도시가 사 주는 짐이 없습니다.", 1);
+              else if (n>0) { wsprintfW(buf, L"짐을 모두 담았습니다 — %s개 (%s닢).", N(n), N(SellGain())); Say(buf, 0); }
+              else          Say(L"팔 것을 도로 뺐습니다.", 0);
+              InvalidateRect(h, NULL, FALSE);
+              return 0;
+          } }
         { RECT a = RcApply(); if (PtInRect(&a, pt)) { CartApply(h); return 0; } }
         { RECT c = RcClear(); if (PtInRect(&c, pt)) { CartClear(); Say(L"담은 것을 비웠습니다.", 0);
                                                      InvalidateRect(h, NULL, FALSE); return 0; } }
@@ -533,6 +749,7 @@ static void ShowMarketWindow(void)
         g_wnd = CreateWindowExW(0, WC_MARKET, L"매매", WS_POPUP,
                     x, y, CLIENT_W, CLIENT_H, g_gameHwnd, NULL, g_hinst, NULL);
     } else {
+        g_msg[0] = 0;         // 지난번 [결정] 자국은 지우고 연다
         CartClear();
         Reload(g_wnd);
     }

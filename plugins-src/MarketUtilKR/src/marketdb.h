@@ -12,11 +12,25 @@
 //     +0x10 · +0x14 = 연결 내륙도시 id(-1 없음)   +0x1C = 교역품 지역(0~33)
 //     (세비야 record 가 4=톨레도, 카디스가 6=코르도바 — 게임의 "○○산" 수입품이 여기서 온다)
 //   지역 공통품   모듈 + 0x0DF0E0 + 지역*20  (i32 x5, -1 끝)
-//   지역 기준가   모듈 + 0x0DCBBC + (지역 + 34*종류)*4        ★ 70종 x 34지역 격자
+//   교역품 레코드 모듈 + 0x0DCBBC + 종류*136 (int 34칸)      ★ 70종
+//     +0x00~0x6C 지역 기준가 28칸(지역 0~27)   ← 오래 "34지역 격자" 로 알던 자리다
+//     +0x70 중량(한 개 무게)  +0x74 ?(대개 7)  +0x78 ?(0/1)
+//     +0x7C 이름 문자열 포인터  +0x80 그림 번호  +0x84 ?(0/4/8 — 분류로 보인다)
+//     중량은 게임 구입창의 "중량" 칸 그대로다(올리브유 8 · 총 15 · 모직물 3 · 견직물 3 대조).
 //   판매 게이트   모듈 + 0x18BAB0 + 종류*4  (0 이면 그 교역품은 안 판다)
-//   내 짐         모듈 + 0x1B397C + i*16   {종류, 갯수, 원산지, 내구도}
-//                 빈 칸은 -1 0 -1 0 이다(다 팔고 확인). 앞에서부터 채워진다.
+//   내 짐         모듈 + 0x1B397C + (배*8 + 칸)*16   {종류, 갯수, 원산지, 내구도}
+//                 ★ 배마다 여덟 칸이다 — 한 덩어리 서른두 칸이 아니다.
+//                 0번 배가 0~7, 1번 배가 8~15 … 로 이어진다(짐칸 날값으로 확인:
+//                 0칸=견직물200 피렌체산, 8칸=밀1 빌바오산 … 게임 매각창은 함대에 편입된
+//                 배의 것만 보여 준다. 도크에 둔 배의 짐까지 읽어 엉뚱한 줄이 늘어났었다).
+//                 빈 칸은 -1 0 -1 0. 그 배 안에서는 앞에서부터 채워진다.
 //   소지금        모듈 + 0x1B6194
+//   함선          모듈 + 0x1A4E18 + i*0x6C  (16척. ce/CDS_95.CT "1~16번 함선")
+//     +0x00 이름  +0x28 함선종류(0~7)  +0x30 최저승원  +0x34 현재승원
+//     +0x38·+0x3C 추진력 현재/최대  +0x40 중량  +0x44 용량(갯수)
+//     +0x48·+0x4C 내구도 현재/최대  +0x50 대포수 …
+//     빈 칸은 최대내구도가 0 이다. 짐칸은 +0x44 "용량(갯수)" 합으로 본다 —
+//     교역품이 갯수로 세는 값이라 짐(갯수 합)과 바로 견줄 수 있다.
 //
 // 단가 = 기준가 x 3 / 2.
 //   · 공통품은 지역 기준가 표에서 (0x42E3C0 이 그렇게 읽는다)
@@ -38,7 +52,21 @@
 #define MKT_MONEY_RVA   0x1B6194u
 #define MKT_REGION_N    34
 #define MKT_GOODS_N     70
-#define MKT_CARGO_N     32            // 짐 칸을 이만큼만 본다(그 뒤는 안 건드린다)
+#define MKT_SHIP_RVA    0x1A4E18u
+#define MKT_SHIP_SZ     0x6C
+#define MKT_SHIP_N      16
+#define MKT_SHIP_TYPE   0x28
+#define MKT_SHIP_MASS   0x40          // 중량(무게)
+#define MKT_SHIP_CAP    0x44          // 용량(갯수)
+#define MKT_SHIP_HULLMX 0x4C          // 최대내구도. 0 이면 빈 칸이다
+#define MKT_SHIP_FLEET  0x60          // 함대 편입 표시 — 도크에 둔 배는 -1 이다.
+// 배는 열 척까지 갖고 그 중 함대에 넣은 것만 짐을 싣는다(항해는 여덟 척까지).
+// 실제로 본 값: 편입된 여섯 칸이 모두 192, 도크에 둔 네 칸이 -1.
+// 192 가 무슨 뜻인지는 아직 모르나 도시 id 는 아니다(192번은 사카이라 무관).
+// 그래서 "-1 이 아니면 편입" 으로 본다.
+#define MKT_CARGO_SLOTS 8             // 배 한 척의 짐 칸 수
+#define MKT_CARGO_N     (MKT_SHIP_N * MKT_CARGO_SLOTS)   // 날값으로 볼 수 있는 칸 전체
+#define MKT_CARGO_MAX   64            // 목록에 담아 두는 줄 수(함대 여덟 척 x 여덟 칸)
 #define MKT_COND_MAX    100           // 내구도. 이 범위를 벗어나면 짐 칸이 아니다
 
 typedef struct {
@@ -62,6 +90,28 @@ int  Mkt_BuildList(int city);          // 그 도시가 파는 것을 모은다.
 const MktRow* Mkt_At(int i);
 
 int  Mkt_LoadCargo(void);              // 내 짐을 훑는다. 개수
+
+// 함대 짐칸 — 성한 배들의 중량 합 · 용량 합과 배 수. 못 읽으면 0 을 돌려준다.
+// 게임은 중량 · 용량 둘 중 하나라도 넘으면 안 싣는다.
+int  Mkt_Hold(int* ships, int* mass, int* cap);
+
+// 함대 칸(모듈 + 0x1B3950). 짐 배열 바로 앞자리다.
+//   +0x00 피로도  +0x04 규칙  +0x08 ?
+//   +0x0C 물  +0x10 식량  +0x14 자재  +0x18 포탄        ← 이 넷이 "중량" 쪽 몫
+//   +0x1C 물  +0x20 식량  +0x24 자재  +0x28 포탄        ← 같은 넷의 "용량" 쪽 몫
+// 실제로 본 값: 중량쪽 5180·5180·0·23, 용량쪽 665·665·0·23 — 자재·포탄은 두 값이 같고
+// 물·식량만 7.8배 차이가 난다(물·식량은 무겁고 부피는 작다). 게임 함대 화면이
+// "짐중량 8230 / 짐용량 1059" 를 그 비율로 보여 준 것과 맞는다.
+#define MKT_FLEET_RVA   0x1B3950u
+#define MKT_FLEET_MASS  0x0C          // 물·식량·자재·포탄 넷(중량 몫)
+#define MKT_FLEET_VOL   0x1C          // 같은 넷(용량 몫)
+int  Mkt_SupplyMass(void);            // 물·식량·자재·포탄이 먹은 중량. 못 읽으면 -1
+int  Mkt_SupplyVolume(void);          // 같은 것이 먹은 용량. 못 읽으면 -1
+
+// 지금 도시의 값 몇 개 — 매매 창 머리에 그대로 보여 준다.
+int  Mkt_CitySise(int city);          // 시세(도시struct +0x0C). 못 읽으면 -1
+int  Mkt_CityState(int city);         // 도시 상태(+0x40). 못 읽으면 -1
+int  Mkt_CitySpecial(int city);       // 특산품 종류(+0x10). 없으면 -1
 
 // 짐 자리가 맞는지 눈으로 보려고 — 그 자리의 날값 네 개를 그대로 돌려준다.
 void Mkt_CargoRaw(int slot, int out[4]);
@@ -89,3 +139,6 @@ int  Mkt_Sell(int city, int cargoIndex, int qty);   // 번 돈. 실패면 음수
 const wchar_t* Mkt_GoodsName(int kind);
 const wchar_t* Mkt_CityName(int city);
 int  Mkt_GoodsPic(int kind);           // ITEM.CDS 그림 번호
+int  Mkt_GoodsMass(int kind);          // 한 개 무게(레코드 +0x70). 못 읽으면 -1
+#define MKT_GOODS_REC   136            // 교역품 레코드 크기(int 34칸)
+#define MKT_GOODS_MASS  0x70           // 그 안의 중량 자리
