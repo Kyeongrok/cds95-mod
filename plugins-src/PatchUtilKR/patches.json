@@ -194,5 +194,22 @@
         "PatchedBytes": "00 05 00 00"
       }
     ]
+  },
+  {
+    "Name": "용어: 산토메→상투메",
+    "Description": "São Tomé — 포르투갈어라 '상투메' 가 맞다. exe 안 6곳 전부(도시 이름 · 시장 · 항구 · 대사문). 문자열 앞 4바이트: 산토 BBEA C5E4 -> 상투 BBF3 C5F5, 뒤의 '메' 는 그대로다.",
+    "Addresses": [
+      "0x13A254",
+      "0x16283C",
+      "0x162848",
+      "0x17BB8F",
+      "0x17BBB8",
+      "0x17BD2F"
+    ],
+    "Type": "toggle",
+    "OriginalValue": "산토",
+    "PatchedValue": "상투",
+    "ValueType": "text",
+    "AutoApply": true
   }
 ]

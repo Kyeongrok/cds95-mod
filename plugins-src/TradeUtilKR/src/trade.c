@@ -1231,6 +1231,17 @@ static LRESULT CALLBACK GoodsPicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 }
 
 // 목록 창(owner) 옆에 그림 창을 띄운다. 이미 떠 있으면 내용만 갈아 끼운다.
+// 게임이 전체화면 DirectDraw 라 그냥 띄우면(SW_SHOWNOACTIVATE) 게임 화면 뒤로 숨는다.
+// 앞으로 낸 다음 초점은 목록에 돌려준다 — 딸린 창은 주인 위에 붙어 다니므로 그대로 보인다.
+static void BringToFront(HWND w, HWND owner)
+{
+    ShowWindow(w, SW_SHOW);
+    UpdateWindow(w);
+    SetForegroundWindow(w);
+    if (g_goodsList) SetFocus(g_goodsList);
+    else if (owner)  SetForegroundWindow(owner);
+}
+
 static void ShowGoodsPic(HWND owner, int gi)
 {
     static BOOL reg = FALSE;
@@ -1240,7 +1251,11 @@ static void ShowGoodsPic(HWND owner, int gi)
     EnsureFonts();
     ItemPic_Load();
     g_gpic = g_goods[gi]; g_gpicOk = 1;
-    if (g_gpicWnd) { InvalidateRect(g_gpicWnd, NULL, TRUE); return; }
+    if (g_gpicWnd) {
+        InvalidateRect(g_gpicWnd, NULL, TRUE);
+        BringToFront(g_gpicWnd, owner);
+        return;
+    }
 
     if (!reg) {
         WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc));
@@ -1257,8 +1272,7 @@ static void ShowGoodsPic(HWND owner, int gi)
     }
     g_gpicWnd = CreateWindowExW(0, WC_GPIC, L"교역품 그림", WS_POPUP, x, y, GPIC_W, GPIC_H,
                                 owner, NULL, g_hinst, NULL);
-    // 목록에 초점을 그대로 둔다 — 그림을 띄운 뒤에도 검색창·화살표로 계속 고를 수 있게.
-    if (g_gpicWnd) ShowWindow(g_gpicWnd, SW_SHOWNOACTIVATE);
+    if (g_gpicWnd) BringToFront(g_gpicWnd, owner);
 }
 
 static LRESULT CALLBACK GoodsProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
