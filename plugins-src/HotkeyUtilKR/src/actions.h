@@ -38,6 +38,10 @@ static const HkAction kActions[] = {
     { L"플러그인 관리", 0xB700, 'L' },
     { L"업데이트",      0xB900, 'U' },
     { L"단축키",        0xBB00, 'J' },
+    // 저장 · 중단(SaveUtilKR). 자택 · 여관까지 안 가고 그 자리에서 게임의 저장 함수를 부른다.
+    // 중단은 저장하고 게임을 끝내 버리므로 기본키를 안 준다 — 쓸 사람이 직접 걸어야 한다.
+    { L"저장",          0xBE00, 'V' },
+    { L"중단",          0xBE01, 0 },
 };
 
 #define ACT_N ((int)(sizeof(kActions)/sizeof(kActions[0])))

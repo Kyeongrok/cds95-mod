@@ -120,8 +120,13 @@ static void Say(const wchar_t* s, int warn) { lstrcpynW(g_msg, s, 160); g_msgWar
 // 이 도시에는 교역소가 없다 — 파는 것이 하나도 없으면 사 주지도 않는다.
 // 그런 곳에서는 왼쪽 목록이 비고 오른쪽(내 짐)도 잠근다.
 static int NoPost(void) { return g_city >= 0 && g_rows <= 0; }
+
+// 함대가 없다 — 육상으로 도시에 들어오면 배를 안 끌고 온다. 실을 데가 없으니 매매도 안 된다.
+// 함대 여덟 칸이 다 비면 Mkt_Hold 가 0 을 돌려준다.
+static int NoShip(void) { int n = 0; return !Mkt_Hold(&n, NULL, NULL) || n <= 0; }
+
 // 지금 아무것도 만지면 안 되는 상태인가.
-static int Locked(void) { return Mkt_TradeOpen() || NoPost(); }
+static int Locked(void) { return Mkt_TradeOpen() || NoPost() || NoShip(); }
 
 // 줄 오른쪽 끝의 단추 넷 — [1] [10] [100] [모두]. 양쪽 칸이 같은 자리를 쓴다.
 // 숫자는 "그만큼 담는다" 는 뜻이다. 예전에는 아래 칸에서 담기 단위를 고른 뒤 줄에서 [−][+] 를
@@ -130,13 +135,13 @@ static int Locked(void) { return Mkt_TradeOpen() || NoPost(); }
 static RECT RcBtn(int side, int v, int dxRight, int w)
 { RECT r = RcRow(side, v); RECT b; b.right = r.right - dxRight; b.left = b.right - w;
   b.top = r.top + 14; b.bottom = b.top + 24; return b; }
-#define ROW_BTN_W  172                 // 단추 넷이 쓰는 오른쪽 자리(글씨는 여기까지만)
+#define ROW_BTN_W  164                 // 단추 넷이 쓰는 오른쪽 자리(글씨는 여기까지만)
 static RECT RcStepBtn(int side, int v, int k)   // k = 0·1·2 → 1 · 10 · 100
-{ static const int dx[STEP_N] = { 138, 105, 66 };
-  static const int w [STEP_N] = {  26,  30, 36 };
+{ static const int dx[STEP_N] = { 132, 99, 62 };
+  static const int w [STEP_N] = {  26, 30, 34 };
   return RcBtn(side, v, dx[k], w[k]); }
-static RECT RcAllBuy(int v) { return RcBtn(0, v, 8, 52); }     // 공급 전량 담기
-static RECT RcRowAll(int v) { return RcBtn(1, v, 8, 52); }     // 이 품목만 통째로
+static RECT RcAllBuy(int v) { return RcBtn(0, v, 8, 50); }     // 공급 전량 담기
+static RECT RcRowAll(int v) { return RcBtn(1, v, 8, 50); }     // 이 품목만 통째로
 // [결정] — 지출 · 수입 · 수익 세 줄 오른쪽에 그 높이만큼 세워 둔다.
 static RECT RcApply(void)
 { RECT r; r.right = RIGHT_X + COL_W; r.left = r.right - 90;
@@ -426,7 +431,7 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
         // 매각가도 손익도 안 보여 준다 — 팔 수 있는 물건이 아직 아니다.
         int cartOnly = ((v < ROWS_VIS ? g_right[v].cargo : -1) < 0 && pend > 0);
         RECT cr = t, pr = t;
-        cr.right = t.left + 66; pr.left = cr.right + 4;
+        cr.right = t.left + 58; pr.left = cr.right + 4;
         if (have > 0) {
             wsprintfW(buf, L"%s개", N(have));
             UI_Text(dc, cr, buf, g_smallFont, pend > 0 ? COL_CART_TX : COL_TEXT,
@@ -439,8 +444,10 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
         wsprintfW(buf, L"매각 %s닢", N(b > 0 ? b : 0));
         if (cartOnly) { /* 아무것도 안 그린다 */ }
         else if (have > 0 && buyp > 0 && b > 0) {
+            // 매각가와 손익이 한 줄에 같이 선다. 손익 자리를 너무 넓게 잡으면 매각가가
+            // "매각 1..." 로 잘린다 — 단추가 넷으로 늘면서 한 번 겪었다.
             RECT tx = pr, dr = t;
-            dr.left = t.right - 64; tx.right = dr.left - 6;
+            dr.left = t.right - 50; tx.right = dr.left - 6;
             UI_Text(dc, tx, buf, g_smallFont, col,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
             wsprintfW(buf, L"%s%s", diff >= 0 ? L"+" : L"−", N(diff >= 0 ? diff : -diff));
@@ -533,6 +540,8 @@ static void Paint(HWND h)
 
     { RECT p; p.left = LEFT_X; p.right = LEFT_X + COL_W; p.top = LIST_Y; p.bottom = LIST_Y + LIST_H;
       br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
+      // 배가 없으면 줄을 안 그린다 — 담을 수도 없는 단추를 늘어놓아 봐야 헷갈리기만 한다.
+      if (!NoShip())
       for (i = 0; i < ROWS_VIS && i < g_rows; i++) {
           const MktRow* w = Mkt_At(i);
           if (w) PaintRow(dc, 0, i, w->kind, w->price, w->supply, w->origin);
@@ -540,6 +549,9 @@ static void Paint(HWND h)
       br = CreateSolidBrush(COL_DARK); FrameRect(dc, &p, br); DeleteObject(br);
       if (g_city < 0)
           UI_Text(dc, p, L"항해 중입니다 — 도시에 정박해야 합니다.", g_font, COL_TEXT,
+                  DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+      else if (NoShip())
+          UI_Text(dc, p, L"배가 없어 사고팔 수 없습니다.", g_font, COL_TEXT,
                   DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
       else if (!g_rows)
           UI_Text(dc, p, L"이 도시에는 교역소가 없거나 파는 것이 없습니다.", g_font, COL_TEXT,
@@ -557,7 +569,16 @@ static void Paint(HWND h)
                      here > 0 ? here : 0, g_right[v].origin);
         } }
       br = CreateSolidBrush(COL_DARK); FrameRect(dc, &p, br); DeleteObject(br);
-      if (NoPost()) {
+      if (NoShip()) {
+          RECT d = p;
+          d.bottom = d.top + (p.bottom - p.top) / 2;
+          UI_Text(dc, d, L"배가 없습니다.", g_font, COL_TEXT,
+                  DT_CENTER|DT_BOTTOM|DT_SINGLELINE|DT_NOPREFIX);
+          d.top = d.bottom + 6; d.bottom = d.top + 44;
+          UI_Text(dc, d, L"육상으로 들어온 도시에서는 실을 데가 없어\n사고팔 수 없습니다.",
+                  g_smallFont, COL_TEXT, DT_CENTER|DT_TOP|DT_NOPREFIX);
+      }
+      else if (NoPost()) {
           RECT d = p;
           d.bottom = d.top + (p.bottom - p.top) / 2;
           UI_Text(dc, d, L"이 도시에는 교역소가 없습니다.", g_font, COL_TEXT,
