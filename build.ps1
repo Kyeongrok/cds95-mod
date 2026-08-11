@@ -9,6 +9,11 @@
 .PARAMETER Configuration
     빌드 구성 (Release/Debug). 기본값 Release.
 
+.PARAMETER PluginDir
+    플러그인을 둘 폴더. 안 주면 CDS95Util\plugins\<만든이>\ 아래에 KR 플러그인이 이미
+    있는 폴더를 찾아 거기로, 없으면 CDS95Util 로 배포합니다. 데이터 파일(json)은
+    언제나 CDS95Util 에 둡니다.
+
 .PARAMETER SkipDeploy
     빌드만 하고 게임 폴더로 복사하지 않습니다.
 
@@ -19,6 +24,7 @@
 param(
     [string]$GamePath = "C:\Users\Administrator\Downloads\cds95",
     [string]$Configuration = "Release",
+    [string]$PluginDir = "",
     [switch]$SkipDeploy
 )
 
@@ -95,13 +101,35 @@ if (-not $GamePath -or -not (Test-Path $GamePath)) {
     return
 }
 
-$TargetDir = Join-Path $GamePath "CDS95Util"
-if (-not (Test-Path $TargetDir)) {
-    Write-Host "`n$TargetDir 가 없습니다. 게임 경로($GamePath)가 맞는지 확인하세요." -ForegroundColor Yellow
+$UtilDir = Join-Path $GamePath "CDS95Util"
+if (-not (Test-Path $UtilDir)) {
+    Write-Host "`n$UtilDir 가 없습니다. 게임 경로($GamePath)가 맞는지 확인하세요." -ForegroundColor Yellow
     return
 }
 
+# ---- 배포처 고르기 ----
+# 로더는 CDS95Util 뿐 아니라 CDS95Util\plugins\<만든이>\ 아래도 훑는다
+# (QuestModKR 의 UpToDataDir 주석 참고 — 데이터 파일만 CDS95Util 한 자리에 모은다).
+# 우리 플러그인이 이미 그런 하위 폴더에 있으면 거기가 진짜 배포처다.
+# ★ 두 자리에 같은 이름이 다 있으면 같은 DLL 이 두 번 로드된다. 그러면 감시 스레드가
+#   둘 다 게임 창을 서브클래싱해 나중에 건 쪽이 바깥이 되는데, 1초 폴링 경쟁이라
+#   켤 때마다 승자가 바뀐다 — 새 기능이 "됐다 안 됐다" 하는 원인이다(2026-08-11).
+if ($PluginDir) {
+    $TargetDir = if ([IO.Path]::IsPathRooted($PluginDir)) { $PluginDir } else { Join-Path $UtilDir $PluginDir }
+} else {
+    $subs = @(Get-ChildItem (Join-Path $UtilDir "plugins") -Directory -ErrorAction SilentlyContinue |
+              Where-Object { Get-ChildItem $_.FullName -Filter "*KR.plugin" -File -ErrorAction SilentlyContinue })
+    if ($subs.Count -gt 1) {
+        throw "CDS95Util\plugins 아래에 KR 플러그인 폴더가 여러 개입니다: $($subs.Name -join ', ')`n-PluginDir 로 하나를 골라 주세요."
+    }
+    $TargetDir = if ($subs.Count -eq 1) { $subs[0].FullName } else { $UtilDir }
+}
+if (-not (Test-Path $TargetDir)) { New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null }
+
 Write-Step "배포 대상: $TargetDir"
+if ($TargetDir -ne $UtilDir) {
+    Write-Host "  (데이터 파일 cities.json / patches.json 등은 $UtilDir 에 둡니다)" -ForegroundColor DarkGray
+}
 
 # 게임이 켜져 있으면 .plugin 은 프로세스에 매핑돼 있어 덮어쓸 수 없다.
 # 하지만 이름 바꾸기는 된다(로더가 FILE_SHARE_DELETE 로 열어 둔다).
@@ -136,7 +164,7 @@ $DataFiles = @(
 )
 foreach ($data in $DataFiles) {
     if (-not (Test-Path $data)) { continue }
-    $dst = Join-Path $TargetDir (Split-Path $data -Leaf)
+    $dst = Join-Path $UtilDir (Split-Path $data -Leaf)
     if (Test-Path $dst) {
         Write-Host "그대로 둠: $dst (이미 있음 — 고쳐 쓴 것을 덮지 않는다)" -ForegroundColor DarkGray
     } else {
@@ -148,6 +176,47 @@ foreach ($data in $DataFiles) {
 # 지난번에 밀어낸 파일 중 이제 안 잡혀 있는 것들을 치운다.
 Get-ChildItem $TargetDir -Filter "*.old-*" -ErrorAction SilentlyContinue | ForEach-Object {
     try { Remove-Item $_.FullName -Force -ErrorAction Stop } catch { }
+}
+
+# ---- 하위 폴더에 배포했을 때: ModUtilKR 만은 루트에도 둔다 ----
+# 로더(ddraw.dll, 2019년 원본)는 CDS95Util 루트의 *.plugin 만 불러온다.
+# plugins\<만든이>\ 아래 것은 ModUtilKR 이 LoadSubPlugins 로 대신 불러온다.
+# 그러니 ModUtilKR 이 루트에 없으면 하위 폴더가 통째로 안 뜬다 (2026-08-11 이렇게 깨뜨렸다).
+if ($TargetDir -ne $UtilDir) {
+    $loader = $BuiltPlugins | Where-Object { (Split-Path $_ -Leaf) -eq "ModUtilKR.plugin" }
+    if ($loader) {
+        $dst = Join-Path $UtilDir "ModUtilKR.plugin"
+        try {
+            Copy-Item $loader -Destination $dst -Force -ErrorAction Stop
+        } catch {
+            $old = "ModUtilKR.plugin.old-" + (Get-Date -Format "yyyyMMddHHmmss")
+            Rename-Item -Path $dst -NewName $old -ErrorAction SilentlyContinue
+            Copy-Item $loader -Destination $dst -Force -ErrorAction SilentlyContinue
+            $staged += "ModUtilKR.plugin"
+        }
+        Write-Host "복사 완료: $dst  (하위 폴더를 불러오는 로더라 루트에도 둔다)" -ForegroundColor Green
+    }
+}
+
+# ---- 딴 자리에 남은 같은 이름 알리기 ----
+# 루트와 하위 폴더에 같은 이름이 다 있으면 같은 DLL 이 두 번 로드될 수 있다.
+# 고친 ModUtilKR 은 루트에 있는 이름을 건너뛰므로 안전하지만, 옛 ModUtilKR 이 돌고 있으면
+# 여전히 겹친다. 지우지 않고 알리기만 한다 — 어느 쪽을 남길지는 사람이 정할 일이다.
+$otherDirs = @($UtilDir) + @(Get-ChildItem (Join-Path $UtilDir "plugins") -Directory -ErrorAction SilentlyContinue |
+                             ForEach-Object { $_.FullName })
+$dups = @()
+foreach ($dir in $otherDirs) {
+    if ((Resolve-Path $dir).Path -eq (Resolve-Path $TargetDir).Path) { continue }
+    foreach ($plugin in $BuiltPlugins) {
+        $name = Split-Path $plugin -Leaf
+        if ($name -eq "ModUtilKR.plugin") { continue }   # 루트에 있어야 하는 것
+        $other = Join-Path $dir $name
+        if (Test-Path $other) { $dups += $other }
+    }
+}
+if ($dups.Count -gt 0) {
+    Write-Host "`n같은 이름이 딴 자리에도 있습니다 — 한쪽을 .plugin.off 로 꺼 두세요:" -ForegroundColor Yellow
+    $dups | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
 if ($staged.Count -gt 0) {

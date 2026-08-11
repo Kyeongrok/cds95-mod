@@ -30,6 +30,11 @@
 
 static void RecentWarped(int city);   // 아래 "최근 방문한 도시" 에 있다
 
+// 시세 일람에서 줄을 두 번 누르면 그 도시로 가고, 항해 중이면 들어갈지도 묻는다.
+// 그 일은 우리 창 안에서 하지 않고 게임 창에 부쳐서 게임 스레드가 제 차례에 하게 한다
+// (게임 대화상자가 우리 팝업 창 프로시저 안쪽에서 열리지 않도록). 아래 "도시 진입" 참고.
+static UINT g_msgGoCity = 0;
+
 // kWarps[i] 의 16바이트를 워프 주소에 써서 해당 도시로 순간이동.
 static void DoWarp(int i)
 {
@@ -702,6 +707,22 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             }
             }
             return CDRF_DODEFAULT;
+        }
+        // 줄을 두 번 누르면 그 도시로 간다(항해 중이면 들어갈지도 묻는다).
+        // 창을 먼저 닫고 게임 창에 부친다 — 게임 대화상자가 이 창 프로시저 안쪽에서
+        // 열리면 우리 팝업이 그 위에 남는다. 워프 창이 워프한 뒤 닫는 것과 같은 이유다.
+        if (nh->idFrom == 1 && nh->code == NM_DBLCLK)
+        {
+            int row = ((LPNMITEMACTIVATE)lp)->iItem;
+            if (row >= 0 && row < g_viewN && g_msgGoCity)
+            {
+                int city = g_sise[g_view[row]].id;
+                DestroyWindow(h);
+                // g_subHwnd 로 부친다 — g_hwnd 는 감시 스레드가 1초마다 NULL 로 비웠다
+                // 다시 채우므로 하필 그 틈에 누르면 심부름이 허공으로 간다.
+                PostMessageW(g_subHwnd, g_msgGoCity, (WPARAM)city, 0);
+            }
+            return 0;
         }
         // 제목 클릭 — 오름차순 → 내림차순 → 안 함 순으로 돈다.
         if (nh->idFrom == 1 && nh->code == LVN_COLUMNCLICK)
@@ -1732,6 +1753,135 @@ static void ShowWarpWindow(HWND owner)
     }
 }
 
+// ---------------- 도시 진입 (시세 일람에서 두 번 누르기) ----------------
+//
+// 게임은 배(또는 말)가 도시 옆을 지날 때 "[리스본]의 항구로 들어가겠습니까?" 를 묻고,
+// 답이 YES 면 그 도시로 들여보낸다. 그 일을 하는 것이 근접 검사 함수 0x48D810 인데,
+// 그 함수는 (1) 함대 좌표 둘레를 훑어 도시를 고르는 대목과 (2) 물어보고 들여보내는
+// 대목이 한 몸이고, 항해 화면 객체(this)를 받는다. 우리는 도시를 이미 알고 있으므로
+// (2) 만 — 0x48DB7F ~ 0x48DC55 를 — 도시 번호를 직접 받는 꼴로 옮겨 적었다.
+// 새로 지어낸 절차가 아니라 게임이 하던 그대로다: 부르는 함수도, 쓰는 자리도 같다.
+//
+//   0x48DB7F  ebx = [0x5B61B4] ? "도시" : "항구"
+//   0x48DB9D  esi = ([0x5B3950] >= 60) ? ebx : 조사(ebx)      ; 지친 문구용
+//   0x48DBB5  eax = 조사(ebx, 0xA)                            ; "로" / "으로"
+//   0x48DBC5  이름 = *(char**)(0x4D14B0 + 도시*136)           ; 게임 0x429980 의 결과
+//   0x48DBE5  물음 = 0x49E3E0(2, 0, 서식, 이름, ebx, esi, eax)
+//   0x48DBED  물음 == 2(YES) 면 아래 열 줄을 실행 → 게임이 다음 판에 도시 화면으로 넘어간다
+#define GF_ASK      0x0049E3E0u  // __cdecl int(int 갈래, int, const char* 서식, ...) — YES 면 2
+#define GF_JOSA     0x004281B0u  // __cdecl const char*(const char* 말, int 갈래) — 0xA 는 "로/으로"
+#define GF_MEMBER   0x00473DC0u  // __thiscall void*(this=0x5B3928, int i) — 파티원 i (없으면 0)
+#define GF_SETCITY  0x0044CA70u  // __thiscall void(파티원, int 도시) — 그 사람의 현재 도시(+0x60)
+#define PARTY_OBJ   0x005B3928u
+#define STR_CITY    0x00570868u  // "도시"
+#define STR_PORT    0x00570870u  // "항구"
+#define STR_TIRED   0x00570878u  // "[%s]의 %s입니다. 모두 지쳐 있으니 %s%s 들어갑시다."
+#define STR_ASK     0x005708B0u  // "[%s]의 %s%s 들어가겠습니까?"
+#define CUR_CITY    0x005B6154u  // 지금 있는 도시. -1 이면 항해 중
+#define JUST_IN     0x005B6384u  // "방금 들어왔다" — 도시 화면이 보고 지운다
+#define IN_MODE     0x005B6158u
+#define ON_LAND     0x005B61B4u  // 0 이면 배, 아니면 육상(말)
+#define CREW_TIRED  0x005B3950u  // 60 이상이면 문구가 "모두 지쳐 있으니 …" 로 바뀐다
+#define SAIL_STATE  0x005A4D40u  // 들어갈 때 게임이 같이 0 으로 되돌리는 둘
+#define SAIL_STATE2 0x005B39FCu
+// 도시 구조체 0번. SISE_BASE 가 그 안의 +0x0C(시세)라 12를 뺀 자리다(게임 0x429950 과 같다).
+#define CITY_STRUCT (SISE_BASE - 0x0Cu)
+
+// 부를 함수가 정말 그 함수인지 앞머리 몇 바이트로 확인한다. 게임 실행 파일이 다르면
+// (다른 판·다른 패치) 여기서 걸러 내고 아무 일도 안 한다 — 엉뚱한 자리를 부르느니 낫다.
+static BOOL FnSig(unsigned addr, const unsigned char* sig, int n)
+{
+    const unsigned char* p = (const unsigned char*)addr;
+    int i;
+    if (IsBadReadPtr(p, (UINT_PTR)n)) return FALSE;
+    for (i = 0; i < n; i++) if (p[i] != sig[i]) return FALSE;
+    return TRUE;
+}
+
+static BOOL EnterFnsOk(void)
+{
+    static const unsigned char kAsk[]  = { 0x64,0xA1,0x00,0x00,0x00,0x00,0x55,0x8B,0xEC };
+    static const unsigned char kJosa[] = { 0x81,0xEC,0xCC,0x06,0x00,0x00 };
+    static const unsigned char kMem[]  = { 0x56,0x57,0x8B,0xF9,0x8B,0x74,0x24,0x0C };
+    static const unsigned char kSet[]  = { 0x8B,0x44,0x24,0x04,0x89,0x41,0x60,0xC2,0x04,0x00 };
+    return FnSig(GF_ASK,     kAsk,  sizeof(kAsk))
+        && FnSig(GF_JOSA,    kJosa, sizeof(kJosa))
+        && FnSig(GF_MEMBER,  kMem,  sizeof(kMem))
+        && FnSig(GF_SETCITY, kSet,  sizeof(kSet));
+}
+
+// 지금 그 도시에 들어갈 수 있는가. 게임 0x48DAC7~0x48DAF1 의 판정 그대로다.
+//   [도시+0x04] bit0 서 있어야 하고 bit2 는 서 있으면 안 된다(지도에 없거나 들를 수 없는 곳)
+//   배로 갈 때는 [도시+0x1C] bit0(항구), 육상으로 갈 때는 [도시+0x1D] bit2 가 서 있어야 한다.
+//   +0x1C 는 우리 BUILDING_OFF 와 같은 자리이고 bit0 이 BIT_PORT 다.
+static BOOL CanEnterCity(int city)
+{
+    const unsigned char* c = (const unsigned char*)(CITY_STRUCT + (unsigned)city * CITY_STRIDE);
+    if (city < 0 || city >= CITY_COUNT) return FALSE;
+    if (IsBadReadPtr(c, 0x20)) return FALSE;
+    if (!(c[4] & 1)) return FALSE;
+    if (c[4] & 4)    return FALSE;
+    return *(const int*)ON_LAND ? ((c[0x1D] & 4) != 0) : ((c[0x1C] & 1) != 0);
+}
+
+// 물어보고, YES 면 들여보낸다. 게임 스레드(게임 창 프로시저)에서만 부른다.
+static void AskAndEnterCity(int city)
+{
+    typedef int         (__cdecl   *AskFn)(int, int, const char*, ...);
+    typedef const char* (__cdecl   *JosaFn)(const char*, int);
+    typedef void*       (__fastcall *MemberFn)(void*, void*, int);
+    typedef void        (__fastcall *SetCityFn)(void*, void*, int);
+    // __thiscall 은 C 에서 못 쓰므로 __fastcall 로 부른다 — 첫 인자가 ecx 로 가는 것은 같고,
+    // 받는 쪽은 edx 를 안 본다. 둘 다 ret 4 라 스택도 __fastcall 과 맞는다.
+    const char* name = *(const char* const*)(REGION_TABLE + (unsigned)city * REGION_STRIDE);
+    const char* kind = *(const int*)ON_LAND ? (const char*)STR_CITY : (const char*)STR_PORT;
+    const char* josa = ((JosaFn)GF_JOSA)(kind, 0xA);
+    BOOL tired = (*(const int*)CREW_TIRED >= 60);
+    const char* fmt  = tired ? (const char*)STR_TIRED : (const char*)STR_ASK;
+
+    if (!name || IsBadReadPtr(name, 1)) return;
+    if (((AskFn)GF_ASK)(2, 0, fmt, name, kind, tired ? kind : josa, josa) != 2) return;
+
+    // ── 여기부터 게임의 YES 갈래(0x48DBF2~0x48DC55) 그대로 ──
+    *(int*)JUST_IN  = 1;
+    *(int*)CUR_CITY = city;
+    if (*(const int*)ON_LAND != 0)
+    {
+        *(int*)IN_MODE = 0xA;
+    }
+    else
+    {
+        int i;
+        for (i = 0; i < 8; i++)      // 배로 들어갈 때는 파티원 여덟의 현재 도시도 같이 옮긴다
+        {
+            void* m = ((MemberFn)GF_MEMBER)((void*)PARTY_OBJ, 0, i);
+            if (m) ((SetCityFn)GF_SETCITY)(m, 0, city);
+        }
+        *(int*)IN_MODE = 0;
+    }
+    *(int*)SAIL_STATE    = 0;
+    *(short*)SAIL_STATE2 = 0;
+}
+
+// 시세 일람에서 부친 심부름을 게임 스레드가 받아 처리한다.
+// 항해 중일 때만 한다 — 도시 안에서는 게임이 출항할 때 정박 전 좌표를 되돌리므로
+// (0x48B5C0) 워프도 진입도 뜻대로 되지 않는다. 그래서 좌표조차 건드리지 않는다.
+static void GoCity(int city)
+{
+    if (city < 0 || city >= WARP_COUNT) return;
+    if (*(const int*)CUR_CITY != -1)     // 도시 안이다 — 좌표도 건드리지 않는다
+    {
+        MessageBoxW(g_subHwnd, L"항해 중에만 도시로 갈 수 있습니다.\n"
+                            L"도시에서 나온 뒤 다시 눌러 주세요.",
+                    L"도시로 가기", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    DoWarp(city);
+    if (!EnterFnsOk()) return;      // 게임 실행 파일이 우리가 아는 그것이 아니다
+    if (!CanEnterCity(city)) return; // 지금 이 수단으로는 못 들어가는 곳 — 옮기기만 한다
+    AskAndEnterCity(city);
+}
+
 // ---------------- 메뉴 통합 (서브클래싱) ----------------
 
 static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
@@ -1740,6 +1890,8 @@ static LRESULT CALLBACK SubProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     // "최근 방문"을 펼치기 직전에 항목을 새로 깐다. 게임 UI 스레드에서만 메뉴를 건드린다.
     if (msg == WM_INITMENUPOPUP && g_recentMenu && (HMENU)wp == g_recentMenu)
         RebuildRecentMenu();
+    // 시세 일람에서 두 번 누른 도시 — 여기가 게임 스레드다.
+    if (g_msgGoCity && msg == g_msgGoCity) { GoCity((int)wp); return 0; }
     if (msg == WM_COMMAND && HIWORD(wp) == 0)
     {
         WORD id = LOWORD(wp);
@@ -1896,6 +2048,9 @@ void TradeKR_Init(HINSTANCE hinst)
     g_hinst = hinst;
     icc.dwSize = sizeof(icc); icc.dwICC = ICC_LISTVIEW_CLASSES;
     InitCommonControlsEx(&icc);
+    // 게임 창에 부칠 우리 전용 메시지. 다른 플러그인도 같은 창을 서브클래싱하므로
+    // WM_APP+n 을 눈대중으로 고르지 않고 시스템에서 겹치지 않는 번호를 받아 쓴다.
+    g_msgGoCity = RegisterWindowMessageW(L"TradeUtilKR_GoCity");
     OutputDebugStringW(L"[TradeUtilKR] init.");
     t = CreateThread(NULL, 0, MonitorThread, NULL, 0, NULL);
     if (t) CloseHandle(t);

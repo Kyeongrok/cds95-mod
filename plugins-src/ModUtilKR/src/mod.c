@@ -179,9 +179,17 @@ static int Toggle(Plug* p, int on)
 // 하위 폴더에 둔 것은 이 창이 대신 불러온다. 플러그인은 그냥 DLL 이고 할 일을 DllMain 에서
 // 하므로 LoadLibrary 만 하면 루트에 둔 것과 똑같이 돈다.
 // 이미 올라온 이름은 건너뛴다 — 루트와 하위 폴더에 같은 것이 있으면 메뉴가 두 개 붙는다.
+//
+// ★ GetModuleHandle 만으로는 모자란다. 로더는 루트를 이름순으로 훑는데, 우리는 그 한복판
+//   (ModUtilKR) 에서 돈다. 그래서 우리보다 뒤에 오는 이름(PatchUtilKR…WorldMapKR)은 아직
+//   안 올라와 있어 여기서 하위 폴더 것을 불러 버리고, 곧이어 로더가 루트 것을 또 불러
+//   같은 DLL 이 두 번 올라간다. 그러면 둘 다 게임 창을 서브클래싱하는데 나중에 건 쪽이
+//   바깥이 되고, 1초 폴링 경쟁이라 켤 때마다 승자가 바뀐다 — 새 기능이 "됐다 안 됐다"
+//   하는 정체였다(2026-08-11). 그래서 루트에 같은 이름의 .plugin 이 있으면 아예 건너뛴다.
 static void LoadSubPlugins(void)
 {
     wchar_t dir[MAX_PATH], sub[MAX_PATH], pat[MAX_PATH], one[MAX_PATH], file[MAX_PATH];
+    wchar_t root[MAX_PATH];
     WIN32_FIND_DATAW fd;
     HANDLE h;
     int n = 0;
@@ -206,6 +214,12 @@ static void LoadSubPlugins(void)
             if (len < 8 || lstrcmpiW(f2.cFileName + len - 7, L".plugin") != 0) continue;
             if (GetModuleHandleW(f2.cFileName)) {
                 LogW(L"[ModUtilKR] %s 는 이미 올라와 있어 건너뜀", f2.cFileName);
+                continue;
+            }
+            JoinPath(root, dir, f2.cFileName);        // 루트에 같은 이름이 있나
+            if (GetFileAttributesW(root) != INVALID_FILE_ATTRIBUTES) {
+                LogW(L"[ModUtilKR] %s 는 루트에도 있어 건너뜀 (로더가 그쪽을 불러온다)",
+                     f2.cFileName);
                 continue;
             }
             JoinPath(file, one, f2.cFileName);
