@@ -20,18 +20,28 @@
                                  // Fatigue=0xBA00, Hotkey=0xBB00, Hint=0xBC00 과 안 겹치게.
 
 #define WC_MARKET  L"MarketUtilKR_Window"
-#define PIC        56                    // 줄 그림
-#define ROW_H      62
-#define ROWS_VIS   7
+#define PIC        46                    // 줄 그림
+// 줄 높이 — 글씨 크기는 그대로 두고 줄 사이만 좁혔다(68 -> 54, 목록 높이 20% 감소).
+// 여덟 줄이 한눈에 들어와야 하는데 68 이면 목록이 너무 길어져 빈 칸만 보였다.
+// 안쪽은 이름 18 + 단가·공급 18 + 무게·원산지 14 = 50 이다.
+#define ROW_H      54
+#define ROWS_VIS   8                     // 짐 칸이 여덟이라 여덟 줄은 보여야 한 화면에 다 든다
 #define COL_W      420
 #define LIST_Y     (FRAME + TITLE_H + 30)
 #define LIST_H     (ROW_H * ROWS_VIS)
 #define LEFT_X     (FRAME + 8)
 #define RIGHT_X    (LEFT_X + COL_W + 12)
 #define CLIENT_W   (RIGHT_X + COL_W + FRAME + 8)
-#define CLIENT_H   (LIST_Y + LIST_H + 114)
+#define CLIENT_H   (LIST_Y + LIST_H + 126)
+#define BOT_Y      (LIST_Y + LIST_H)     // 목록 아래 — 여기부터 아래 칸이다
+#define HOLD_W     400                   // 배 척수 + 함대 짐칸 막대가 쓰는 오른쪽 자리
+#define HOLD_X     (CLIENT_W - FRAME - 8 - HOLD_W)
+#define HOLD_BAR_X (HOLD_X + 66)         // "배 N척" 다음이 막대 자리
 
 static HINSTANCE g_hinst = NULL;
+// 단가 · 공급 전용 글씨 — 작은 글씨(12)보다 두 치수 크다. 사고 팔 때 제일 먼저 보는 값이라
+// 나머지 잔글씨에 묻히면 안 된다. uikit 은 다른 플러그인도 같이 쓰므로 여기서만 만든다.
+static HFONT     g_priceFont = NULL;
 static HWND      g_wnd = NULL;
 static HWND      g_gameHwnd = NULL, g_subHwnd = NULL;
 static WNDPROC   g_origProc = NULL;
@@ -47,6 +57,15 @@ static int g_rows = 0, g_cargo = 0;
 static int g_qty[MKT_ROWS_MAX];          // 왼쪽 줄마다 담은 수량(살 것)
 static int g_sell[MKT_CARGO_MAX];                   // 오른쪽 줄마다 담은 수량(팔 것)
 static int g_step = 1;                   // 기본 10
+// 아직 안 산 것(장바구니) 색 — 세피아 색표에 없어 여기서만 쓴다. 실은 짐(검정)과도,
+// 팔 것(COL_WARN_TX 붉은색)과도 달라야 "이건 아직 내 것이 아니다" 가 한 눈에 잡힌다.
+#define COL_CART_TX RGB(25, 95, 55)
+
+// 오른쪽 칸에 그린 줄들. 그리는 쪽과 누르는 쪽이 같은 표를 봐야 단추가 엉뚱한 줄을 건드리지 않는다.
+//   cargo = 짐 칸 번호(-1 이면 아직 없는데 담아 두기만 한 줄)
+//   row   = 왼쪽 목록의 줄 번호(-1 이면 이 도시가 안 파는 것)
+typedef struct { int kind, origin, cargo, row; } MktRight;
+static MktRight g_right[ROWS_VIS];
 static int g_rightRows = 0;              // 오른쪽에 실제로 그린 줄 수(짐 + 담는 중)
 static wchar_t g_msg[160] = L"";
 static int g_msgWarn = 0;
@@ -91,7 +110,7 @@ static RECT RcRow(int side, int v)       // side 0 = 왼쪽(살 것), 1 = 오른
     r.left  = side ? RIGHT_X : LEFT_X;
     r.right = r.left + COL_W;
     r.top   = LIST_Y + v * ROW_H;
-    r.bottom = r.top + ROW_H - 4;
+    r.bottom = r.top + ROW_H - 3;
     return r;
 }
 
@@ -100,25 +119,29 @@ static void Say(const wchar_t* s, int warn) { lstrcpynW(g_msg, s, 160); g_msgWar
 // 줄 오른쪽 끝의 단추 셋 — [−] [+] [모두]. 양쪽 칸이 같은 자리를 쓴다.
 static RECT RcBtn(int side, int v, int dxRight, int w)
 { RECT r = RcRow(side, v); RECT b; b.right = r.right - dxRight; b.left = b.right - w;
-  b.top = r.top + 18; b.bottom = b.top + 24; return b; }
+  b.top = r.top + 14; b.bottom = b.top + 24; return b; }
 static RECT RcMinus(int v)  { return RcBtn(0, v, 118, 26); }
 static RECT RcPlus(int v)   { return RcBtn(0, v,  84, 26); }
 static RECT RcAllBuy(int v) { return RcBtn(0, v,   8, 62); }   // 공급 전량 담기
 static RECT RcMinus2(int v) { return RcBtn(1, v, 118, 26); }
 static RECT RcPlus2(int v)  { return RcBtn(1, v,  84, 26); }
 static RECT RcRowAll(int v) { return RcBtn(1, v,   8, 62); }   // 이 품목만 통째로
+// 담기 단위 — 아래 칸 맨 윗줄. 줄마다 [−][+] 를 누를 때 얼마씩 움직일지 여기서 고른다.
 static RECT RcStep(int i)
 { RECT r; r.left = LEFT_X + 92 + i * 46; r.right = r.left + 42;
-  r.top = LIST_Y + LIST_H + 54; r.bottom = r.top + 24; return r; }
+  r.top = BOT_Y + 3; r.bottom = r.top + 24; return r; }
+// [결정] — 지출 · 수입 · 수익 세 줄 오른쪽에 그 높이만큼 세워 둔다.
 static RECT RcApply(void)
 { RECT r; r.right = RIGHT_X + COL_W; r.left = r.right - 90;
-  r.top = LIST_Y + LIST_H + 54; r.bottom = r.top + 26; return r; }
-static RECT RcClear(void)
-{ RECT r; r.right = RIGHT_X + COL_W - 98; r.left = r.right - 90;
-  r.top = LIST_Y + LIST_H + 54; r.bottom = r.top + 26; return r; }
+  r.top = BOT_Y + 56; r.bottom = BOT_Y + 116; return r; }
 // [모두 팔기] — 내 짐 칸 이름표 줄 오른쪽 끝. 짐을 통째로 팔 것에 담는다.
 static RECT RcSellAll(void)
 { RECT r; r.right = RIGHT_X + COL_W; r.left = r.right - 90;
+  r.top = FRAME + TITLE_H + 3; r.bottom = r.top + 22; return r; }
+// [비우기] — [모두 팔기] 바로 왼쪽. 둘 다 담은 것을 만지는 짝이라 같이 둔다
+// (아래 [결정] 옆에 있으면 지출 · 수입 줄과 섞여 무엇을 비우는 단추인지 흐려진다).
+static RECT RcClear(void)
+{ RECT r; r.right = RcSellAll().left - 8; r.left = r.right - 90;
   r.top = FRAME + TITLE_H + 3; r.bottom = r.top + 22; return r; }
 
 // 담은 것의 총액.
@@ -177,6 +200,46 @@ static int PendingFor(int kind, int origin)
         if (w && g_qty[i] > 0 && w->kind == kind && w->origin == origin) sum += g_qty[i];
     }
     return sum;
+}
+
+// 그 교역품 · 원산지에 해당하는 왼쪽 줄 번호. 없으면 -1.
+static int RowIndexFor(int kind, int origin)
+{
+    int i;
+    for (i = 0; i < g_rows && i < MKT_ROWS_MAX; i++) {
+        const MktRow* w = Mkt_At(i);
+        if (w && w->kind == kind && w->origin == origin) return i;
+    }
+    return -1;
+}
+
+// 오른쪽 칸에 그릴 줄을 모은다 — 먼저 실은 짐, 그 다음 아직 없는데 담아 둔 것.
+// 그리기 전에도, 단추를 누를 때도 이것을 불러 같은 표를 본다.
+static int BuildRight(void)
+{
+    int i, v = 0;
+    for (i = 0; i < g_cargo && v < ROWS_VIS; i++) {
+        const MktCargo* c = Mkt_CargoAt(i);
+        if (!c) continue;
+        g_right[v].kind = c->kind; g_right[v].origin = c->origin;
+        g_right[v].cargo = i;      g_right[v].row = RowIndexFor(c->kind, c->origin);
+        v++;
+    }
+    for (i = 0; i < g_rows && i < MKT_ROWS_MAX && v < ROWS_VIS; i++) {
+        const MktRow* w = Mkt_At(i);
+        int j, have = 0;
+        if (!w || g_qty[i] <= 0) continue;
+        for (j = 0; j < g_cargo; j++) {
+            const MktCargo* c = Mkt_CargoAt(j);
+            if (c && c->kind == w->kind && c->origin == w->origin) { have = 1; break; }
+        }
+        if (have) continue;
+        g_right[v].kind = w->kind; g_right[v].origin = w->origin;
+        g_right[v].cargo = -1;     g_right[v].row = i;
+        v++;
+    }
+    g_rightRows = v;
+    return v;
 }
 
 // 팔아서 남는 것 — (매각가 − 원산지 매입가) x 수량. 매입가를 모르면 그 줄은 뺀다.
@@ -284,7 +347,7 @@ static void PaintBar(HDC dc, RECT r, const wchar_t* name, int used, int add, int
     UI_Text(dc, lb, name, g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
     // 숫자는 막대 바로 뒤에 붙인다 — 오른쪽 끝에 밀어 두면 막대와 멀어져 눈이 헤맨다.
-    tx.left = r.right - 140;
+    tx.left = r.right - 150;
     bar.left = lb.right + 4; bar.right = tx.left - 8;
     bar.top += 3; bar.bottom -= 3;
     br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &bar, br); DeleteObject(br);
@@ -316,6 +379,37 @@ static void PaintBar(HDC dc, RECT r, const wchar_t* name, int used, int add, int
             DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 }
 
+// 교역수지 한 줄 — 게임 교역수지 창과 같은 셈이다.
+//   앞은 지금 실은 교역품, 뒤는 그러고도 남는 선창. 물·식량·자재·포탄 몫은 total 에서 이미 뺐다.
+//   보기: 견직물 200통(개당 중량 3) 을 실었으면 중량 600 / 6575, 용량 200 / 377.
+//   담아 두면 [실은 것 → 담은 뒤] 로 늘고 남는 자리는 그만큼 줄어든다.
+static void PaintBalance(HDC dc, RECT r, const wchar_t* name, int used, int add, int total)
+{
+    RECT lb = r, tx = r;
+    wchar_t buf[96];
+    // 뒤는 총량이다 — 남은 자리가 아니다. 게임 교역수지가 짐 0 일 때 0/9040,
+    // 대포 50개(중량 1000)를 실으니 1000/9040 으로 분모가 그대로였다.
+    int after = used + add;
+
+    lb.right = lb.left + 44;
+    UI_Text(dc, lb, name, g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    tx.left = lb.right + 10;
+    if (add) wsprintfW(buf, L"%s → %s / %s", N(used), N(after), N(total));
+    else     wsprintfW(buf, L"%s / %s", N(used), N(total));
+    UI_Text(dc, tx, buf, g_font, after > total ? COL_WARN_TX : COL_TEXT,
+            DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+}
+
+// [이름] [값] 한 줄. 이름 자리를 고정해 두면 여러 줄이 세로로 딱 맞아 읽기 쉽다.
+static void PaintKV(HDC dc, RECT r, const wchar_t* name, const wchar_t* val, COLORREF c)
+{
+    RECT lb = r, tx = r;
+    lb.right = lb.left + 44;
+    UI_Text(dc, lb, name, g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    tx.left = lb.right + 10;
+    UI_Text(dc, tx, val, g_font, c, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+}
+
 // 한 줄 그리기. 왼쪽은 살 것, 오른쪽은 내 짐.
 static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin)
 {
@@ -336,7 +430,7 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
 
     t = r; t.left = box.right + 12;
     t.right = r.right - 152;                  // 단추 셋([−][+][모두]) 자리는 비워 둔다
-    t.top = r.top + 4; t.bottom = t.top + 22;
+    t.top = r.top + 1; t.bottom = t.top + 18;
     {   // 이 도시 특산품이면 이름 앞에 ★ — 게임 도시정보의 "특산품" 과 같은 자리(+0x10)다.
         wchar_t nm[80];
         if (g_city >= 0 && kind == Mkt_CitySpecial(g_city))
@@ -348,58 +442,94 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
 
     t.top = t.bottom; t.bottom = t.top + 18;
     if (side == 0) {
-        int gm = Mkt_GoodsMass(kind);
-        if (gm > 0) wsprintfW(buf, L"단가 %s닢 · 공급 %s · 무게 %d", N(a), N(b), gm);
-        else        wsprintfW(buf, L"단가 %s닢 · 공급 %s", N(a), N(b));
-        UI_Text(dc, t, buf, g_smallFont, COL_TEXT,
+        // 공급은 담은 만큼 깎아 보여 준다 — 전량을 담으면 0 이 되어, 이 도시에 남은 것이
+        // 얼마인지 한 눈에 잡힌다(담은 것은 오른쪽 칸의 갯수로 그만큼 옮겨 가 있다).
+        int q = (v < MKT_ROWS_MAX) ? g_qty[v] : 0;
+        int rest = b - q;
+        if (rest < 0) rest = 0;
+        // 무게는 아랫줄로 내렸다 — 이 줄은 단가와 공급만 큰 글씨로 둔다.
+        wsprintfW(buf, L"단가 %s닢 · 공급 %s", N(a), N(rest));
+        UI_Text(dc, t, buf, g_priceFont ? g_priceFont : g_smallFont,
+                (q > 0 && rest == 0) ? COL_CART_TX : COL_TEXT,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
     }
     else {
-        // 매각가와 원산지 매입가를 나란히 — 얼마 남고 얼마 밑지는지 바로 보이게.
+        // 갯수 · 매각가 · 원산지 매입가를 나란히 — 얼마 남고 얼마 밑지는지 바로 보이게.
+        // 갯수는 따로 떼어 그린다 — 아직 안 산 것(담는 중)이 섞이면 그 색으로 알린다.
+        int pend = PendingFor(kind, origin);
+        int have = a + pend;
         int buyp = Mkt_BuyPriceAt(origin, kind), diff = (buyp > 0) ? b - buyp : 0;
-        COLORREF col = (a > 0 && buyp > 0) ? (diff >= 0 ? COL_LANG_TX : COL_WARN_TX) : COL_TEXT;
-        if (a > 0 && buyp > 0) {
-            // 남는 값(+19)이 제일 중요한데 줄이 길면 그 자리가 잘려 나간다.
-            // 그래서 오른쪽 끝에 따로 붙여 두고, 잘리는 것은 앞의 값들 쪽이 되게 한다.
-            RECT tx = t, dr = t;
+        COLORREF col = (have > 0 && buyp > 0) ? (diff >= 0 ? COL_LANG_TX : COL_WARN_TX) : COL_TEXT;
+        RECT cr = t, pr = t;
+        cr.right = t.left + 66; pr.left = cr.right + 4;
+        if (have > 0) {
+            wsprintfW(buf, L"%s개", N(have));
+            UI_Text(dc, cr, buf, g_smallFont, pend > 0 ? COL_CART_TX : COL_TEXT,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        }
+        else UI_Text(dc, cr, L"아직 없음", g_smallFont, COL_DARK,
+                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        // 이 줄에는 매각가만 둔다 — 매입가까지 넣으면 자리가 모자라 통째로 잘려 나갔다
+        // ("매각 236..."). 매입가는 아랫줄로 내리고, 남는 값만 오른쪽 끝에 따로 붙인다.
+        wsprintfW(buf, L"매각 %s닢", N(b > 0 ? b : 0));
+        if (have > 0 && buyp > 0 && b > 0) {
+            RECT tx = pr, dr = t;
             dr.left = t.right - 64; tx.right = dr.left - 6;
-            wsprintfW(buf, L"%s개 · 매각 %s닢 · 매입 %s닢", N(a), N(b), N(buyp));
             UI_Text(dc, tx, buf, g_smallFont, col,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
             wsprintfW(buf, L"%s%s", diff >= 0 ? L"+" : L"−", N(diff >= 0 ? diff : -diff));
             UI_Text(dc, dr, buf, g_smallFont, col,
                     DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         }
-        else {
-            if (a > 0) wsprintfW(buf, L"%s개 · 매각 %s닢", N(a), N(b));
-            else       wsprintfW(buf, L"아직 없음 · 매각 %s닢", N(b > 0 ? b : 0));
-            UI_Text(dc, t, buf, g_smallFont, col,
-                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
-        }
+        else UI_Text(dc, pr, buf, g_smallFont, col,
+                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
     }
 
-    t.top = t.bottom; t.bottom = t.top + 18;
+    t.top = t.bottom; t.bottom = t.top + 14;
     if (side == 0) {
         int q = (v < MKT_ROWS_MAX) ? g_qty[v] : 0;
-        if (q > 0) wsprintfW(buf, L"%s산 · 담은 것 %s개 (%s닢)", Mkt_CityName(origin), N(q), N(q * a));
-        else       wsprintfW(buf, L"%s산", Mkt_CityName(origin));
-        UI_Text(dc, t, buf, g_smallFont, q > 0 ? COL_WARN_TX : COL_DARK,
+        int gm = Mkt_GoodsMass(kind);
+        RECT tw = t, to = t;
+        // 무게는 앞에 따로 떼어 둔다 — 담은 것에 붉은 색이 물들지 않게.
+        tw.right = t.left + 58; to.left = tw.right + 4;
+        if (gm > 0) {
+            wsprintfW(buf, L"무게 %d", gm);
+            UI_Text(dc, tw, buf, g_smallFont, COL_TEXT,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        }
+        else to = t;
+        // "담은 것 100개" 는 뺐다 — 윗줄 공급이 그만큼 깎이고, 오른쪽 칸 갯수가 초록으로 알려 준다.
+        // 담아 둔 줄이라는 표시는 원산지 글씨 색으로만 남긴다.
+        wsprintfW(buf, L"%s산", Mkt_CityName(origin));
+        UI_Text(dc, to, buf, g_smallFont, q > 0 ? COL_CART_TX : COL_DARK,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         UI_Button(dc, RcMinus(v),  L"−", FALSE);
         UI_Button(dc, RcPlus(v),   L"+", FALSE);
         UI_Button(dc, RcAllBuy(v), L"모두", q >= b && b > 0);
     } else {
-        int q = (v < MKT_CARGO_MAX) ? g_sell[v] : 0;
+        int ci   = (v < ROWS_VIS) ? g_right[v].cargo : -1;   // 짐 칸 번호(-1 = 담아 두기만 한 줄)
+        int q    = (ci >= 0 && ci < MKT_CARGO_MAX) ? g_sell[ci] : 0;
         int pend = PendingFor(kind, origin);
-        if (q > 0)         wsprintfW(buf, L"%s산 · 팔 것 %s개 (%s닢)", Mkt_CityName(origin), N(q), N(q * b));
-        else if (pend > 0) wsprintfW(buf, L"%s산 · 담는 중 +%s개", Mkt_CityName(origin), N(pend));
-        else               wsprintfW(buf, L"%s산", origin >= 0 ? Mkt_CityName(origin) : L"?");
-        UI_Text(dc, t, buf, g_smallFont, (q > 0 || pend > 0) ? COL_WARN_TX : COL_DARK,
+        // "담는 중 +100개" 는 뺐다 — 윗줄 갯수가 이미 담은 것까지 세어 초록으로 알려 준다.
+        // 대신 윗줄에서 자리가 없어 밀려난 원산지 매입가를 여기 둔다(팔 것을 담으면 그쪽이 먼저다).
+        if (q > 0) wsprintfW(buf, L"%s산 · 팔 것 %s개 (%s닢)", Mkt_CityName(origin), N(q), N(q * b));
+        else {
+            int buyp = Mkt_BuyPriceAt(origin, kind);
+            if (buyp > 0) wsprintfW(buf, L"%s산 · 매입 %s닢", Mkt_CityName(origin), N(buyp));
+            else          wsprintfW(buf, L"%s산", origin >= 0 ? Mkt_CityName(origin) : L"?");
+        }
+        UI_Text(dc, t, buf, g_smallFont,
+                q > 0 ? COL_WARN_TX : (pend > 0 ? COL_CART_TX : COL_DARK),
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
-        if (a > 0) {     // 아직 없는 물건(담는 중만 있는 줄)에는 파는 단추를 안 붙인다
+        if (ci >= 0) {           // 실은 것이 있는 줄 — 파는 단추
             UI_Button(dc, RcMinus2(v), L"−", FALSE);
             UI_Button(dc, RcPlus2(v),  L"+", FALSE);
             UI_Button(dc, RcRowAll(v), L"모두", q >= a);
+        }
+        else if (pend > 0) {     // 담아 두기만 한 줄 — 여기서 장바구니를 도로 뺀다
+            UI_Button(dc, RcMinus2(v), L"−", FALSE);
+            UI_Button(dc, RcPlus2(v),  L"+", FALSE);
+            UI_Button(dc, RcRowAll(v), L"비움", FALSE);
         }
     }
 }
@@ -429,8 +559,9 @@ static void Paint(HWND h)
 
     r.left = LEFT_X; r.right = LEFT_X + COL_W; r.top = FRAME + TITLE_H + 4; r.bottom = r.top + 22;
     UI_Text(dc, r, L"이 도시가 파는 것", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-    r.left = RIGHT_X; r.right = RcSellAll().left - 8;
+    r.left = RIGHT_X; r.right = RcClear().left - 8;
     UI_Text(dc, r, L"내 짐", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    UI_Button(dc, RcClear(), L"비우기", FALSE);
     if (g_cargo > 0) UI_Button(dc, RcSellAll(), L"모두 팔기", FALSE);
 
     { RECT p; p.left = LEFT_X; p.right = LEFT_X + COL_W; p.top = LIST_Y; p.bottom = LIST_Y + LIST_H;
@@ -449,28 +580,14 @@ static void Paint(HWND h)
 
     { RECT p; p.left = RIGHT_X; p.right = RIGHT_X + COL_W; p.top = LIST_Y; p.bottom = LIST_Y + LIST_H;
       br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &p, br); DeleteObject(br);
-      { int v = 0;
-        g_rightRows = 0;
-        for (i = 0; i < g_cargo && v < ROWS_VIS; i++) {
-            const MktCargo* c = Mkt_CargoAt(i);
-            int here;
-            if (!c) continue;
-            here = Mkt_SellPrice(g_city, c->kind);
-            PaintRow(dc, 1, v++, c->kind, c->count, here > 0 ? here : 0, c->origin);
-        }
-        // 짐에 아직 없는데 담아 둔 것 — 살 것이 어디에 얼마나 얹히는지 미리 보인다.
-        for (i = 0; i < g_rows && i < MKT_ROWS_MAX && v < ROWS_VIS; i++) {
-            const MktRow* w = Mkt_At(i);
-            int j, have = 0;
-            if (!w || g_qty[i] <= 0) continue;
-            for (j = 0; j < g_cargo; j++) {
-                const MktCargo* c = Mkt_CargoAt(j);
-                if (c && c->kind == w->kind && c->origin == w->origin) { have = 1; break; }
-            }
-            if (have) continue;
-            PaintRow(dc, 1, v++, w->kind, 0, Mkt_SellPrice(g_city, w->kind), w->origin);
-        }
-        g_rightRows = v; }
+      { int v;
+        BuildRight();
+        for (v = 0; v < g_rightRows; v++) {
+            const MktCargo* c = (g_right[v].cargo >= 0) ? Mkt_CargoAt(g_right[v].cargo) : NULL;
+            int here = Mkt_SellPrice(g_city, g_right[v].kind);
+            PaintRow(dc, 1, v, g_right[v].kind, c ? c->count : 0,
+                     here > 0 ? here : 0, g_right[v].origin);
+        } }
       br = CreateSolidBrush(COL_DARK); FrameRect(dc, &p, br); DeleteObject(br);
       if (!g_rightRows) {
           int raw[4];
@@ -484,7 +601,7 @@ static void Paint(HWND h)
               d.top += 20; d.bottom = d.top + 22;
               UI_Text(dc, d, L"짐을 못 읽었습니다 — 아래 값을 알려 주세요.", g_font, COL_WARN_TX,
                       DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-              for (k = 0; k < 5; k++) {
+              for (k = 0; k < MKT_CARGO_SLOTS; k++) {
                   d.top = d.bottom; d.bottom = d.top + 18;
                   Mkt_CargoRaw(k, raw);
                   wsprintfW(buf, L"짐 %d칸: %d %d %d %d", k, raw[0], raw[1], raw[2], raw[3]);
@@ -494,60 +611,79 @@ static void Paint(HWND h)
           }
       } }
 
-    r.left = LEFT_X; r.right = CLIENT_W - FRAME - 8;
-    r.top = LIST_Y + LIST_H + 6; r.bottom = r.top + 22;
-    {   // 왼쪽 소지금 · 오른쪽 배 척수. 짐칸은 아래 막대 두 줄이 보여 준다.
-        int ships = 0;
-        if (money >= 0) wsprintfW(buf, L"소지금 %s닢", N(money));
-        else            lstrcpyW(buf, L"소지금을 읽지 못했습니다 — 세이브를 불러온 뒤에 열어 주세요.");
-        UI_Text(dc, r, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        if (Mkt_Hold(&ships, NULL, NULL)) {
-            wsprintfW(buf, L"배 %d척", ships);
-            UI_Text(dc, r, buf, g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-        }
-    }
-
-    r.top = r.bottom; r.bottom = r.top + 20;
-    UI_Text(dc, r, g_msg[0] ? g_msg
-                            : L"[모두] 는 전량, 줄을 두 번 누르면 절반이 담깁니다. [결정] 에 사고 팔고 창이 닫힙니다. 매각가는 어림값입니다.",
-            g_smallFont, g_msgWarn ? COL_WARN_TX : COL_DARK,
-            DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
-
-    {   // 담기 단위 · 구입소계 · 결정
-        int cost = CartCost(), k;
+    {   // 아래 칸 — 왼쪽은 담기 단위 · 소지금 · 교역수지, 오른쪽은 함대 짐칸과 셈.
+        //   윗줄 두 개는 게임 함대 화면의 짐용량 · 짐중량과 같은 눈금이다
+        //   (물·식량·자재·포탄까지 다 센 값). 이미 실은 것 = 짙은 빨강, 담은 것 = 파랑.
+        int ships = 0, massMax = 0, capMax = 0;
+        int hold = Mkt_Hold(&ships, &massMax, &capMax);
+        int supV = hold ? Mkt_SupplyVolume() : -1, supM = hold ? Mkt_SupplyMass() : -1;
+        int cost = CartCost(), gain = SellGain(), prof = SellProfit();
+        int k;
         RECT lb;
+
+        // ── 첫 줄: 담기 단위 | 배 N척 + 짐용량 막대
         lb.left = LEFT_X; lb.right = LEFT_X + 84;
-        lb.top = LIST_Y + LIST_H + 54; lb.bottom = lb.top + 24;
+        lb.top = BOT_Y + 3; lb.bottom = lb.top + 24;
         UI_Text(dc, lb, L"담기 단위", g_font, COL_TEXT,
                 DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         for (k = 0; k < STEP_N; k++) UI_Button(dc, RcStep(k), kStepName[k], g_step == k);
 
-        lb.left = RcStep(STEP_N - 1).right + 16; lb.right = RcClear().left - 12;
-        { int gain = SellGain(), prof = SellProfit();
-          if (gain > 0) wsprintfW(buf, L"지출 %s닢 · 수입 %s닢 · 수익 %s%s닢",
-                                  N(cost), N(gain), prof >= 0 ? L"+" : L"−",
-                                  N(prof >= 0 ? prof : -prof));
-          else          wsprintfW(buf, L"지출 %s닢 · 수입 %s닢", N(cost), N(gain));
-          UI_Text(dc, lb, buf, g_font, (cost || gain) ? COL_WARN_TX : COL_TEXT,
-                  DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX); }
-        UI_Button(dc, RcClear(), L"비우기", FALSE);
-        UI_Button(dc, RcApply(), L"결정", (cost > 0 || SellGain() > 0));
-    }
+        if (hold) {
+            RECT s, b2;
+            s.left = HOLD_X; s.right = HOLD_BAR_X - 4;
+            s.top = BOT_Y + 4; s.bottom = BOT_Y + 42;
+            wsprintfW(buf, L"배 %d척", ships);
+            UI_Text(dc, s, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+            b2.left = HOLD_BAR_X; b2.right = CLIENT_W - FRAME - 8;
+            b2.top = BOT_Y + 4; b2.bottom = b2.top + 18;
+            if (supV >= 0) PaintBar(dc, b2, L"짐용량", supV + CargoCount(), CartQty(),  capMax);
+            b2.top = BOT_Y + 24; b2.bottom = b2.top + 18;
+            if (supM >= 0) PaintBar(dc, b2, L"짐중량", supM + CargoMass(),  CartMass(), massMax);
+        }
 
-    {   // 짐칸 막대 두 줄 — 게임 함대 화면과 같은 눈금이다. 왼쪽이 중량, 오른쪽이 용량.
-        //   이미 실은 것 = 짙은 빨강, 이번에 담은 것 = 파랑, 남는 자리 = 빈 칸.
-        int ships = 0, massMax = 0, capMax = 0;
-        if (Mkt_Hold(&ships, &massMax, &capMax)) {
-            int supV = Mkt_SupplyVolume(), supM = Mkt_SupplyMass();
-            int cnt = CargoCount(), net = CartQty();
-            RECT b;
-            b.top = LIST_Y + LIST_H + 84; b.bottom = b.top + 20;
-            b.left = LEFT_X; b.right = LEFT_X + COL_W;
-            if (supM >= 0)
-                PaintBar(dc, b, L"중량", supM + CargoMass(), CartMass(), massMax);
-            b.left = RIGHT_X; b.right = RIGHT_X + COL_W;
-            if (supV >= 0)
-                PaintBar(dc, b, L"용량", supV + cnt, net, capMax);
+        // ── 둘째 줄: 소지금
+        lb.left = LEFT_X; lb.right = HOLD_X - 12;
+        lb.top = BOT_Y + 28; lb.bottom = lb.top + 20;
+        if (money >= 0) wsprintfW(buf, L"소지금 %s닢", N(money));
+        else            lstrcpyW(buf, L"소지금을 읽지 못했습니다 — 세이브를 불러온 뒤에 열어 주세요.");
+        UI_Text(dc, lb, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+
+        // ── 셋째 · 넷째 줄 왼쪽: 교역수지(중량 · 용량). 담기 단추가 있던 자리다.
+        if (hold) {
+            RECT b2;
+            b2.left = LEFT_X; b2.right = LEFT_X + COL_W;
+            b2.top = BOT_Y + 54; b2.bottom = b2.top + 22;
+            if (supM >= 0) PaintBalance(dc, b2, L"중량", CargoMass(),  CartMass(), massMax - supM);
+            b2.top = BOT_Y + 76; b2.bottom = b2.top + 22;
+            if (supV >= 0) PaintBalance(dc, b2, L"용량", CargoCount(), CartQty(),  capMax - supV);
+        }
+
+        // ── 셋째~다섯째 줄 오른쪽: 지출 · 수입 · 수익을 한 줄에 하나씩.
+        //    한 줄에 몰아 놓으니 길어서 눈에 안 들어왔다. 색은 안 입힌다 —
+        //    수익만 부호에 따라(남으면 파랑, 밑지면 빨강) 물들여 그것만 눈에 띄게 한다.
+        {   RECT kv;
+            kv.left = RIGHT_X; kv.right = RcApply().left - 12;
+            kv.top = BOT_Y + 54; kv.bottom = kv.top + 22;
+            wsprintfW(buf, L"%s닢", N(cost));
+            PaintKV(dc, kv, L"지출", buf, COL_TEXT);
+            kv.top = BOT_Y + 76; kv.bottom = kv.top + 22;
+            wsprintfW(buf, L"%s닢", N(gain));
+            PaintKV(dc, kv, L"수입", buf, COL_TEXT);
+            kv.top = BOT_Y + 98; kv.bottom = kv.top + 22;
+            if (gain > 0) {
+                wsprintfW(buf, L"%s%s닢", prof >= 0 ? L"+" : L"−", N(prof >= 0 ? prof : -prof));
+                PaintKV(dc, kv, L"수익", buf, prof >= 0 ? COL_LANG_TX : COL_WARN_TX);
+            }
+            else PaintKV(dc, kv, L"수익", L"—", COL_DARK);
+        }
+        UI_Button(dc, RcApply(), L"결정", (cost > 0 || gain > 0));   // [비우기] 는 위 이름표 줄에 있다
+
+        // ── 다섯째 줄 왼쪽: 알림. 할 말이 있을 때만 쓴다.
+        if (g_msg[0]) {
+            lb.left = LEFT_X; lb.right = RIGHT_X - 12;
+            lb.top = BOT_Y + 100; lb.bottom = lb.top + 18;
+            UI_Text(dc, lb, g_msg, g_smallFont, g_msgWarn ? COL_WARN_TX : COL_DARK,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         }
     }
 
@@ -617,12 +753,19 @@ static int RowAllHit(HWND h, POINT pt)
         InvalidateRect(h, NULL, FALSE);
         return 1;
     }
-    for (v = 0; v < ROWS_VIS && v < g_cargo; v++) {
+    BuildRight();
+    for (v = 0; v < g_rightRows; v++) {
         RECT b = RcRowAll(v);
-        const MktCargo* c;
+        int ci = g_right[v].cargo, row = g_right[v].row;
         if (!PtInRect(&b, pt)) continue;
-        c = Mkt_CargoAt(v);
-        if (c && c->count > 0 && v < MKT_CARGO_MAX) g_sell[v] = (g_sell[v] >= c->count) ? 0 : c->count;
+        if (ci >= 0) {                       // [모두] — 그 짐을 통째로 팔 것에 담는다
+            const MktCargo* c = Mkt_CargoAt(ci);
+            if (c && c->count > 0 && ci < MKT_CARGO_MAX)
+                g_sell[ci] = (g_sell[ci] >= c->count) ? 0 : c->count;
+        }
+        else if (row >= 0 && row < MKT_ROWS_MAX) {   // [비움] — 담아 둔 것을 통째로 뺀다
+            g_qty[row] = 0;
+        }
         InvalidateRect(h, NULL, FALSE);
         return 1;
     }
@@ -634,6 +777,9 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
     switch (m) {
     case WM_CREATE:
         UI_CreateFonts();
+        if (!g_priceFont)
+            g_priceFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                      DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");
         ItemPic_Load();
         g_msg[0] = 0;
         CartClear();
@@ -655,12 +801,13 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
             InvalidateRect(h, NULL, FALSE);
             return 0;
         }
-        for (v = 0; v < ROWS_VIS && v < g_cargo; v++) {
+        BuildRight();
+        for (v = 0; v < g_rightRows; v++) {
             RECT r = RcRow(1, v);
+            int ci = g_right[v].cargo;
             const MktCargo* c;
             if (!PtInRect(&r, pt)) continue;
-            c = Mkt_CargoAt(v);
-            if (c) SellAdd(v, (c->count + 1) / 2);
+            if (ci >= 0 && (c = Mkt_CargoAt(ci)) != NULL) SellAdd(ci, (c->count + 1) / 2);
             InvalidateRect(h, NULL, FALSE);
             return 0;
         }
@@ -681,10 +828,18 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
                 if (PtInRect(&b2, pt)) { CartAdd(v,  StepOf(v)); InvalidateRect(h, NULL, FALSE); return 0; }
             }
             if (RowAllHit(h, pt)) return 0;
-            for (v = 0; v < ROWS_VIS && v < g_cargo; v++) {
+            BuildRight();
+            for (v = 0; v < g_rightRows; v++) {
                 RECT a = RcMinus2(v), b2 = RcPlus2(v);
-                if (PtInRect(&a, pt))  { SellAdd(v, -SellStepOf(v)); InvalidateRect(h, NULL, FALSE); return 0; }
-                if (PtInRect(&b2, pt)) { SellAdd(v,  SellStepOf(v)); InvalidateRect(h, NULL, FALSE); return 0; }
+                int ci = g_right[v].cargo, row = g_right[v].row;
+                int minus = PtInRect(&a, pt), plus = PtInRect(&b2, pt);
+                if (!minus && !plus) continue;
+                if (ci >= 0)                              // 실은 것 — 팔 것을 더하고 뺀다
+                    SellAdd(ci, minus ? -SellStepOf(ci) : SellStepOf(ci));
+                else if (row >= 0)                        // 담아 두기만 한 줄 — 장바구니를 더하고 뺀다
+                    CartAdd(row, minus ? -StepOf(row) : StepOf(row));
+                InvalidateRect(h, NULL, FALSE);
+                return 0;
             }
             for (v = 0; v < STEP_N; v++) {
                 RECT s = RcStep(v);
@@ -702,7 +857,8 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
               return 0;
           } }
         { RECT a = RcApply(); if (PtInRect(&a, pt)) { CartApply(h); return 0; } }
-        { RECT c = RcClear(); if (PtInRect(&c, pt)) { CartClear(); Say(L"담은 것을 비웠습니다.", 0);
+        // [비우기] — 알림은 안 띄운다. 담은 것이 화면에서 사라지는 것이 곧 답이다.
+        { RECT c = RcClear(); if (PtInRect(&c, pt)) { CartClear(); Say(L"", 0);
                                                      InvalidateRect(h, NULL, FALSE); return 0; } }
         if (pt.y < FRAME + TITLE_H) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
         return 0;
@@ -715,6 +871,7 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
     case WM_DESTROY:
         UI_DestroyFonts();
+        if (g_priceFont) { DeleteObject(g_priceFont); g_priceFont = NULL; }
         g_wnd = NULL;
         return 0;
     }
