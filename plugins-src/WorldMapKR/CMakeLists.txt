@@ -5,6 +5,9 @@ add_library(WorldMapKR SHARED
     src/world.c
     src/citydb.c
     src/discdb.c
+    src/ocean.c
+    src/sprite.c
+    ../CharacterUtilKR/src/ls12.c
     ../CharacterUtilKR/src/uikit.c
 )
 

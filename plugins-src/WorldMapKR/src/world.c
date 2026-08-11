@@ -1,4 +1,5 @@
 #include "world.h"
+#include "ocean.h"    // OCEAN.CDS 타일 그림
 #include <stdio.h>
 
 // ---- 팔레트 ----
@@ -119,6 +120,15 @@ int World_RenderView(int w, int h, int x0, int y0, int vw, int vh)
     int x, y;
 
     if (!g_raw) return 0;
+
+    // 타일은 있으면 좋고 없어도 그만이다 — 못 올리면 예전 어림 색으로 그린다.
+    // ★ 여기서 부르는 것이 중요하다. 예전에는 World_Load 안에서만 불렀는데, 그 함수는
+    //   WORLD.CDS 가 이미 올라와 있으면 맨 앞에서 그냥 돌아간다(`if (g_raw) return 1;`).
+    //   그래서 첫 시도가 한 번 실패하면 그 판이 끝날 때까지 다시는 시도조차 안 했다 —
+    //   "됐다 안 됐다" 하던 것이 이것이다. 그릴 때마다 부르면 다음 기회에 올라온다
+    //   (이미 올라와 있으면 Ocean_Load 가 곧바로 1 을 돌려주므로 비용이 없다).
+    Ocean_Load();
+
     // 24bpp DIB 는 한 줄이 4바이트 배수여야 한다. 폭을 4의 배수로 내려 맞추면 w*3 도 맞는다.
     w &= ~3;
     if (w <= 0 || h <= 0 || vw <= 0 || vh <= 0) return 0;
@@ -132,26 +142,42 @@ int World_RenderView(int w, int h, int x0, int y0, int vw, int vh)
 
     // 보이는 영역만 화면 크기로 바로 줄여 그린다(가장 가까운 칸 하나를 골라 쓰는 방식).
     // 확대해도 뽑는 픽셀 수가 같아서 비용이 늘지 않는다.
-    for (y = 0; y < h; y++) {
-        int uy = y0 + (int)((long long)y * vh / h);
-        unsigned char* dst = g_px + (SIZE_T)y * w * 3;
-        if (uy < 0) uy = 0;
-        if (uy >= WORLD_CELL_H) uy = WORLD_CELL_H - 1;
-        for (x = 0; x < w; x++) {
-            int ux = x0 + (int)((long long)x * vw / w);
-            int cx, row;
-            const unsigned char* cell;
-            unsigned c;
-            if (ux < 0) ux = 0;
-            if (ux >= WORLD_UNFOLD_W) ux = WORLD_UNFOLD_W - 1;
-            // 짝수 행이 왼쪽 절반, 홀수 행이 오른쪽 절반이다.
-            cx  = (ux < WORLD_CELL_W) ? ux : ux - WORLD_CELL_W;
-            row = (ux < WORLD_CELL_W) ? uy * 2 : uy * 2 + 1;
-            cell = g_raw + (SIZE_T)row * WORLD_RAW_STRIDE + (SIZE_T)cx * 2;
-            c = CellColor((unsigned char)(cell[0] & 0x7F), cell[1]);
-            *dst++ = (unsigned char)(c & 0xFF);          // B
-            *dst++ = (unsigned char)((c >> 8) & 0xFF);   // G
-            *dst++ = (unsigned char)((c >> 16) & 0xFF);  // R
+    //
+    // OCEAN.CDS 를 올렸으면 게임이 쓰는 진짜 타일 그림에서 점을 하나 뽑아 쓴다.
+    // 칸 하나가 화면 한 점보다 작을 때도 손해가 없다 — 어림 색(kLandPct 비율)보다
+    // 게임 그림에서 뽑은 색이 낫다. 못 올렸으면 예전 어림 색으로 그대로 그린다.
+    {
+        int tiles = Ocean_Ready();
+        for (y = 0; y < h; y++) {
+            /* 칸 단위가 아니라 "타일 점" 단위로 센다 — 한 칸이 16점이다. */
+            long long fy = (long long)y0 * OCEAN_TILE_W + (long long)y * vh * OCEAN_TILE_W / h;
+            int uy = (int)(fy / OCEAN_TILE_W), py = (int)(fy % OCEAN_TILE_W);
+            unsigned char* dst = g_px + (SIZE_T)y * w * 3;
+            if (uy < 0) { uy = 0; py = 0; }
+            if (uy >= WORLD_CELL_H) { uy = WORLD_CELL_H - 1; py = OCEAN_TILE_W - 1; }
+            for (x = 0; x < w; x++) {
+                long long fx = (long long)x0 * OCEAN_TILE_W + (long long)x * vw * OCEAN_TILE_W / w;
+                int ux = (int)(fx / OCEAN_TILE_W), px = (int)(fx % OCEAN_TILE_W);
+                int cx, row;
+                const unsigned char* cell;
+                unsigned c;
+                if (ux < 0) { ux = 0; px = 0; }
+                if (ux >= WORLD_UNFOLD_W) { ux = WORLD_UNFOLD_W - 1; px = OCEAN_TILE_W - 1; }
+                // 짝수 행이 왼쪽 절반, 홀수 행이 오른쪽 절반이다.
+                cx  = (ux < WORLD_CELL_W) ? ux : ux - WORLD_CELL_W;
+                row = (ux < WORLD_CELL_W) ? uy * 2 : uy * 2 + 1;
+                cell = g_raw + (SIZE_T)row * WORLD_RAW_STRIDE + (SIZE_T)cx * 2;
+                if (tiles) {
+                    // 타일 번호 = 칸 u16 의 하위 14비트 (게임 0x48A40A 의 and cx,0x3FFF)
+                    int tile = (cell[0] | ((int)cell[1] << 8)) & OCEAN_TILE_MASK;
+                    c = Ocean_Pixel(tile, px, py);
+                } else {
+                    c = CellColor((unsigned char)(cell[0] & 0x7F), cell[1]);
+                }
+                *dst++ = (unsigned char)(c & 0xFF);          // B
+                *dst++ = (unsigned char)((c >> 8) & 0xFF);   // G
+                *dst++ = (unsigned char)((c >> 16) & 0xFF);  // R
+            }
         }
     }
     return 1;
@@ -161,5 +187,6 @@ void World_Free(void)
 {
     if (g_px)  { HeapFree(GetProcessHeap(), 0, g_px);  g_px = NULL; }
     if (g_raw) { HeapFree(GetProcessHeap(), 0, g_raw); g_raw = NULL; }
+    Ocean_Free();          // 4MB 라 창을 닫을 때 같이 놓아 준다
     g_w = g_h = 0;
 }

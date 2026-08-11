@@ -1,5 +1,8 @@
 #include "mapwin.h"
 #include "world.h"
+#include "sprite.h"       // 함대 스프라이트(배·말) — 게임이 쓰는 그 그림
+#include "ocean.h"        // 타일이 올라왔는지 · 왜 못 올렸는지
+#include "ocean_palette.h" // 그 그림의 색표
 #include "uikit.h"
 #include "citydb.h"        // 도시 좌표/이름 (CDS95Util\cities.json, 없으면 내장 표)
 #include "discdb.h"        // 발견물 좌표/이름 (CDS95Util\discoveries.json, 없으면 내장 표)
@@ -35,7 +38,15 @@
 #define TIMER_MS  500
 
 // 휠로 오갈 배율. 1 = 세계 전체. 8 배면 한 칸이 화면 3픽셀쯤이라 더 키워 봐야 계단만 커진다.
-static const int kZoom[] = { 1, 2, 3, 4, 6, 8 };
+// 배율. x44 에서 칸 하나가 화면 16픽셀이 되어 OCEAN.CDS 타일이 원본 크기로 찍힌다
+// (900 / (2500/z) = 0.36z, 0.36 x 44 = 16). 그리는 비용은 배율과 무관하다 —
+// 화면 픽셀 수(900x450)만큼만 뽑기 때문이다.
+static const int kZoom[] = { 1, 2, 3, 4, 6, 8, 12, 16, 22, 32, 44 };
+// 이름표를 다는 구간. 너무 확대하면 몇 안 되는 이름이 화면을 가로질러 그림을 덮으므로
+// 위쪽에서도 끊는다 — 그 위로는 마커만 찍는다.
+#define LABEL_MIN_CITY  3
+#define LABEL_MIN_DISC  4
+#define LABEL_MAX       16
 #define ZOOM_N     ((int)(sizeof(kZoom)/sizeof(kZoom[0])))
 #define ZOOM_START 3       // 창을 열 때 배율(kZoom[3] = 4배). 함대 자리를 가운데 놓고 연다
 
@@ -173,7 +184,7 @@ static void ShadowText(HDC dc, int x, int y, const wchar_t* s)
 static void DrawCities(HDC dc)
 {
     int i, sx, sy;
-    int labels = (kZoom[g_zi] >= 3);
+    int labels = (kZoom[g_zi] >= LABEL_MIN_CITY && kZoom[g_zi] <= LABEL_MAX);
 
     for (i = 0; i < CITYDB_MAX; i++) {
         const CityPt* c = CityDb_At(i);
@@ -204,7 +215,8 @@ static void DrawCities(HDC dc)
 static void DrawDiscoveries(HDC dc)
 {
     int i, sx1, sy1, sx2, sy2;
-    int labels = (kZoom[g_zi] >= 4);           // 도시보다 한 단계 더 확대해야 이름을 붙인다
+    // 도시보다 한 단계 더 확대해야 이름을 붙이고, 너무 확대하면 도로 뗀다.
+    int labels = (kZoom[g_zi] >= LABEL_MIN_DISC && kZoom[g_zi] <= LABEL_MAX);
     HPEN pen = CreatePen(PS_SOLID, 1, RGB(235, 190, 70));
     HPEN old = (HPEN)SelectObject(dc, pen);
     HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -316,7 +328,41 @@ static void CityMenu(HWND h, int city)
     }
 }
 
-// 지도 위 함대 표시 — 빨간 동그라미 + 십자선. 보이는 영역 밖이면 그리지 않는다.
+// 함대 스프라이트 — 게임이 해상 화면에 그리는 그 그림(항해=배, 육상=말).
+// 48x48 그림이 칸 셋을 덮으므로 화면 크기도 칸 하나의 세 배로 잡는다. 색인 0 은 투명이라
+// 건너뛴다. 최근접으로 늘려 찍는다 — 원본이 각진 그림이라 그게 맞다.
+// 너무 작게 나올 배율에서는 그리지 않고 0 을 돌려준다(그때는 십자선이 낫다).
+static int DrawFleetSprite(HDC dc, int px, int py)
+{
+    const unsigned char* spr = Sprite_Now();
+    int side, i, j;
+    if (!spr) return 0;
+
+    side = 3 * MAP_W / ViewW();
+    if (side < 12) return 0;
+    if (side > 4 * SPR_W) side = 4 * SPR_W;
+
+    for (j = 0; j < side; j++) {
+        int sy = j * SPR_W / side;
+        int y  = py - side / 2 + j;
+        if (y < MAP_Y || y >= MAP_Y + MAP_H) continue;
+        for (i = 0; i < side; i++) {
+            int sx = i * SPR_W / side;
+            int x  = px - side / 2 + i;
+            unsigned char v;
+            const unsigned char* c;
+            if (x < MAP_X || x >= MAP_X + MAP_W) continue;
+            v = spr[sy * SPR_W + sx];
+            if (!v) continue;
+            c = kOceanPalette + (unsigned)v * 3;
+            SetPixelV(dc, x, y, RGB(c[0], c[1], c[2]));
+        }
+    }
+    return 1;
+}
+
+// 지도 위 함대 표시 — 확대했으면 게임 그림(배·말), 아니면 빨간 동그라미 + 십자선.
+// 보이는 영역 밖이면 그리지 않는다.
 static void DrawMarker(HDC dc, int lon, int lat)
 {
     int px, py;
@@ -325,6 +371,8 @@ static void DrawMarker(HDC dc, int lon, int lat)
 
     if (!CellToScreen((int)((long long)lon * WORLD_UNFOLD_W / LON_RAW_MAX),
                       (int)((long long)lat * WORLD_CELL_H  / LAT_RAW_MAX), &px, &py)) return;
+
+    if (DrawFleetSprite(dc, px, py)) return;
 
     pen = CreatePen(PS_SOLID, 1, RGB(210, 40, 40));
     old = (HPEN)SelectObject(dc, pen);
@@ -382,7 +430,10 @@ static void OnPaint(HWND h)
 
     ir.left = MAP_X; ir.right = MAP_X + MAP_W;
     ir.top = MAP_Y + MAP_H + 2; ir.bottom = ir.top + INFO_H - 4;
-    if (g_lon >= 0) PosText(g_lon, g_lat, buf);
+    // 타일을 못 올렸으면 그 이유를 좌표 대신 띄운다 — 왜 옛 단색으로 그리는지 바로 보이게.
+    if (!Ocean_Ready() && Ocean_Why()[0])
+        wsprintfW(buf, L"타일 없음 — %s", Ocean_Why());
+    else if (g_lon >= 0) PosText(g_lon, g_lat, buf);
     else            lstrcpyW(buf, L"항해 중이 아닙니다(좌표를 읽지 못했습니다).");
     UI_Text(dc, ir, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
