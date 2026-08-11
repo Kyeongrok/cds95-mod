@@ -20,19 +20,22 @@
                                  // Fatigue=0xBA00, Hotkey=0xBB00, Hint=0xBC00 과 안 겹치게.
 
 #define WC_MARKET  L"MarketUtilKR_Window"
-#define PIC        46                    // 줄 그림
-// 줄 높이 — 글씨 크기는 그대로 두고 줄 사이만 좁혔다(68 -> 54, 목록 높이 20% 감소).
+#define PIC        55                    // 줄 그림. 무엇인지 알아보게 46 에서 20% 키웠다
+// 줄 높이 — 글씨 크기는 그대로 두고 줄 사이만 좁혔다(68 -> 54).
 // 여덟 줄이 한눈에 들어와야 하는데 68 이면 목록이 너무 길어져 빈 칸만 보였다.
-// 안쪽은 이름 18 + 단가·공급 18 + 무게·원산지 14 = 50 이다.
-#define ROW_H      54
+// 안쪽은 이름 18 + 단가·공급 18 + 무게·원산지 14 = 50 이라 글씨는 54 로도 되지만,
+// 그림을 55 로 키우면서 60 으로 올렸다(그림 55 + 위 여백 2 = 57 = 줄 안쪽 높이).
+#define ROW_H      60
 #define ROWS_VIS   8                     // 짐 칸이 여덟이라 여덟 줄은 보여야 한 화면에 다 든다
 #define COL_W      420
 #define LIST_Y     (FRAME + TITLE_H + 30)
-#define LIST_H     (ROW_H * ROWS_VIS)
+// 목록 테두리와 줄 사이 여백. 없으면 첫 줄이 테두리에 딱 붙어 답답해 보인다.
+#define LIST_PAD   3
+#define LIST_H     (ROW_H * ROWS_VIS + LIST_PAD * 2)
 #define LEFT_X     (FRAME + 8)
 #define RIGHT_X    (LEFT_X + COL_W + 12)
 #define CLIENT_W   (RIGHT_X + COL_W + FRAME + 8)
-#define CLIENT_H   (LIST_Y + LIST_H + 126)
+#define CLIENT_H   (LIST_Y + LIST_H + 102)
 #define BOT_Y      (LIST_Y + LIST_H)     // 목록 아래 — 여기부터 아래 칸이다
 
 static HINSTANCE g_hinst = NULL;
@@ -110,7 +113,7 @@ static RECT RcRow(int side, int v)       // side 0 = 왼쪽(살 것), 1 = 오른
     RECT r;
     r.left  = side ? RIGHT_X : LEFT_X;
     r.right = r.left + COL_W;
-    r.top   = LIST_Y + v * ROW_H;
+    r.top   = LIST_Y + LIST_PAD + v * ROW_H;
     r.bottom = r.top + ROW_H - 3;
     return r;
 }
@@ -145,7 +148,7 @@ static RECT RcRowAll(int v) { return RcBtn(1, v, 8, 50); }     // 이 품목만 
 // [결정] — 지출 · 수입 · 수익 세 줄 오른쪽에 그 높이만큼 세워 둔다.
 static RECT RcApply(void)
 { RECT r; r.right = RIGHT_X + COL_W; r.left = r.right - 90;
-  r.top = BOT_Y + 56; r.bottom = BOT_Y + 116; return r; }
+  r.top = BOT_Y + 32; r.bottom = BOT_Y + 92; return r; }
 // [비우기] — 내 짐 칸 이름표 줄 오른쪽 끝. 담은 것을 통째로 되돌린다
 // (아래 [결정] 옆에 있으면 지출 · 수입 줄과 섞여 무엇을 비우는 단추인지 흐려진다).
 // [모두 팔기] 는 뺐다 — 줄마다 [모두] 가 있어서 같은 일을 두 군데서 하고 있었다.
@@ -430,14 +433,17 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
         // 아직 안 산 채로 담아 두기만 한 줄. 여기서는 살지 말지만 정하면 되므로
         // 매각가도 손익도 안 보여 준다 — 팔 수 있는 물건이 아직 아니다.
         int cartOnly = ((v < ROWS_VIS ? g_right[v].cargo : -1) < 0 && pend > 0);
+        // 갯수와 매각가는 왼쪽 칸의 "단가 · 공급" 과 같은 글씨를 쓴다 — 양쪽에서 제일 먼저
+        // 보는 값인데 한쪽만 잔글씨면 눈이 한 번 더 간다. 손익(−50)만 작은 글씨로 남긴다.
+        HFONT bigFont = g_priceFont ? g_priceFont : g_smallFont;
         RECT cr = t, pr = t;
-        cr.right = t.left + 58; pr.left = cr.right + 4;
+        cr.right = t.left + 54; pr.left = cr.right + 4;
         if (have > 0) {
             wsprintfW(buf, L"%s개", N(have));
-            UI_Text(dc, cr, buf, g_smallFont, pend > 0 ? COL_CART_TX : COL_TEXT,
+            UI_Text(dc, cr, buf, bigFont, pend > 0 ? COL_CART_TX : COL_TEXT,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         }
-        else UI_Text(dc, cr, L"아직 없음", g_smallFont, COL_DARK,
+        else UI_Text(dc, cr, L"아직 없음", bigFont, COL_DARK,
                      DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         // 이 줄에는 매각가만 둔다 — 매입가까지 넣으면 자리가 모자라 통째로 잘려 나갔다
         // ("매각 236..."). 매입가는 아랫줄로 내리고, 남는 값만 오른쪽 끝에 따로 붙인다.
@@ -447,14 +453,14 @@ static void PaintRow(HDC dc, int side, int v, int kind, int a, int b, int origin
             // 매각가와 손익이 한 줄에 같이 선다. 손익 자리를 너무 넓게 잡으면 매각가가
             // "매각 1..." 로 잘린다 — 단추가 넷으로 늘면서 한 번 겪었다.
             RECT tx = pr, dr = t;
-            dr.left = t.right - 50; tx.right = dr.left - 6;
-            UI_Text(dc, tx, buf, g_smallFont, col,
+            dr.left = t.right - 46; tx.right = dr.left - 6;
+            UI_Text(dc, tx, buf, bigFont, col,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
             wsprintfW(buf, L"%s%s", diff >= 0 ? L"+" : L"−", N(diff >= 0 ? diff : -diff));
             UI_Text(dc, dr, buf, g_smallFont, col,
                     DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         }
-        else UI_Text(dc, pr, buf, g_smallFont, col,
+        else UI_Text(dc, pr, buf, bigFont, col,
                      DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
     }
 
@@ -628,9 +634,9 @@ static void Paint(HWND h)
         int cost = CartCost(), gain = SellGain(), prof = SellProfit();
         RECT lb;
 
-        // ── 첫 줄: 소지금
+        // ── 첫 줄: 소지금. 목록 바로 밑이다 — 예전에는 28 이나 떠 있어 허전했다.
         lb.left = LEFT_X; lb.right = LEFT_X + COL_W;
-        lb.top = BOT_Y + 28; lb.bottom = lb.top + 20;
+        lb.top = BOT_Y + 4; lb.bottom = lb.top + 20;
         if (money >= 0) wsprintfW(buf, L"소지금 %s닢", N(money));
         else            lstrcpyW(buf, L"소지금을 읽지 못했습니다 — 세이브를 불러온 뒤에 열어 주세요.");
         UI_Text(dc, lb, buf, g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
@@ -642,9 +648,9 @@ static void Paint(HWND h)
         if (hold) {
             RECT b2;
             b2.left = LEFT_X; b2.right = LEFT_X + COL_W;
-            b2.top = BOT_Y + 56; b2.bottom = b2.top + 18;
+            b2.top = BOT_Y + 32; b2.bottom = b2.top + 18;
             if (supV >= 0) PaintBar(dc, b2, L"짐용량", supV + CargoCount(), CartQty(),  capMax);
-            b2.top = BOT_Y + 78; b2.bottom = b2.top + 18;
+            b2.top = BOT_Y + 54; b2.bottom = b2.top + 18;
             if (supM >= 0) PaintBar(dc, b2, L"짐중량", supM + CargoMass(),  CartMass(), massMax);
         }
 
@@ -653,13 +659,13 @@ static void Paint(HWND h)
         //    수익만 부호에 따라(남으면 파랑, 밑지면 빨강) 물들여 그것만 눈에 띄게 한다.
         {   RECT kv;
             kv.left = RIGHT_X; kv.right = RcApply().left - 12;
-            kv.top = BOT_Y + 54; kv.bottom = kv.top + 22;
+            kv.top = BOT_Y + 30; kv.bottom = kv.top + 22;
             wsprintfW(buf, L"%s닢", N(cost));
             PaintKV(dc, kv, L"지출", buf, COL_TEXT);
-            kv.top = BOT_Y + 76; kv.bottom = kv.top + 22;
+            kv.top = BOT_Y + 52; kv.bottom = kv.top + 22;
             wsprintfW(buf, L"%s닢", N(gain));
             PaintKV(dc, kv, L"수입", buf, COL_TEXT);
-            kv.top = BOT_Y + 98; kv.bottom = kv.top + 22;
+            kv.top = BOT_Y + 74; kv.bottom = kv.top + 22;
             if (gain > 0) {
                 wsprintfW(buf, L"%s%s닢", prof >= 0 ? L"+" : L"−", N(prof >= 0 ? prof : -prof));
                 PaintKV(dc, kv, L"수익", buf, prof >= 0 ? COL_LANG_TX : COL_WARN_TX);
@@ -671,7 +677,7 @@ static void Paint(HWND h)
         // ── 다섯째 줄 왼쪽: 알림. 할 말이 있을 때만 쓴다.
         if (g_msg[0]) {
             lb.left = LEFT_X; lb.right = RIGHT_X - 12;
-            lb.top = BOT_Y + 100; lb.bottom = lb.top + 18;
+            lb.top = BOT_Y + 76; lb.bottom = lb.top + 18;
             UI_Text(dc, lb, g_msg, g_smallFont, g_msgWarn ? COL_WARN_TX : COL_DARK,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         }

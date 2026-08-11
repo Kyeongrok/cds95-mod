@@ -32,6 +32,10 @@ static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"PatchUtilKR",     L"patches.json 의 메모리 패치를 켜고 끈다." },
     { L"HotkeyUtilKR",    L"단축키 — 글자 한 개로 위 창들을 연다. hotkeys.json 에 남는다." },
     { L"HintUtilKR",      L"힌트 — 발견물 274개를 분류·가치·상태로 본다." },
+    { L"FatigueUtilKR",   L"피로도 — 쌓인 함대 피로도를 원하는 만큼 덜어낸다." },
+    { L"MarketUtilKR",    L"매매 — 교역소 사고팔기를 그림·짐칸 막대와 함께 한 화면에서." },
+    // 원본 SaveUtil 과 헷갈리기 쉽다 — 파일 메뉴의 "저장 · 중단" 은 이쪽이다.
+    { L"SaveUtilKR",      L"저장 · 중단 — 자택·여관까지 안 가고 그 자리에서 저장한다." },
     { L"CDROMUtil",       L"(원본) CD-ROM 접근을 하드디스크로 돌린다." },
     { L"CPUPatch",        L"(원본) CPU 점유율을 낮춘다." },
     { L"MemoryFix",       L"(원본) 게임의 메모리 버그를 고친다." },
@@ -205,8 +209,10 @@ static void LoadSubPlugins(void)
                 continue;
             }
             JoinPath(file, one, f2.cFileName);
-            if (LoadLibraryW(file)) { n++; LogW(L"[ModUtilKR] %s\%s 불러옴", fd.cFileName, f2.cFileName); }
-            else LogW(L"[ModUtilKR] %s\%s 못 불러옴 (오류 %lu)", fd.cFileName, f2.cFileName, GetLastError());
+            // 경로 구분자는 역슬래시 두 개다 — `\%` 는 escape 로 접혀 `%` 가 되면서
+            // 폴더와 파일명이 구분 없이 붙어 나왔다(C4129).
+            if (LoadLibraryW(file)) { n++; LogW(L"[ModUtilKR] %s\\%s 불러옴", fd.cFileName, f2.cFileName); }
+            else LogW(L"[ModUtilKR] %s\\%s 못 불러옴 (오류 %lu)", fd.cFileName, f2.cFileName, GetLastError());
         } while (FindNextFileW(h2, &f2));
         FindClose(h2);
     } while (FindNextFileW(h, &fd));
