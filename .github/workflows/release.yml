@@ -29,6 +29,10 @@ jobs:
           echo "${{ github.ref_name }}" > dist/CDS95Util/VERSION
           cp plugins-src/WorldMapKR/cities.json dist/CDS95Util/
           cp plugins-src/WorldMapKR/discoveries.json dist/CDS95Util/
+          # PatchUtilKR 이 읽는 패치 목록. 설명문에 "동봉한 patches.json" 이라 적어 두고
+          # 정작 담지 않아 새로 받은 사람은 빈 목록을 봤다. example 도 같이 넣는다.
+          cp plugins-src/PatchUtilKR/patches.json dist/CDS95Util/
+          cp plugins-src/PatchUtilKR/patches.json.example dist/CDS95Util/
           # 모드 — 퀘스트 묶음과 패치 묶음. 바닐라 이벤트 파일은 담지 않는다(게임 자료라
           # QuestModKR 이 첫 실행 때 각자 폴더에서 뜬다).
           cp -r CDS95Util/mods dist/CDS95Util/
