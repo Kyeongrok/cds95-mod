@@ -111,6 +111,9 @@ static void RebuildRecentMenu(void)
 //   건물수치      : +0x10 (u16 비트필드; struct+0x1C) — 건물 유무 플래그.
 //   시장 아이템1~8: +20~+48 (i32 ×8) — 값 = item_names.h 인덱스, 빈 슬롯은 -1(로드시)/0.
 #define SCALE_OFF     (-4)
+// 상태 : +0x34 (도시struct +0x40). 게임 도시정보의 "상태" 줄과 같은 값이다 —
+//   0x429D60 이 [도시+0x40] 을 돌려주고 0x429D70 이 그것으로 이름표 0x53CE60 을 찾는다.
+#define STATE_OFF     0x34
 #define BUILDING_OFF  0x10
 #define MKT_ITEM_OFF  20
 #define MKT_ITEM_MAX  8
@@ -136,10 +139,28 @@ static BOOL ReadI32(unsigned addr, int* out)
     *out = *p; return TRUE;
 }
 
+// 도시 상태 이름. 게임 안의 이름표(0x0053CE60, 포인터 14개)를 그대로 옮겨 적었다.
+// 살아 있는 값으로 대조: 226개 도시가 전부 0~13 안에 들었다(224개 통상, 2개 대조선).
+#define STATE_N 14
+static const wchar_t* kStateName[STATE_N] = {
+    L"통상", L"전염병", L"기근", L"대기근", L"풍작", L"대풍작", L"대한파",
+    L"혹서", L"노동력부족", L"전쟁", L"축제", L"호경기", L"불경기", L"대조선"
+};
+static const wchar_t* StateName(int v)
+{
+    return (v >= 0 && v < STATE_N) ? kStateName[v] : L"-";
+}
+
 // 도시 i 의 라이브 시세. 매핑 안 돼 있으면 -1.
 static int ReadSise(int i)
 {
     int v; return ReadI32(CityField(i, 0), &v) ? v : -1;
+}
+
+// 도시 i 의 상태(0~13). 매핑 안 돼 있으면 -1.
+static int ReadState(int i)
+{
+    int v; return ReadI32(CityField(i, STATE_OFF), &v) ? v : -1;
 }
 
 // 도시 i 의 규모(0~7). 매핑 안 돼 있으면 -1.
@@ -276,17 +297,17 @@ static RECT CloseRect(RECT client)
 
 // 컬럼 제목 — AddCol 과 동일. 헤더는 이 배열에서 직접 그린다(Header_GetItem 의 ANSI 확장
 // 인코딩 깨짐을 피하기 위해 컨트롤에서 텍스트를 되읽지 않는다).
-#define COL_COUNT 11
+#define COL_COUNT 12
 static const wchar_t* kCols[COL_COUNT] = {
-    L"번호", L"도시명", L"문화권", L"규모", L"시세", L"교역소", L"시장", L"도서관", L"조선소", L"조합", L"시장아이템"
+    L"번호", L"도시명", L"문화권", L"규모", L"시세", L"상태", L"교역소", L"시장", L"도서관", L"조선소", L"조합", L"시장아이템"
 };
-static const int kColW[COL_COUNT] = { 40, 104, 78, 40, 46, 52, 40, 52, 52, 44, 240 };
+static const int kColW[COL_COUNT] = { 40, 104, 78, 40, 46, 76, 52, 40, 52, 52, 44, 240 };
 
 // ---- 필터 + 정렬 ----
 // 줄마다 라이브 값(규모/시세/건물비트/시장아이템)을 한 번만 읽어 담아 둔다. 정렬할 때마다
 // 게임 메모리를 다시 읽으면 비교 중에 값이 바뀔 수 있고 느리기도 하다.
 typedef struct {
-    int     id, scale, sise, trade, market, lib, yard, guild;
+    int     id, scale, sise, state, trade, market, lib, yard, guild;
     wchar_t mkt[256];
 } SiseRow;
 
@@ -324,6 +345,7 @@ static void ReadRows(void)
         r->id     = i;
         r->scale  = ReadScale(i);
         r->sise   = ReadSise(i);
+        r->state  = ReadState(i);
         r->trade  = ReadBuildingBit(i, BIT_TRADE);
         r->lib    = ReadBuildingBit(i, BIT_LIBRARY);
         r->yard   = ReadBuildingBit(i, BIT_SHIPYARD);
@@ -344,12 +366,13 @@ static int __cdecl SiseCmp(const void* pa, const void* pb)
     case 2:  r = lstrcmpW(kCities[a->id].sphere, kCities[b->id].sphere); break;
     case 3:  r = a->scale - b->scale; break;
     case 4:  r = a->sise - b->sise; break;
-    case 5:  r = a->trade - b->trade; break;
-    case 6:  r = a->market - b->market; break;
-    case 7:  r = a->lib - b->lib; break;
-    case 8:  r = a->yard - b->yard; break;
-    case 9:  r = a->guild - b->guild; break;
-    case 10: r = lstrcmpW(a->mkt, b->mkt); break;
+    case 5:  r = a->state - b->state; break;
+    case 6:  r = a->trade - b->trade; break;
+    case 7:  r = a->market - b->market; break;
+    case 8:  r = a->lib - b->lib; break;
+    case 9:  r = a->yard - b->yard; break;
+    case 10: r = a->guild - b->guild; break;
+    case 11: r = lstrcmpW(a->mkt, b->mkt); break;
     default: break;
     }
     if (r == 0) return a->id - b->id;
@@ -453,13 +476,14 @@ static void PopulateList(HWND lv)
         SetText(lv, row, 3, sbuf);
         if (r->sise < 0) wsprintfW(sbuf, L"-"); else wsprintfW(sbuf, L"%d", r->sise);
         SetText(lv, row, 4, sbuf);
+        SetText(lv, row, 5, StateName(r->state));                      // 상태(통상 · 전쟁 · 기근 …)
         // 건물: 건물수치(bit) 로 확정. 미로드시 -1 → "-"
-        SetText(lv, row, 5, BitMark(r->trade));                        // 교역소(fb21)
-        SetText(lv, row, 6, r->market ? L"○" : L"×");                 // 시장 유무
-        SetText(lv, row, 7, BitMark(r->lib));                          // 도서관
-        SetText(lv, row, 8, BitMark(r->yard));                         // 조선소
-        SetText(lv, row, 9, BitMark(r->guild));                        // 조합(fb22로 bit7 확정)
-        SetText(lv, row, 10, r->mkt);                                   // 시장아이템 이름 나열
+        SetText(lv, row, 6, BitMark(r->trade));                        // 교역소(fb21)
+        SetText(lv, row, 7, r->market ? L"○" : L"×");                 // 시장 유무
+        SetText(lv, row, 8, BitMark(r->lib));                          // 도서관
+        SetText(lv, row, 9, BitMark(r->yard));                         // 조선소
+        SetText(lv, row, 10, BitMark(r->guild));                       // 조합(fb22로 bit7 확정)
+        SetText(lv, row, 11, r->mkt);                                  // 시장아이템 이름 나열
     }
     SendMessageW(lv, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(lv, NULL, TRUE);

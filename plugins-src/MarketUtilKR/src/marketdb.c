@@ -1,4 +1,5 @@
 #include "marketdb.h"
+#include <MinHook.h>
 #include "goods_names.h"   // TradeUtilKR/src — kTradeGoods[70]
 #include "cities_data.h"   // TradeUtilKR/src — kCities[226]
 
@@ -36,6 +37,62 @@ static unsigned char* Base(void)
     return g_base;
 }
 int Mkt_Ready(void) { return Base() != NULL; }
+
+// ── 게임 교역소가 열려 있는 동안은 짐이 없다 ────────────────────────────────────
+// 게임은 교역 대화를 열 때 짐 여덟 칸을 통째로 비운다 — 0x481580 이 매각 목록을 만든
+// 직후(0x4816AE) 곧바로 0x4B57F0(ClearCargo)을 부르고, 그 함수는 {-1,0,-1,0} 을
+// 여덟 칸에 되쓴다. 물건은 그동안 대화창이 들고 있다가 [결정] 때 0x4B5830(AddCargo)
+// 으로 되돌아온다. 그래서 그 사이에 우리 창을 열면 "실은 것이 없습니다" 가 뜬다.
+//
+// 더 나쁜 것은 그 사이에 우리가 사고파는 것이다 — 대화창은 칸이 비어 있다고 믿고 있어서
+// 우리가 칸을 차지해 두면 되돌려 넣을 자리가 모자라 게임 쪽 물건이 갈 곳을 잃는다.
+// 그래서 아예 잠근다.
+//
+// 0x481580 은 그 안에 모달 루프(0x481776~ 0x459CC0 펌프)를 품고 있어서
+// 들어갔다 나오는 동안이 곧 "교역소가 열려 있는 동안" 이다.
+#define MKT_TRADEFN_RVA 0x00081580u
+static const unsigned char kTradeSig[] = {
+    0x83, 0xEC, 0x2C,                    // sub esp, 2Ch
+    0x53, 0x56, 0x57,                    // push ebx / esi / edi
+    0x8B, 0xF1,                          // mov esi, ecx
+    0x55,                                // push ebp
+    0x6A, 0x00, 0x6A, 0x00, 0x6A, 0x00   // push 0 x3  (BuildSaleList 개수 호출)
+};
+
+typedef int (__fastcall *TradeFn)(void*, void*);
+static TradeFn g_origTrade = NULL;
+static long    g_tradeDepth = 0;
+
+static int __fastcall DetourTrade(void* thisptr, void* edx)
+{
+    int r;
+    InterlockedIncrement(&g_tradeDepth);
+    r = g_origTrade(thisptr, edx);
+    InterlockedDecrement(&g_tradeDepth);
+    return r;
+}
+
+int Mkt_TradeOpen(void) { return g_tradeDepth > 0; }
+
+void Mkt_HookInstall(void)
+{
+    unsigned char* fn;
+    unsigned i;
+    if (g_origTrade || !Base()) return;
+    fn = g_base + MKT_TRADEFN_RVA;
+    if (!Readable(fn, sizeof(kTradeSig))) return;
+    for (i = 0; i < sizeof(kTradeSig); i++)
+        if (fn[i] != kTradeSig[i]) return;      // 다른 빌드다 — 안 건다
+    if (MH_CreateHook(fn, &DetourTrade, (LPVOID*)&g_origTrade) != MH_OK) { g_origTrade = NULL; return; }
+    if (MH_EnableHook(fn) != MH_OK) g_origTrade = NULL;
+}
+
+void Mkt_HookRemove(void)
+{
+    if (!g_origTrade) return;
+    MH_DisableHook(g_base + MKT_TRADEFN_RVA);
+    g_origTrade = NULL;
+}
 
 static int* CityField(int city, int off)
 {
@@ -268,20 +325,21 @@ int Mkt_LoadCargo(void)
     return g_cargoN;
 }
 
-// 그 칸이 함대에 편입된 배인가. 가진 배는 열 척까지지만 짐은 편입된 배에만 실린다.
-// 빈 칸은 최대내구도가 0 이거나 함선종류가 0~7 밖이고, 도크에 둔 배는 +0x60 이 -1 이다.
-static int ShipInFleet(int i)
+// 함대 i 번 칸에 든 배. 없으면 NULL.
+// 게임은 "가진 배" 를 훑지 않는다 — 함대 객체가 들고 있는 여덟 칸짜리 배 번호 목록만 본다
+// (0x473DB0 / 0x473DC0). 짐칸 한도도 그 목록으로 센다(0x4743F0 · 0x4744B0).
+static const unsigned char* FleetShip(int i)
 {
+    const int* slot;
     const unsigned char* s;
-    int type, hull;
-    if (!Base() || i < 0 || i >= MKT_SHIP_N) return 0;
-    s = g_base + MKT_SHIP_RVA + (unsigned)i * MKT_SHIP_SZ;
-    if (!Readable(s, MKT_SHIP_SZ)) return 0;
-    type = *(const int*)(s + MKT_SHIP_TYPE);
-    hull = *(const int*)(s + MKT_SHIP_HULLMX);
-    if (type < 0 || type > 7) return 0;
-    if (hull <= 0 || hull > 9999) return 0;
-    return *(const int*)(s + MKT_SHIP_FLEET) != -1;
+    int id;
+    if (!Base() || i < 0 || i >= MKT_FLEET_SHIPS) return NULL;
+    slot = (const int*)(g_base + MKT_FLEETLIST_RVA + (unsigned)i * 4);
+    if (!Readable(slot, 4)) return NULL;
+    id = *slot;
+    if (id < 0 || id >= MKT_SHIP_N) return NULL;          // -1 이면 빈 칸
+    s = g_base + MKT_SHIP_RVA + (unsigned)id * MKT_SHIP_SZ;
+    return Readable(s, MKT_SHIP_SZ) ? s : NULL;
 }
 
 // 실은 대포가 먹는 중량. 게임 0x44C980 그대로 —
@@ -300,17 +358,15 @@ static int CannonMass(const unsigned char* s)
 
 int Mkt_Hold(int* ships, int* mass, int* cap)
 {
-    int i, sm = 0, sc = 0, n = 0, ok = 0;
+    int i, sm = 0, sc = 0, n = 0;
     if (ships) *ships = 0;
     if (mass)  *mass = 0;
     if (cap)   *cap = 0;
     if (!Base()) return 0;
-    for (i = 0; i < MKT_SHIP_N; i++) {
-        const unsigned char* s = g_base + MKT_SHIP_RVA + (unsigned)i * MKT_SHIP_SZ;
+    for (i = 0; i < MKT_FLEET_SHIPS; i++) {
+        const unsigned char* s = FleetShip(i);
         int m, c;
-        if (!Readable(s, MKT_SHIP_SZ)) break;
-        ok = 1;
-        if (!ShipInFleet(i)) continue;
+        if (!s) continue;
         m = *(const int*)(s + MKT_SHIP_MASS);
         c = *(const int*)(s + MKT_SHIP_CAP);
         if (m < 0 || m > 99999 || c < 0 || c > 99999) continue;
@@ -321,7 +377,7 @@ int Mkt_Hold(int* ships, int* mass, int* cap)
         if (c < 0) c = 0;
         sm += m; sc += c; n++;
     }
-    if (!ok || !n) return 0;
+    if (!n) return 0;
     if (ships) *ships = n;
     if (mass)  *mass = sm;
     if (cap)   *cap = sc;

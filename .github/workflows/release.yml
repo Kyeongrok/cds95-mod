@@ -20,7 +20,7 @@ jobs:
           # 나머지는 만든이별 폴더에 담는다. ModUtilKR 이 뜰 때 그것들을 대신 불러온다.
           mkdir -p "dist/CDS95Util/plugins/록히드매튜"
           cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
-          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR HintUtilKR; do
+          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR HintUtilKR MarketUtilKR; do
             cp "CDS95Util/$f.plugin" "dist/CDS95Util/plugins/록히드매튜/"
           done
           # 데이터는 루트 한 자리에 모은다 — 플러그인이 어느 폴더에 있든 여기서 찾는다.
@@ -50,7 +50,9 @@ jobs:
             - **TradeUtilKR** — 상단 메뉴에 "교역 > 시세 일람"을 추가. 전 도시(226개)의
               도시명/문화권/시세/도서관/조선소/조합을 게임 고풍 디자인의 목록창으로 표시합니다.
               위쪽 **문화권 상자**로 한 문화권만 추려 볼 수 있고(목록에 실제로 나오는 문화권만 담습니다),
-              **컬럼 제목을 누르면 오름차순 → 내림차순 → 정렬 안 함**으로 돌아갑니다(11개 컬럼 전부).
+              **컬럼 제목을 누르면 오름차순 → 내림차순 → 정렬 안 함**으로 돌아갑니다(12개 컬럼 전부).
+              시세 옆에 **상태**(통상·전염병·기근·대기근·풍작·대풍작·대한파·혹서·노동력부족·전쟁·
+              축제·호경기·불경기·대조선)가 함께 나옵니다 — 게임 도시정보의 "상태" 줄과 같은 값입니다.
               정렬 중인 컬럼에는 ▲/▼ 가 붙고 위쪽에 현재 상태가 표시됩니다. 라이브 값(규모·시세·건물·
               시장아이템)은 창을 열 때 한 번만 읽어 두고 그걸로 정렬하므로 정렬 도중 값이 흔들리지 않습니다.
               **[교역품] 목록에서 줄을 더블클릭하면 그 교역품 그림**이 옆 창에 뜹니다 — 게임이 도시정보에
@@ -179,6 +181,19 @@ jobs:
               지금 피로도가 창에 함께 표시되고 0.5초마다 갱신됩니다. 후킹 없이 값 하나만 읽고 쓰므로
               항해로 다시 쌓이는 것은 게임이 하던 그대로입니다. 메모리만 고치니 게임을 끄면 원래대로.
 
+            - **MarketUtilKR** — "파일" 메뉴에 "매매"를 추가. 교역소 매매를 **그림과 함께 한 화면**에서
+              합니다. 왼쪽은 이 도시가 파는 것(그림·단가·공급·무게·원산지), 오른쪽은 내 짐입니다.
+              게임 구입창처럼 **담아 두었다가 [결정]** 을 눌러야 실제로 삽니다 — 줄마다
+              **[1] [10] [100]** 이 그만큼 담고 **[모두]** 는 전량을 담습니다(다시 누르면 도로 뺍니다).
+              아래에 **짐용량 · 짐중량 막대**가 있어 지금 실은 것과 담은 뒤가 한눈에 보입니다
+              (물·식량·자재·포탄까지 다 센 값이라 게임 함대 화면과 같은 눈금입니다).
+              값은 전부 게임 함수와 자리를 역분석해 맞췄습니다 — **매각가는 게임 가격 함수
+              그대로, 구입 단가는 그 3/2** 이고, 짐칸 한도는 **함대 여덟 칸에 든 배**의
+              중량·용량에서 대포가 먹는 몫을 뺀 값입니다. 게임의 구입창·매각창 숫자와 맞춰 두었습니다.
+              **게임 교역소가 열려 있는 동안에는 잠깁니다** — 그때 게임이 짐 여덟 칸을 통째로
+              비워 두고 물건을 대화창이 들고 있기 때문입니다(그 사이에 건드리면 게임이 되돌릴
+              자리를 잃습니다). 교역소가 없는 도시에서도 잠깁니다.
+              메모리만 고치므로 세이브 파일은 건드리지 않습니다.
             - **HintUtilKR** — "파일" 메뉴에 "힌트"를 추가(단축키 D). 게임의 "취득 힌트 일람"이
               이름만 여덟 줄 늘어놓는 대신, **[힌트] 186개**와 **[발견물] 274개**를
               **분류(지리·역사·보물·종교·교역품·미신·생물·민족) · 가치 · 상태**와 함께 보여줍니다.
@@ -193,5 +208,5 @@ jobs:
               Ctrl·Alt 조합과 글자 입력칸(검색칸 등)은 건드리지 않고, 게임에서 글자를 적어야 할 때는
               **[단축키 켜기]** 를 꺼 두면 됩니다.
 
-            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin` 만 포함됩니다.
+            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `MarketUtilKR.plugin` 만 포함됩니다.
             > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.

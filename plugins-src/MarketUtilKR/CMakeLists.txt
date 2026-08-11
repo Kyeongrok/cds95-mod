@@ -13,7 +13,7 @@ target_include_directories(MarketUtilKR PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src   # goods_names.h · cities_data.h
 )
 
-target_link_libraries(MarketUtilKR PRIVATE user32 gdi32)
+target_link_libraries(MarketUtilKR PRIVATE minhook user32 gdi32)
 
 target_compile_definitions(MarketUtilKR PRIVATE UNICODE _UNICODE)
 

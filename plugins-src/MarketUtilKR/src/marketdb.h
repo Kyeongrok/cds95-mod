@@ -85,7 +85,17 @@
 #define MKT_SHIP_GUNNOW 0x50          // 대포수 현재
 #define MKT_SHIP_GUNMX  0x54          // 대포수 최대 — 용량은 이만큼 미리 빠진다
 #define MKT_SHIP_GUNTYPE 0x58         // 대포종류. 없으면 -1
-#define MKT_SHIP_FLEET  0x60          // 함대 편입 표시 — 내 배가 아니면 -1 이다.
+#define MKT_SHIP_FLEET  0x60          // 함대 편입 표시가 아니었다 — 아래를 보라.
+// ★ 함대에 든 배는 이 표로 가려야 한다 — 배 struct 를 훑어서는 안 된다.
+//   함대 객체(0x5B3928)의 +0x04 부터 여덟 칸이 "배 번호" 목록이다(-1 이면 빈 칸).
+//   게임의 배 접근자 0x473DB0 이 [0x5B3928 + 4 + i*4] 를 읽고, 0x473DC0 이 그 번호로
+//   0x5A4E18 + id*0x6C 를 돌려준다. 짐칸 한도도 이 목록으로 센다(0x4743F0 · 0x4744B0).
+//   살아 있는 값으로 대조: 함대 목록은 배 id 8·6·7·9·0 다섯 척이고
+//   중량 한도 15735 · 용량 한도 1726 — 게임 함대 화면과 딱 맞는다.
+//   "+0x60 != -1" 로 세던 예전 방식은 편성 밖 배(id 5·10·11)까지 끌어와
+//   26375 · 2872 로 부풀었다. +0x60 은 편입 표시가 아니다(편성된 배가 82, 밖은 0 이었다).
+#define MKT_FLEETLIST_RVA 0x1B392Cu   // 함대 객체 +0x04
+#define MKT_FLEET_SHIPS   8           // 함대는 여덟 칸
 // 대포 레코드   모듈 + 0x149DB0 + 종류*12   {이름 문자열, 값, 한 문 무게}
 //   네 종류뿐이다 — 무게 15 · 20 · 25 · 30. 그 뒤는 다른 표다.
 //   짐칸 한도는 대포가 먹는 몫을 뺀 값이다(게임 0x44C8B0 중량 · 0x44C910 용량):
@@ -123,6 +133,14 @@ typedef struct {
 } MktCargo;
 
 int  Mkt_Ready(void);                  // 모듈을 잡았나
+
+// 게임 교역소 대화가 열려 있는가. 그 동안 게임은 짐 여덟 칸을 통째로 비워 두고
+// 물건을 대화창이 들고 있다가 [결정] 때 되돌려 넣는다 — 그 사이에는 짐을 읽어도
+// 비어 있고, 우리가 칸을 건드리면 게임이 되돌릴 자리를 잃는다. 그래서 그때는 잠근다.
+// marketdb.c 의 훅 주석에 자세히 적어 뒀다.
+int  Mkt_TradeOpen(void);
+void Mkt_HookInstall(void);            // MH_Initialize 뒤에 부른다
+void Mkt_HookRemove(void);
 int  Mkt_CurrentCity(void);            // 지금 정박한 도시. 항해 중이면 -1
 int  Mkt_Money(void);
 
