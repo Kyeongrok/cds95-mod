@@ -11,7 +11,11 @@
 #define WC_PIC   L"CityPicKR_Window"
 
 #define PAD      8
-#define LIST_W   170
+// 목록 칸 — 번호(26) + 이름 + 문화권. 문화권은 "중앙아시아" 다섯 글자가 제일 길고
+// 이름은 "로우렌스마르케스" 여덟 글자가 제일 길다. 둘 다 안 잘리게 잡는다.
+#define NUM_W    26
+#define SPHERE_W 64
+#define LIST_W   (NUM_W + 8 + 108 + SPHERE_W + 4)
 #define SB_W     12
 #define ROW_H    18
 #define INFO_H   26
@@ -125,13 +129,13 @@ static void DrawRow(HDC dc, int i, int row)
     }
 
     wsprintfW(num, L"%d", i);
-    t = r; t.left += 4; t.right = t.left + 26;
+    t = r; t.left += 4; t.right = t.left + NUM_W;
     UI_Text(dc, t, num, g_smallFont, tx, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
-    t = r; t.left += 34; t.right -= 44;
+    t = r; t.left += 4 + NUM_W + 8; t.right -= SPHERE_W + 4;
     UI_Text(dc, t, c->name, g_font, tx, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
 
-    t = r; t.right -= 4; t.left = t.right - 44;
+    t = r; t.right -= 4; t.left = t.right - SPHERE_W;
     UI_Text(dc, t, c->sphere, g_smallFont, tx, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 }
 
