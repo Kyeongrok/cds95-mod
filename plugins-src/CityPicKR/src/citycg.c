@@ -170,16 +170,23 @@ static int WriteWhole(const wchar_t* path, const unsigned char* buf, unsigned le
     return ok ? 1 : 0;
 }
 
-// 지금 열려 있는 파일에서 짝수(그림)·홀수(팔레트) 파트의 최대 압축 크기를 잰다.
-// 새로 넣은 파트가 이 한계를 넘으면 안 된다 — 게임은 이 파일의 관례에 맞춘 버퍼로 읽는 듯해서
-// 넘긴 파일로 죽었다(2026-08-13 리스본). 원본 값은 그림 113,474 · 팔레트 258 이다.
-static void PartLimits(unsigned* imgMax, unsigned* palMax)
+// 지금 열려 있는 파일에서 새 파트가 넘으면 안 되는 두 가지 한계를 잰다.
+//   크기   짝수(그림)·홀수(팔레트) 파트의 최대 압축 크기. 원본은 113,474 · 258.
+//   코드값 압축 스트림에 나오는 가장 큰 코드. 원본은 8,447(= 거리 8,191).
+// 둘 다 넘겨 봤고 둘 다 게임이 죽었다 —
+//   1차(2026-08-13) 크기를 넘김: 팔레트 371바이트, 그림 122,790
+//   2차             크기는 원본보다 작은데 거리를 16,382 까지 씀 → 코드 16,638
+// 그래서 넣기 전에 둘 다 확인한다. 코드값 쪽이 더 확실한 잣대다.
+static void PartLimits(unsigned* imgMax, unsigned* palMax, unsigned* codeMax)
 {
     int i;
-    *imgMax = 0; *palMax = 0;
+    *imgMax = 0; *palMax = 0; *codeMax = 0;
     for (i = 0; i + 1 < g_f.count; i += 2) {
+        unsigned c;
         if (g_f.comp[i]     > *imgMax) *imgMax = g_f.comp[i];
         if (g_f.comp[i + 1] > *palMax) *palMax = g_f.comp[i + 1];
+        c = Ls12_PartMaxCode(&g_f, i);
+        if (c > *codeMax) *codeMax = c;
     }
 }
 
@@ -190,11 +197,11 @@ static int WritePair(int pic, const unsigned char* idx8, const unsigned char* pa
 {
     wchar_t path[MAX_PATH];
     unsigned char *buf1 = NULL, *buf2 = NULL;
-    unsigned cap, len1 = 0, len2 = 0, imgMax = 0, palMax = 0;
+    unsigned cap, len1 = 0, len2 = 0, imgMax = 0, palMax = 0, codeMax = 0;
     Ls12File mid;
     int rc = CITYPIC_ERR_OK;
 
-    PartLimits(&imgMax, &palMax);
+    PartLimits(&imgMax, &palMax, &codeMax);
     cap = Ls12_RewriteCap(&g_f, (unsigned)CITYPIC_SZ);
     buf1 = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, cap);
     if (!buf1) return CITYPIC_ERR_ENCODE;
@@ -229,6 +236,8 @@ static int WritePair(int pic, const unsigned char* idx8, const unsigned char* pa
         else {
             if ((imgMax && fin.comp[2 * pic]     > imgMax) ||
                 (palMax && fin.comp[2 * pic + 1] > palMax)) rc = CITYPIC_ERR_TOOBIG;
+            // 크기가 맞아도 코드값이 원본 범위를 넘으면 게임이 못 읽는다(2차 사고가 이것이었다).
+            else if (codeMax && Ls12_PartMaxCode(&fin, 2 * pic) > codeMax) rc = CITYPIC_ERR_TOOBIG;
             Ls12_Close(&fin);
         }
     }

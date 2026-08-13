@@ -125,6 +125,42 @@ int Ls12_DecodePart(Ls12File* f, int index, unsigned char* out, unsigned outcap)
     return (int)outpos;
 }
 
+// 그 파트가 쓰는 가장 큰 코드값. 디코더와 같은 걸음으로 비트만 읽어 훑는다.
+unsigned Ls12_PartMaxCode(Ls12File* f, int index)
+{
+    const unsigned char* comp;
+    unsigned complen, outlen, totalbits, bitpos, outpos, delta, best = 0;
+
+    if (index < 0 || index >= f->count) return 0;
+    if (!f->data || f->off[index] >= (unsigned)f->size) return 0;
+    if (f->comp[index] > (unsigned)f->size - f->off[index]) return 0;
+    if (f->comp[index] == f->uncomp[index]) return 0;      // 무압축이면 코드가 없다
+
+    comp = f->data + f->off[index];
+    complen = f->comp[index];
+    outlen = f->uncomp[index];
+    totalbits = complen * 8;
+    bitpos = 0; outpos = 0; delta = 0;
+    while (outpos < outlen && bitpos < totalbits) {
+        unsigned mask_len = 0, factor = 0, code, k;
+        int bit;
+        do {
+            bit = (comp[bitpos >> 3] >> (7 - (bitpos & 7))) & 1;
+            bitpos++; mask_len++;
+        } while (bit && bitpos < totalbits);
+        for (k = 0; k < mask_len && bitpos < totalbits; k++) {
+            factor = (factor << 1) | ((comp[bitpos >> 3] >> (7 - (bitpos & 7))) & 1);
+            bitpos++;
+        }
+        code = ((1u << mask_len) - 2u) + factor;
+        if (code > best) best = code;
+        if (delta > 0)        { outpos += 3 + code; delta = 0; }
+        else if (code < 256)  { outpos++; }
+        else                  { delta = code - 256; }
+    }
+    return best;
+}
+
 // ---- 인코더 ----
 // 디코더를 거꾸로 돌린 것. 수 num 을 상부(1을 m개 쓰고 0) + 하부(나머지를 m+1 비트)로 낸다.
 // 사전이 항등이라 바이트값 자체가 코드다. 255 가 16비트라 결과가 원본의 2배 남짓 된다.
@@ -214,10 +250,16 @@ unsigned Ls12_Build(unsigned char* const* parts, const unsigned* lens, int count
 //
 // 뒤복사 한 번은 (거리 코드 256+d) + (길이 코드 L-3) 두 개다. 거리가 멀수록 코드가 커져
 // 비트가 늘어나므로 가까운 것을 좋아하고, 길이 3부터 이득이다(리터럴 셋보다 짧다).
+// 거리·길이의 상한은 취향이 아니라 게임이 받는 범위다. 원본 파일들의 압축 스트림을 훑어
+// 실제로 쓰인 값을 재 보면 코에이 인코더는 거리를 8191 까지만 쓰고(코드 8447, 상부 13비트),
+// 길이는 512 까지 쓴다. 욕심내서 거리 16382 까지 쓴 파일을 넣었더니 크기는 원본보다
+// 작은데도 그 도시에 들어갈 때 게임이 죽었다 — 게임 디코더가 13비트까지만 받는 듯하다.
+// 늘리지 말 것.
 #define LZ_MIN_MATCH 3
-#define LZ_MAX_MATCH 1024
-#define LZ_WINDOW    16384         // 이보다 멀면 거리 코드가 커져 이득이 얕다
+#define LZ_MAX_MATCH 512
+#define LZ_WINDOW    8191
 #define LZ_CHAINS    1024          // 한 자리에서 훑어 볼 후보 수(속도와 압축률의 절충)
+#define LZ_MAX_CODE  8447          // 원본이 쓰는 가장 큰 코드(= 256 + 8191)
 #define LZ_HASH_BITS 15
 #define LZ_HASH_N    (1 << LZ_HASH_BITS)
 
