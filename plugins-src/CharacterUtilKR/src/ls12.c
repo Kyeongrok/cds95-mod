@@ -12,22 +12,12 @@ static unsigned RdBE(const unsigned char* p) {
     return ((unsigned)p[0] << 24) | ((unsigned)p[1] << 16) | ((unsigned)p[2] << 8) | (unsigned)p[3];
 }
 
-int Ls12_Open(Ls12File* f, const char* path)
+// 매직·사전·파트 표를 읽는다. f->data / f->size 는 부르기 전에 채워 둔다. 성공 1.
+static int ParseTable(Ls12File* f)
 {
-    FILE* fp; long n; unsigned pos;
-    f->data = NULL; f->size = 0; f->count = 0;
-    fp = fopen(path, "rb");
-    if (!fp) return 0;
-    fseek(fp, 0, SEEK_END); n = ftell(fp); fseek(fp, 0, SEEK_SET);
-    if (n < 272) { fclose(fp); return 0; }
-    f->data = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, n);
-    if (!f->data) { fclose(fp); return 0; }
-    if (fread(f->data, 1, n, fp) != (size_t)n) { fclose(fp); HeapFree(GetProcessHeap(),0,f->data); f->data=NULL; return 0; }
-    fclose(fp);
-    f->size = n;
-    if (memcmp(f->data, "LS11", 4) != 0 && memcmp(f->data, "Ls12", 4) != 0) {
-        HeapFree(GetProcessHeap(),0,f->data); f->data=NULL; return 0;
-    }
+    unsigned pos;
+    if (f->size < 272) return 0;
+    if (memcmp(f->data, "LS11", 4) != 0 && memcmp(f->data, "Ls12", 4) != 0) return 0;
     memcpy(f->dict, f->data + 16, 256);
     pos = 16 + 256;
     f->count = 0;
@@ -42,6 +32,34 @@ int Ls12_Open(Ls12File* f, const char* path)
     return f->count > 0;
 }
 
+int Ls12_Open(Ls12File* f, const char* path)
+{
+    FILE* fp; long n;
+    f->data = NULL; f->size = 0; f->count = 0; f->owns = 0;
+    fp = fopen(path, "rb");
+    if (!fp) return 0;
+    fseek(fp, 0, SEEK_END); n = ftell(fp); fseek(fp, 0, SEEK_SET);
+    if (n < 272) { fclose(fp); return 0; }
+    f->data = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, n);
+    if (!f->data) { fclose(fp); return 0; }
+    if (fread(f->data, 1, n, fp) != (size_t)n) { fclose(fp); HeapFree(GetProcessHeap(),0,f->data); f->data=NULL; return 0; }
+    fclose(fp);
+    f->size = n;
+    f->owns = 1;
+    if (!ParseTable(f)) { HeapFree(GetProcessHeap(),0,f->data); f->data=NULL; f->owns=0; return 0; }
+    return 1;
+}
+
+// 이미 메모리에 있는 아카이브를 그대로 읽는다(버퍼는 부르는 쪽이 계속 들고 있어야 한다).
+// Ls12_Rewrite 로 만든 결과에 파트를 하나 더 갈아 끼울 때 쓴다 — 도시 그림처럼 한 장이
+// (그림 + 팔레트) 두 파트인 경우 임시 파일을 거치지 않고 이어서 고칠 수 있다.
+int Ls12_OpenMem(Ls12File* f, const unsigned char* buf, unsigned len)
+{
+    f->data = (unsigned char*)buf; f->size = (long)len; f->count = 0; f->owns = 0;
+    if (!buf || !ParseTable(f)) { f->data = NULL; f->size = 0; return 0; }
+    return 1;
+}
+
 unsigned Ls12_PartSize(Ls12File* f, int index)
 {
     if (index < 0 || index >= f->count) return 0;
@@ -50,7 +68,9 @@ unsigned Ls12_PartSize(Ls12File* f, int index)
 
 void Ls12_Close(Ls12File* f)
 {
-    if (f->data) { HeapFree(GetProcessHeap(), 0, f->data); f->data = NULL; }
+    // Ls12_OpenMem 으로 연 것은 버퍼가 남의 것이라 놓지 않는다.
+    if (f->data && f->owns) HeapFree(GetProcessHeap(), 0, f->data);
+    f->data = NULL; f->owns = 0;
     f->count = 0;
 }
 

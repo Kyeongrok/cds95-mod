@@ -36,6 +36,7 @@ static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"MarketUtilKR",    L"매매 — 교역소 사고팔기를 그림·짐칸 막대와 함께 한 화면에서." },
     // 원본 SaveUtil 과 헷갈리기 쉽다 — 파일 메뉴의 "저장 · 중단" 은 이쪽이다.
     { L"SaveUtilKR",      L"저장 · 중단 — 자택·여관까지 안 가고 그 자리에서 저장한다." },
+    { L"CityPicKR",       L"도시 그림 — CITYCG.CDS 의 도시 그림 226장을 골라 본다." },
     { L"CDROMUtil",       L"(원본) CD-ROM 접근을 하드디스크로 돌린다." },
     { L"CPUPatch",        L"(원본) CPU 점유율을 낮춘다." },
     { L"MemoryFix",       L"(원본) 게임의 메모리 버그를 고친다." },

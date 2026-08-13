@@ -20,7 +20,7 @@ jobs:
           # 나머지는 만든이별 폴더에 담는다. ModUtilKR 이 뜰 때 그것들을 대신 불러온다.
           mkdir -p "dist/CDS95Util/plugins/록히드매튜"
           cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
-          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR HintUtilKR MarketUtilKR SaveUtilKR; do
+          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR HintUtilKR MarketUtilKR SaveUtilKR CityPicKR; do
             cp "CDS95Util/$f.plugin" "dist/CDS95Util/plugins/록히드매튜/"
           done
           # 데이터는 루트 한 자리에 모은다 — 플러그인이 어느 폴더에 있든 여기서 찾는다.
@@ -234,5 +234,15 @@ jobs:
               Ctrl·Alt 조합과 글자 입력칸(검색칸 등)은 건드리지 않고, 게임에서 글자를 적어야 할 때는
               **[단축키 켜기]** 를 꺼 두면 됩니다.
 
-            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin` 만 포함됩니다.
+            - **CityPicKR** — "파일" 메뉴에 "도시그림"을 추가. 게임 폴더의 `CITYCG.CDS` 에 든
+              **도시 그림 226장**을 왼쪽 목록에서 골라 원본 크기(400x320)로 봅니다(**Z** 로 두 배).
+              **[내보내기]** 는 그 그림을 PNG 로 뽑고, **[넣기]** 는 고쳐 온 그림을 그 도시 자리에
+              다시 써넣습니다 — 그림은 400x320 으로 맞춰 들어가고, 색은 **공용 색표 + 새로 짠
+              그 그림 전용 86색 팔레트**로 되돌립니다(내보낸 PNG 를 그대로 넣으면 한 점도 안 틀립니다).
+              바꾸는 것은 그 도시의 두 파트(그림·팔레트)뿐이고 나머지 225장은 손대지 않습니다.
+              **원본은 `CITYCG.CDS.orig` 로 처음 한 번 남기고**, 쓰기 전에 새 파트를 도로 풀어
+              원본과 같은지 확인합니다(어긋나면 파일을 건드리지 않습니다).
+              바뀐 그림은 게임에서 **그 도시에 다시 들어갈 때** 나옵니다.
+
+            > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin` 만 포함됩니다.
             > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.

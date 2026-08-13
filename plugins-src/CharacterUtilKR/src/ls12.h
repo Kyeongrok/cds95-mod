@@ -16,10 +16,17 @@ typedef struct {
     unsigned       comp[512];         // 파트별 압축크기
     unsigned       uncomp[512];       // 원본크기
     unsigned       off[512];          // 파일 내 오프셋
+    int            owns;              // data 를 우리가 잡았나(Ls12_Close 가 놓을지 판단)
 } Ls12File;
 
 // path 의 LS11/LS12 파일을 열어 파트 테이블을 파싱한다. 성공 1, 실패 0.
 int  Ls12_Open(Ls12File* f, const char* path);
+
+// 메모리에 있는 아카이브를 그대로 읽는다(버퍼 소유권은 부르는 쪽에 남는다).
+// Ls12_Rewrite 결과에 파트를 하나 더 갈아 끼울 때 쓴다 — 도시 그림처럼 한 장이
+// (그림 + 팔레트) 두 파트인 경우 임시 파일 없이 이어서 고친다.
+int  Ls12_OpenMem(Ls12File* f, const unsigned char* buf, unsigned len);
+
 void Ls12_Close(Ls12File* f);
 
 // index 얼굴을 out(>=7680바이트)에 8bpp 인덱스로 디코드한다. 성공 1.
