@@ -10,6 +10,16 @@
 
 #define WC_PIC   L"CityPicKR_Window"
 
+// [넣기] 를 감춰 둔다 — 넣은 CITYCG.CDS 로 게임이 죽었다(2026-08-13, 리스본).
+// 파일 형식은 멀쩡하고 우리 디코더로도 그대로 풀리지만, 되쓰기에 쓰는 LS12 인코더가
+// 실제로는 압축을 하지 않아 파트가 원본 관례를 벗어난다.
+//   팔레트 파트  원본은 226장 전부 258바이트(= 압축크기 == 원본크기, 무압축 저장)인데
+//                우리가 쓴 것은 371바이트짜리 압축 형식이었다. 게임이 258 버퍼에 읽으면 넘친다.
+//   그림 파트    원본 최대가 113,474 인데 122,790 이 되었다.
+// 인코더에 LZ 매치를 넣어 원본 수준으로 줄이고(그리고 팔레트는 무압축 그대로 두고)
+// 게임에서 확인한 뒤에 다시 연다. 내보내기는 파일을 건드리지 않으므로 그대로 둔다.
+#define IMPORT_ENABLED 0
+
 #define PAD      8
 // 목록 칸 — 번호(26) + 이름 + 문화권. 문화권은 "중앙아시아" 다섯 글자가 제일 길고
 // 이름은 "로우렌스마르케스" 여덟 글자가 제일 길다. 둘 다 안 잘리게 잡는다.
@@ -50,10 +60,12 @@ static int WinW(void) { return PIC_X + PicW() + PAD + FRAME; }
 static int WinH(void) { return LIST_Y + PicH() + INFO_H + FRAME; }
 
 // 아래 정보줄 오른쪽 끝의 단추. 0 = 내보내기, 1 = 넣기(왼쪽부터 이 순서로 놓는다).
+// 넣기를 감춰 둔 동안에는 내보내기 하나만 오른쪽 끝에 놓는다.
+#define BTN_N (IMPORT_ENABLED ? 2 : 1)
 static RECT RcBtn(int i)
 {
     RECT r;
-    r.left  = PIC_X + PicW() - (BTN_W * 2 + 4) + i * (BTN_W + 4);
+    r.left  = PIC_X + PicW() - (BTN_W * BTN_N + (BTN_N - 1) * 4) + i * (BTN_W + 4);
     r.right = r.left + BTN_W;
     r.top   = LIST_Y + PicH() + 3;
     r.bottom = r.top + BTN_H;
@@ -176,7 +188,7 @@ static void OnPaint(HWND h)
     { HBRUSH b = CreateSolidBrush(COL_DARK); FrameRect(dc, &pr, b); DeleteObject(b); }
 
     // 아래 정보줄 — 왼쪽은 고른 도시, 가운데는 결과 알림(없으면 조작법), 오른쪽은 단추 둘
-    ir.left = LIST_X; ir.right = PIC_X + PicW() - (BTN_W * 2 + 12);
+    ir.left = LIST_X; ir.right = PIC_X + PicW() - (BTN_W * BTN_N + (BTN_N - 1) * 4 + 8);
     ir.top = LIST_Y + PicH() + 2; ir.bottom = ir.top + INFO_H - 4;
     wsprintfW(buf, L"#%d  %s · %s%s%s%s",
               g_sel, kCities[g_sel].name, kCities[g_sel].sphere,
@@ -188,13 +200,15 @@ static void OnPaint(HWND h)
     if (g_msg[0]) {
         UI_Text(dc, ir, g_msg, g_smallFont, COL_WARN_TX, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     } else {
-        wsprintfW(buf, L"%d장 · ↑↓ 고르기 / Z 배율 x%d / E 내보내기 / I 넣기 / ESC 닫기",
-                  CityCg_Count(), g_scale);
+        wsprintfW(buf, L"%d장 · ↑↓ 고르기 / Z 배율 x%d / E 내보내기%s / ESC 닫기",
+                  CityCg_Count(), g_scale, IMPORT_ENABLED ? L" / I 넣기" : L"");
         UI_Text(dc, ir, buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
 
     UI_Button(dc, RcBtn(0), L"내보내기", FALSE);
+#if IMPORT_ENABLED
     UI_Button(dc, RcBtn(1), L"넣기", FALSE);
+#endif
 
     UI_BufEnd(&ub);
     EndPaint(h, &ps);
@@ -243,6 +257,7 @@ static void DoExport(HWND h)
     else                      lstrcpynW(g_msg, ErrText(rc), 100);
 }
 
+#if IMPORT_ENABLED
 static void DoImport(HWND h)
 {
     wchar_t path[MAX_PATH], msg[512];
@@ -268,6 +283,7 @@ static void DoImport(HWND h)
     MessageBoxW(h, L"바꿨습니다.\n\n게임 쪽 그림은 그 도시에 다시 들어갈 때 새로 읽습니다.\n"
                    L"그래도 옛 그림이 나오면 게임을 껐다 켜 보세요.", L"도시 그림 바꾸기", MB_OK | MB_ICONINFORMATION);
 }
+#endif  // IMPORT_ENABLED
 
 static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
@@ -294,8 +310,10 @@ static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 
         br = RcBtn(0);
         if (PtInRect(&br, pt)) { g_msg[0] = 0; DoExport(h); InvalidateRect(h, NULL, FALSE); return 0; }
+#if IMPORT_ENABLED
         br = RcBtn(1);
         if (PtInRect(&br, pt)) { g_msg[0] = 0; DoImport(h); InvalidateRect(h, NULL, FALSE); return 0; }
+#endif
 
         lr.left = LIST_X; lr.right = LIST_X + LIST_W;
         lr.top = LIST_Y;  lr.bottom = LIST_Y + PicH();
@@ -328,7 +346,9 @@ static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         case VK_END:   Select(h, CITY_N - 1); return 0;
         case 'Z':      SetScale(h, g_scale == 1 ? 2 : 1); return 0;
         case 'E':      g_msg[0] = 0; DoExport(h); InvalidateRect(h, NULL, FALSE); return 0;
+#if IMPORT_ENABLED
         case 'I':      g_msg[0] = 0; DoImport(h); InvalidateRect(h, NULL, FALSE); return 0;
+#endif
         }
         return 0;
     case WM_CLOSE: DestroyWindow(h); return 0;
