@@ -10,15 +10,13 @@
 
 #define WC_PIC   L"CityPicKR_Window"
 
-// [넣기] 를 감춰 둔다 — 넣은 CITYCG.CDS 로 게임이 죽었다(2026-08-13, 리스본).
-// 파일 형식은 멀쩡하고 우리 디코더로도 그대로 풀리지만, 되쓰기에 쓰는 LS12 인코더가
-// 실제로는 압축을 하지 않아 파트가 원본 관례를 벗어난다.
-//   팔레트 파트  원본은 226장 전부 258바이트(= 압축크기 == 원본크기, 무압축 저장)인데
-//                우리가 쓴 것은 371바이트짜리 압축 형식이었다. 게임이 258 버퍼에 읽으면 넘친다.
-//   그림 파트    원본 최대가 113,474 인데 122,790 이 되었다.
-// 인코더에 LZ 매치를 넣어 원본 수준으로 줄이고(그리고 팔레트는 무압축 그대로 두고)
-// 게임에서 확인한 뒤에 다시 연다. 내보내기는 파일을 건드리지 않으므로 그대로 둔다.
-#define IMPORT_ENABLED 0
+// 한 번 넣은 CITYCG.CDS 로 게임이 죽었다(2026-08-13, 리스본). 파일 형식이 아니라 파트
+// 크기가 문제였다 — 되쓰기에 쓰던 LS12 인코더가 실제로는 압축을 하지 않아 팔레트가
+// 258 → 371, 그림이 원본 최대 113,474 → 122,790 이 되었다.
+// 이제 인코더가 뒤복사(LZ)로 압축하고 안 줄면 무압축 그대로 두며(ls12.c), 넣기 전에
+// 새 파트가 원본 관례를 넘지 않는지 확인한다(citycg.c). 넘으면 파일을 건드리지 않는다.
+// 그래도 게임 쪽 확인이 먼저라 [초기화] 로 언제든 CITYCG.CDS.orig 로 되돌릴 수 있게 뒀다.
+#define IMPORT_ENABLED 1
 
 #define PAD      8
 // 목록 칸 — 번호(26) + 이름 + 문화권. 문화권은 "중앙아시아" 다섯 글자가 제일 길고
@@ -59,9 +57,9 @@ static int MaxScroll(void)
 static int WinW(void) { return PIC_X + PicW() + PAD + FRAME; }
 static int WinH(void) { return LIST_Y + PicH() + INFO_H + FRAME; }
 
-// 아래 정보줄 오른쪽 끝의 단추. 0 = 내보내기, 1 = 넣기(왼쪽부터 이 순서로 놓는다).
-// 넣기를 감춰 둔 동안에는 내보내기 하나만 오른쪽 끝에 놓는다.
-#define BTN_N (IMPORT_ENABLED ? 2 : 1)
+// 아래 정보줄 오른쪽 끝의 단추. 0 = 내보내기, 1 = 넣기, 2 = 초기화(왼쪽부터 이 순서).
+// 넣기를 감춰 두면 내보내기 하나만 오른쪽 끝에 놓는다.
+#define BTN_N (IMPORT_ENABLED ? 3 : 1)
 static RECT RcBtn(int i)
 {
     RECT r;
@@ -201,13 +199,14 @@ static void OnPaint(HWND h)
         UI_Text(dc, ir, g_msg, g_smallFont, COL_WARN_TX, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     } else {
         wsprintfW(buf, L"%d장 · ↑↓ 고르기 / Z 배율 x%d / E 내보내기%s / ESC 닫기",
-                  CityCg_Count(), g_scale, IMPORT_ENABLED ? L" / I 넣기" : L"");
+                  CityCg_Count(), g_scale, IMPORT_ENABLED ? L" / I 넣기 / R 초기화" : L"");
         UI_Text(dc, ir, buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
 
     UI_Button(dc, RcBtn(0), L"내보내기", FALSE);
 #if IMPORT_ENABLED
     UI_Button(dc, RcBtn(1), L"넣기", FALSE);
+    UI_Button(dc, RcBtn(2), L"초기화", FALSE);
 #endif
 
     UI_BufEnd(&ub);
@@ -225,6 +224,8 @@ static const wchar_t* ErrText(int rc)
     case CITYPIC_ERR_VERIFY:  return L"검사에 걸려 파일을 건드리지 않았습니다";
     case CITYPIC_ERR_WRITE:   return L"파일을 쓰지 못했습니다(게임이 쥐고 있을 수 있습니다)";
     case CITYPIC_ERR_RANGE:   return L"그림 번호가 표 밖입니다";
+    case CITYPIC_ERR_TOOBIG:  return L"새 그림이 원본보다 커서 넣지 않았습니다(색을 줄여 보세요)";
+    case CITYPIC_ERR_NOORIG:  return L"되돌릴 CITYCG.CDS.orig 가 없습니다";
     default:                  return L"실패했습니다";
     }
 }
@@ -281,7 +282,28 @@ static void DoImport(HWND h)
     wsprintfW(g_msg, L"#%d 를 바꿨습니다%s", g_sel, exact ? L"(색 그대로)" : L"(색은 가까운 값으로)");
     // 게임 화면에 이미 떠 있는 그림은 그대로다 — 그 도시에 다시 들어가야 새 그림을 읽는다.
     MessageBoxW(h, L"바꿨습니다.\n\n게임 쪽 그림은 그 도시에 다시 들어갈 때 새로 읽습니다.\n"
-                   L"그래도 옛 그림이 나오면 게임을 껐다 켜 보세요.", L"도시 그림 바꾸기", MB_OK | MB_ICONINFORMATION);
+                   L"그래도 옛 그림이 나오면 게임을 껐다 켜 보세요.\n\n"
+                   L"게임이 이상해지면 [초기화] 로 원본으로 되돌릴 수 있습니다.",
+                L"도시 그림 바꾸기", MB_OK | MB_ICONINFORMATION);
+}
+
+// 초기화 — CITYCG.CDS 를 통째로 .orig 로 되돌린다. 넣은 그림이 모두 원래대로 돌아간다.
+static void DoRestore(HWND h)
+{
+    int rc;
+
+    if (!CityCg_HasOriginal()) {
+        lstrcpyW(g_msg, L"되돌릴 CITYCG.CDS.orig 가 없습니다(아직 바꾼 적이 없습니다)");
+        return;
+    }
+    if (MessageBoxW(h,
+            L"CITYCG.CDS 를 CITYCG.CDS.orig 로 통째로 되돌립니다.\n\n"
+            L"넣기로 바꾼 그림이 모두 원래대로 돌아갑니다(226장 전부).\n\n계속할까요?",
+            L"도시 그림 초기화", MB_OKCANCEL | MB_ICONQUESTION) != IDOK) return;
+
+    rc = CityCg_RestoreOriginal();
+    if (rc == CITYPIC_ERR_OK) lstrcpyW(g_msg, L"원본으로 되돌렸습니다");
+    else                      lstrcpynW(g_msg, ErrText(rc), 100);
 }
 #endif  // IMPORT_ENABLED
 
@@ -313,6 +335,8 @@ static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 #if IMPORT_ENABLED
         br = RcBtn(1);
         if (PtInRect(&br, pt)) { g_msg[0] = 0; DoImport(h); InvalidateRect(h, NULL, FALSE); return 0; }
+        br = RcBtn(2);
+        if (PtInRect(&br, pt)) { g_msg[0] = 0; DoRestore(h); InvalidateRect(h, NULL, FALSE); return 0; }
 #endif
 
         lr.left = LIST_X; lr.right = LIST_X + LIST_W;
@@ -348,6 +372,7 @@ static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         case 'E':      g_msg[0] = 0; DoExport(h); InvalidateRect(h, NULL, FALSE); return 0;
 #if IMPORT_ENABLED
         case 'I':      g_msg[0] = 0; DoImport(h); InvalidateRect(h, NULL, FALSE); return 0;
+        case 'R':      g_msg[0] = 0; DoRestore(h); InvalidateRect(h, NULL, FALSE); return 0;
 #endif
         }
         return 0;

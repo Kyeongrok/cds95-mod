@@ -170,17 +170,31 @@ static int WriteWhole(const wchar_t* path, const unsigned char* buf, unsigned le
     return ok ? 1 : 0;
 }
 
+// 지금 열려 있는 파일에서 짝수(그림)·홀수(팔레트) 파트의 최대 압축 크기를 잰다.
+// 새로 넣은 파트가 이 한계를 넘으면 안 된다 — 게임은 이 파일의 관례에 맞춘 버퍼로 읽는 듯해서
+// 넘긴 파일로 죽었다(2026-08-13 리스본). 원본 값은 그림 113,474 · 팔레트 258 이다.
+static void PartLimits(unsigned* imgMax, unsigned* palMax)
+{
+    int i;
+    *imgMax = 0; *palMax = 0;
+    for (i = 0; i + 1 < g_f.count; i += 2) {
+        if (g_f.comp[i]     > *imgMax) *imgMax = g_f.comp[i];
+        if (g_f.comp[i + 1] > *palMax) *palMax = g_f.comp[i + 1];
+    }
+}
+
 // 그림 파트와 팔레트 파트를 잇달아 갈아 끼운다. 한 장이 두 파트라 한 번에 끝나지 않는다 —
 // 먼저 그림을 바꾼 결과를 메모리에서 다시 열어(Ls12_OpenMem) 그 위에 팔레트를 바꾼다.
-// 둘 다 verify 를 통과해야 파일에 쓴다.
+// 둘 다 verify 와 크기 검사를 통과해야 파일에 쓴다.
 static int WritePair(int pic, const unsigned char* idx8, const unsigned char* pal258)
 {
     wchar_t path[MAX_PATH];
     unsigned char *buf1 = NULL, *buf2 = NULL;
-    unsigned cap, len1 = 0, len2 = 0;
+    unsigned cap, len1 = 0, len2 = 0, imgMax = 0, palMax = 0;
     Ls12File mid;
     int rc = CITYPIC_ERR_OK;
 
+    PartLimits(&imgMax, &palMax);
     cap = Ls12_RewriteCap(&g_f, (unsigned)CITYPIC_SZ);
     buf1 = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, cap);
     if (!buf1) return CITYPIC_ERR_ENCODE;
@@ -191,18 +205,31 @@ static int WritePair(int pic, const unsigned char* idx8, const unsigned char* pa
 
     if (rc == CITYPIC_ERR_OK) {
         if (!Ls12_OpenMem(&mid, buf1, len1)) rc = CITYPIC_ERR_ENCODE;
+        else if (imgMax && mid.comp[2 * pic] > imgMax) { rc = CITYPIC_ERR_TOOBIG; Ls12_Close(&mid); }
         else {
             cap = Ls12_RewriteCap(&mid, 258u);
             buf2 = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, cap);
             if (!buf2) rc = CITYPIC_ERR_ENCODE;
             else {
-                len2 = Ls12_Rewrite(&mid, 2 * pic + 1, pal258, 258u, buf2, cap);
+                // 팔레트는 원본이 전부 무압축(258바이트)이라 형식까지 똑같이 맞춘다.
+                len2 = Ls12_RewriteEx(&mid, 2 * pic + 1, pal258, 258u, buf2, cap, 1);
                 if (!len2) rc = CITYPIC_ERR_ENCODE;
                 else if (!Ls12_VerifyPart(buf2, len2, 2 * pic + 1, pal258, 258u)) rc = CITYPIC_ERR_VERIFY;
                 // 그림 파트도 두 번째 묶음에서 그대로 살아 있는지 한 번 더 본다.
                 else if (!Ls12_VerifyPart(buf2, len2, 2 * pic, idx8, (unsigned)CITYPIC_SZ)) rc = CITYPIC_ERR_VERIFY;
             }
             Ls12_Close(&mid);
+        }
+    }
+
+    // 다 만든 뒤 두 파트 크기를 마지막으로 확인한다(팔레트는 무압축이면 258 그대로다).
+    if (rc == CITYPIC_ERR_OK) {
+        Ls12File fin;
+        if (!Ls12_OpenMem(&fin, buf2, len2)) rc = CITYPIC_ERR_ENCODE;
+        else {
+            if ((imgMax && fin.comp[2 * pic]     > imgMax) ||
+                (palMax && fin.comp[2 * pic + 1] > palMax)) rc = CITYPIC_ERR_TOOBIG;
+            Ls12_Close(&fin);
         }
     }
 
@@ -225,10 +252,45 @@ static int WritePair(int pic, const unsigned char* idx8, const unsigned char* pa
     return rc;
 }
 
+static void OrigPathW(wchar_t* out, int cch)
+{
+    ArchivePathW(out, cch);
+    if (out[0]) lstrcatW(out, L".orig");
+}
+
+int CityCg_HasOriginal(void)
+{
+    wchar_t orig[MAX_PATH];
+    OrigPathW(orig, MAX_PATH);
+    if (!orig[0]) return 0;
+    return GetFileAttributesW(orig) != INVALID_FILE_ATTRIBUTES;
+}
+
+int CityCg_RestoreOriginal(void)
+{
+    wchar_t path[MAX_PATH], orig[MAX_PATH];
+
+    ArchivePathW(path, MAX_PATH);
+    OrigPathW(orig, MAX_PATH);
+    if (!path[0] || !orig[0]) return CITYPIC_ERR_WRITE;
+    if (GetFileAttributesW(orig) == INVALID_FILE_ATTRIBUTES) return CITYPIC_ERR_NOORIG;
+
+    // 파일을 다시 열려면 먼저 놓아야 한다(우리가 쥐고 있진 않지만 캐시가 남는다).
+    CityCg_Free();
+    if (!CopyFileW(orig, path, FALSE)) { CityCg_Load(); return CITYPIC_ERR_WRITE; }
+    CityCg_Load();
+    return g_count > 0 ? CITYPIC_ERR_OK : CITYPIC_ERR_ARCHIVE;
+}
+
+// 색을 적게 쓸수록 색인 그림이 단조로워져 압축이 잘 먹는다. 새 파트가 원본 관례보다
+// 크면(CITYPIC_ERR_TOOBIG) 색 수를 줄여 다시 해 본다 — 원본이 이미 파일에서 제일 큰
+// 그림(#132)은 86색 그대로면 283바이트가 모자라서 못 들어간다.
+static const int kPalTries[] = { CITYPIC_PAL_N, 64, 48, 32 };
+
 int CityCg_ImportPng(int pic, const wchar_t* path, int* exact)
 {
     unsigned char pal258[258];
-    int i, ex;
+    int i, t, ex = 0, rc = CITYPIC_ERR_TOOBIG;
 
     if (exact) *exact = 0;
     if (!Img_Available()) return CITYPIC_ERR_GDIP;
@@ -240,16 +302,22 @@ int CityCg_ImportPng(int pic, const wchar_t* path, int* exact)
     if (!Img_LoadScaled(path, CITYPIC_W, CITYPIC_H, 0, 0, 0, g_work))
         return CITYPIC_ERR_IMAGE;
 
-    ex = Quant_Index(g_work, CITYPIC_SZ, kGamePalette, FIX_LO, FIX_MAX,
-                     CITYPIC_PAL_BASE, CITYPIC_PAL_N, g_newPal, g_newIdx);
-    if (exact) *exact = ex;
-
-    // 파일 속 팔레트는 한 색이 (파랑, 빨강, 초록) 순이다(citycg.h 참고).
-    for (i = 0; i < CITYPIC_PAL_N; i++) {
-        pal258[i*3+0] = g_newPal[i*3+2];   // B
-        pal258[i*3+1] = g_newPal[i*3+0];   // R
-        pal258[i*3+2] = g_newPal[i*3+1];   // G
+    for (t = 0; t < (int)(sizeof(kPalTries)/sizeof(kPalTries[0])); t++) {
+        int n = kPalTries[t];
+        ex = Quant_Index(g_work, CITYPIC_SZ, kGamePalette, FIX_LO, FIX_MAX,
+                         CITYPIC_PAL_BASE, n, g_newPal, g_newIdx);
+        // 파일 속 팔레트는 한 색이 (파랑, 빨강, 초록) 순이다(citycg.h 참고).
+        // 안 쓴 칸은 0 으로 남긴다 — 그 색인은 그림에 나오지 않는다.
+        ZeroMemory(pal258, sizeof(pal258));
+        for (i = 0; i < n; i++) {
+            pal258[i*3+0] = g_newPal[i*3+2];   // B
+            pal258[i*3+1] = g_newPal[i*3+0];   // R
+            pal258[i*3+2] = g_newPal[i*3+1];   // G
+        }
+        rc = WritePair(pic, g_newIdx, pal258);
+        if (rc != CITYPIC_ERR_TOOBIG) break;   // 크기 말고 다른 이유면 더 줄여도 소용없다
+        if (t + 1 < (int)(sizeof(kPalTries)/sizeof(kPalTries[0]))) ex = 0;   // 줄이면 색이 밀린다
     }
-
-    return WritePair(pic, g_newIdx, pal258);
+    if (exact) *exact = (rc == CITYPIC_ERR_OK) ? ex : 0;
+    return rc;
 }

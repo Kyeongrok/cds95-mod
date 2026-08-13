@@ -46,10 +46,22 @@ int  CityCg_Draw(HDC dc, int x, int y, int w, int h, int pic);
 #define CITYPIC_ERR_VERIFY  5   // 새로 만든 것이 도로 안 풀린다 — 파일은 안 건드렸다
 #define CITYPIC_ERR_WRITE   6   // 파일 쓰기 실패(게임이 파일을 쥐고 있을 수 있다)
 #define CITYPIC_ERR_RANGE   7   // 그림 번호가 표 밖
+#define CITYPIC_ERR_TOOBIG  8   // 새 파트가 원본 관례보다 크다 — 파일은 안 건드렸다
+#define CITYPIC_ERR_NOORIG  9   // CITYCG.CDS.orig 가 없다(되돌릴 원본이 없다)
 
 // 도시 그림 한 장을 PNG 로 내보낸다(400x320). 성공 CITYPIC_ERR_OK.
 int  CityCg_ExportPng(int pic, const wchar_t* path);
 
 // 그림 파일(PNG/BMP/JPG/GIF)을 400x320 으로 맞춰 그 자리 그림을 갈아 끼운다.
 // exact 가 NULL 이 아니면 색을 한 점도 안 틀리게 넣었는지(1) 근사했는지(0)를 담아 준다.
+//
+// 새 파트가 원본 파일의 관례(그림 파트 최대 크기, 팔레트 파트 최대 크기)를 넘으면
+// CITYPIC_ERR_TOOBIG 로 물러난다 — 파일은 건드리지 않는다. 넘긴 파일로 게임이 죽는다.
 int  CityCg_ImportPng(int pic, const wchar_t* path, int* exact);
+
+// CITYCG.CDS 를 CITYCG.CDS.orig 로 통째로 되돌린다(넣은 그림이 모두 원래대로).
+// .orig 가 없으면 CITYPIC_ERR_NOORIG.
+int  CityCg_RestoreOriginal(void);
+
+// CITYCG.CDS.orig 가 있나(되돌릴 수 있나).
+int  CityCg_HasOriginal(void);

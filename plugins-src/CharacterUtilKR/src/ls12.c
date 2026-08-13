@@ -150,6 +150,9 @@ static void BoCode(BitOut* b, unsigned num)
     for (i = (int)m; i >= 0; i--) BoPut(b, (int)(rest & (1u << i)));
 }
 
+// 뒤복사(LZ)까지 하는 인코딩 본체. 정의는 아래 "파트 하나만 갈아 끼우기" 절에 있다.
+static void EncodePart(BitOut* b, const unsigned char* raw, unsigned n, const unsigned char* rev);
+
 static void WrBE(unsigned char* p, unsigned v)
 {
     p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16);
@@ -170,6 +173,7 @@ unsigned Ls12_Build(unsigned char* const* parts, const unsigned* lens, int count
 {
     unsigned hdr = 0x110u + 12u * (unsigned)count + 4u;
     unsigned pos = hdr;
+    unsigned char rev[256];
     int i;
 
     if (count <= 0 || outcap < hdr) return 0;
@@ -177,17 +181,24 @@ unsigned Ls12_Build(unsigned char* const* parts, const unsigned* lens, int count
     memcpy(out, "Ls12", 4);
     memset(out + 4, 0x20, 12);                 // 원본 파일들이 공백으로 패딩돼 있다
     for (i = 0; i < 256; i++) out[0x10 + i] = (unsigned char)i;   // 항등 사전
+    for (i = 0; i < 256; i++) rev[i] = (unsigned char)i;          // 그래서 되짚기도 항등
 
     for (i = 0; i < count; i++) {
         BitOut b;
-        unsigned j;
+        unsigned clen;
         b.buf = out + pos; b.cap = outcap - pos; b.len = 0; b.bit = 0; b.over = 0;
-        for (j = 0; j < lens[i]; j++) BoCode(&b, parts[i][j]);
+        EncodePart(&b, parts[i], lens[i], rev);
         if (b.over) return 0;
-        WrBE(out + 0x110 + i * 12,     b.len);
+        clen = b.len;
+        if (clen >= lens[i]) {                 // 안 줄면 날것으로(무압축 저장)
+            if (lens[i] > outcap - pos) return 0;
+            memcpy(out + pos, parts[i], lens[i]);
+            clen = lens[i];
+        }
+        WrBE(out + 0x110 + i * 12,     clen);
         WrBE(out + 0x110 + i * 12 + 4, lens[i]);
         WrBE(out + 0x110 + i * 12 + 8, pos);
-        pos += b.len;
+        pos += clen;
     }
     return pos;
 }
@@ -196,25 +207,136 @@ unsigned Ls12_Build(unsigned char* const* parts, const unsigned* lens, int count
 // 자세한 뜻은 ls12.h 참고. 핵심은 원본 사전을 그대로 두는 것이다 — 그래야 손대지 않은
 // 파트의 압축 바이트를 그냥 옮겨도 그대로 풀린다.
 
-// 되풀이 구간을 거리 1 짜리 뒤복사로 낸다. 얼굴은 배경이 넓게 단색이라 이것만으로도
-// 새 파트가 원본 파트만 한 크기로 들어간다(안 하면 바이트당 최대 2바이트로 불어난다).
-#define RLE_MAX_RUN 1024
+// 되풀이를 뒤복사(LZ)로 낸다. 코드 하나가 최대 16비트라 그냥 내면 파일이 두 배로 붇는데,
+// 게임은 파일마다 그 파일의 관례에 맞춘 버퍼로 읽는 듯해서 파트가 원본보다 커지면 죽는다
+// (CITYCG.CDS 로 실제로 겪었다 — ls12.h 의 경고 참고). 그래서 원본 코에이 인코더처럼
+// 앞을 되짚어 같은 구간을 찾는다.
+//
+// 뒤복사 한 번은 (거리 코드 256+d) + (길이 코드 L-3) 두 개다. 거리가 멀수록 코드가 커져
+// 비트가 늘어나므로 가까운 것을 좋아하고, 길이 3부터 이득이다(리터럴 셋보다 짧다).
+#define LZ_MIN_MATCH 3
+#define LZ_MAX_MATCH 1024
+#define LZ_WINDOW    16384         // 이보다 멀면 거리 코드가 커져 이득이 얕다
+#define LZ_CHAINS    1024          // 한 자리에서 훑어 볼 후보 수(속도와 압축률의 절충)
+#define LZ_HASH_BITS 15
+#define LZ_HASH_N    (1 << LZ_HASH_BITS)
+
+// 코드 하나가 차지하는 비트 수. BoCode 와 같은 셈이다.
+static unsigned CodeBits(unsigned num)
+{
+    unsigned m = 0;
+    while (num >= ((2u << (m + 1)) - 2u)) m++;
+    return 2u * (m + 1u);
+}
+
+static unsigned HashAt(const unsigned char* p)
+{
+    return (((unsigned)p[0] << 10) ^ ((unsigned)p[1] << 5) ^ (unsigned)p[2]) & (LZ_HASH_N - 1);
+}
+
+// pos 에서 가장 이득이 큰 뒤복사를 찾는다. 찾으면 길이, 못 찾으면 0.
+// 긴 것이 늘 이득은 아니다 — 거리가 멀면 거리 코드가 커지므로, 짧아도 가까운 쪽이
+// 쌀 때가 있다. 그래서 "리터럴로 냈을 때의 비트 - 뒤복사 비트"를 재서 고른다.
+// litCum[i] = 앞에서부터 i 바이트를 리터럴로 냈을 때의 비트 수(누적합).
+static unsigned FindMatch(const unsigned char* raw, unsigned n, unsigned pos,
+                          const int* head, const int* prev, const unsigned* litCum,
+                          unsigned* distOut, int* gainOut)
+{
+    unsigned bestLen = 0, bestDist = 0;
+    int bestGain = 0;
+    int cand;
+    int chain = LZ_CHAINS;
+    unsigned maxLen = n - pos, prevLen = 0;
+
+    if (maxLen > LZ_MAX_MATCH) maxLen = LZ_MAX_MATCH;
+    if (maxLen < LZ_MIN_MATCH) return 0;
+
+    for (cand = head[HashAt(raw + pos)]; cand >= 0 && chain-- > 0; cand = prev[cand]) {
+        unsigned dist = pos - (unsigned)cand, len = 0, cost;
+        int gain;
+        if (dist == 0 || dist > LZ_WINDOW) break;
+        // 겹쳐도 된다 — 디코더가 한 바이트씩 앞을 되짚어 채우므로 거리 1 이 곧 되풀이다.
+        while (len < maxLen && raw[cand + len] == raw[pos + len]) len++;
+        if (len < LZ_MIN_MATCH) continue;
+        cost = CodeBits(256 + dist) + CodeBits(len - LZ_MIN_MATCH);
+        gain = (int)(litCum[pos + len] - litCum[pos]) - (int)cost;
+        if (gain > bestGain) { bestGain = gain; bestLen = len; bestDist = dist; }
+        // 뒤로 갈수록 거리가 머니, 길이가 더 안 늘면 더 볼 것도 없다.
+        if (len >= maxLen) break;
+        if (len > prevLen) prevLen = len;
+    }
+    if (!bestLen) return 0;
+    *distOut = bestDist;
+    if (gainOut) *gainOut = bestGain;
+    return bestLen;
+}
 
 static void EncodePart(BitOut* b, const unsigned char* raw, unsigned n, const unsigned char* rev)
 {
-    unsigned i = 0;
-    while (i < n && !b->over) {
-        unsigned run = 1;
-        while (i + run < n && raw[i + run] == raw[i] && run < RLE_MAX_RUN) run++;
-        BoCode(b, rev[raw[i]]);                  // 첫 바이트는 늘 그대로
-        if (run >= 4) {                          // 나머지가 3개 이상이어야 뒤복사가 이득이다
-            BoCode(b, 256 + 1);                  // 거리 1
-            BoCode(b, run - 1 - 3);              // 길이 = 3 + code
-            i += run;
-        } else {
-            i++;
-        }
+    int *head = NULL, *prev = NULL;
+    unsigned *litCum = NULL;
+    unsigned i, k;
+
+    head   = (int*)HeapAlloc(GetProcessHeap(), 0, sizeof(int) * LZ_HASH_N);
+    prev   = (int*)HeapAlloc(GetProcessHeap(), 0, sizeof(int) * (n ? n : 1));
+    litCum = (unsigned*)HeapAlloc(GetProcessHeap(), 0, sizeof(unsigned) * (n + 1));
+    if (!head || !prev || !litCum) {   // 자리를 못 잡으면 되풀이 없이 그냥 낸다(크기만 커진다)
+        if (head) HeapFree(GetProcessHeap(), 0, head);
+        if (prev) HeapFree(GetProcessHeap(), 0, prev);
+        if (litCum) HeapFree(GetProcessHeap(), 0, litCum);
+        for (i = 0; i < n && !b->over; i++) BoCode(b, rev[raw[i]]);
+        return;
     }
+    for (k = 0; k < LZ_HASH_N; k++) head[k] = -1;
+    litCum[0] = 0;
+    for (i = 0; i < n; i++) litCum[i + 1] = litCum[i] + CodeBits(rev[raw[i]]);
+
+    i = 0;
+    while (i < n && !b->over) {
+        unsigned dist = 0, len = 0;
+        int gain = 0;
+
+        if (i + LZ_MIN_MATCH <= n) len = FindMatch(raw, n, i, head, prev, litCum, &dist, &gain);
+
+        // 한 칸 미뤄 보고 그쪽 이득이 더 크면 지금은 리터럴로 흘린다(lazy matching).
+        if (len >= LZ_MIN_MATCH && i + 1 + LZ_MIN_MATCH <= n) {
+            unsigned d2 = 0, l2;
+            int g2 = 0;
+            unsigned h = HashAt(raw + i);
+            prev[i] = head[h]; head[h] = (int)i;     // 다음 자리를 보려면 이 자리를 먼저 넣는다
+            l2 = FindMatch(raw, n, i + 1, head, prev, litCum, &d2, &g2);
+            if (l2 && g2 > gain) {
+                BoCode(b, rev[raw[i]]);
+                i++;
+                continue;
+            }
+        } else if (i + LZ_MIN_MATCH <= n) {
+            unsigned h = HashAt(raw + i);
+            prev[i] = head[h]; head[h] = (int)i;
+        }
+
+        // FindMatch 는 이득이 남는 것만 돌려준다(gain > 0).
+        if (len >= LZ_MIN_MATCH) {
+            unsigned j;
+            BoCode(b, 256 + dist);
+            BoCode(b, len - LZ_MIN_MATCH);
+            // 건너뛰는 자리들도 표에 넣어 둔다 — 안 넣으면 뒤에서 후보를 놓친다.
+            for (j = 1; j < len; j++) {
+                unsigned p = i + j, h;
+                if (p + LZ_MIN_MATCH > n) break;
+                h = HashAt(raw + p);
+                prev[p] = head[h]; head[h] = (int)p;
+            }
+            i += len;
+            continue;
+        }
+        BoCode(b, rev[raw[i]]);
+        i++;
+    }
+
+    HeapFree(GetProcessHeap(), 0, head);
+    HeapFree(GetProcessHeap(), 0, prev);
+    HeapFree(GetProcessHeap(), 0, litCum);
 }
 
 unsigned Ls12_RewriteCap(const Ls12File* f, unsigned rawlen)
@@ -229,6 +351,12 @@ unsigned Ls12_RewriteCap(const Ls12File* f, unsigned rawlen)
 
 unsigned Ls12_Rewrite(const Ls12File* f, int index, const unsigned char* raw, unsigned rawlen,
                       unsigned char* out, unsigned outcap)
+{
+    return Ls12_RewriteEx(f, index, raw, rawlen, out, outcap, 0);
+}
+
+unsigned Ls12_RewriteEx(const Ls12File* f, int index, const unsigned char* raw, unsigned rawlen,
+                        unsigned char* out, unsigned outcap, int forceRaw)
 {
     unsigned char rev[256];
     int seen[256];
@@ -253,11 +381,22 @@ unsigned Ls12_Rewrite(const Ls12File* f, int index, const unsigned char* raw, un
     for (i = 0; i < count; i++) {
         unsigned clen, ulen;
         if (i == tgt) {
-            BitOut b;
-            b.buf = out + pos; b.cap = outcap - pos; b.len = 0; b.bit = 0; b.over = 0;
-            EncodePart(&b, raw, rawlen, rev);
-            if (b.over) return 0;
-            clen = b.len; ulen = rawlen;
+            ulen = rawlen;
+            clen = rawlen + 1;               // 아래에서 줄었는지 견주는 초깃값
+            if (!forceRaw) {
+                BitOut b;
+                b.buf = out + pos; b.cap = outcap - pos; b.len = 0; b.bit = 0; b.over = 0;
+                EncodePart(&b, raw, rawlen, rev);
+                if (b.over) return 0;
+                clen = b.len;
+            }
+            // 안 줄었거나 날것으로 담으라고 했으면 그대로 둔다(압축크기 == 원본크기 = 무압축 저장).
+            // 원본 파일들도 그렇게 담은 파트가 있다 — CITYCG.CDS 의 팔레트 226개가 전부 그렇다.
+            if (clen >= rawlen) {
+                if (rawlen > outcap - pos) return 0;
+                memcpy(out + pos, raw, rawlen);
+                clen = rawlen;
+            }
         } else {
             clen = f->comp[i]; ulen = f->uncomp[i];
             if (f->off[i] > (unsigned)f->size || clen > (unsigned)f->size - f->off[i]) return 0;

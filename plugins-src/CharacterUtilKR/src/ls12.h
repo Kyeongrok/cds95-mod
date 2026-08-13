@@ -73,6 +73,12 @@ unsigned Ls12_RewriteCap(const Ls12File* f, unsigned rawlen);
 unsigned Ls12_Rewrite(const Ls12File* f, int index, const unsigned char* raw, unsigned rawlen,
                       unsigned char* out, unsigned outcap);
 
+// forceRaw 면 압축하지 않고 날것으로 담는다(압축크기 = 원본크기 = 무압축 저장).
+// 원본이 그렇게 담은 파트를 고칠 때 쓴다 — CITYCG.CDS 의 팔레트 226개가 전부 그런 꼴이라
+// 압축해서 넣으면 게임이 다르게 읽을 수 있다. 형식을 원본과 똑같이 두는 편이 안전하다.
+unsigned Ls12_RewriteEx(const Ls12File* f, int index, const unsigned char* raw, unsigned rawlen,
+                        unsigned char* out, unsigned outcap, int forceRaw);
+
 // 새로 만든 버퍼에서 그 파트를 도로 풀어 원본과 같은지 본다. 같으면 1.
 // 파일을 덮어쓰기 전에 반드시 통과시킨다 — 인코딩이 어긋나면 얼굴 파일이 통째로 깨진다.
 int Ls12_VerifyPart(const unsigned char* buf, unsigned buflen, int index,
