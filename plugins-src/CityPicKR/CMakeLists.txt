@@ -3,6 +3,7 @@ add_library(CityPicKR SHARED
     src/menu.c
     src/picwin.c
     src/citycg.c
+    src/cityfrm.c
     src/quant.c
     ../CharacterUtilKR/src/ls12.c
     ../CharacterUtilKR/src/uikit.c

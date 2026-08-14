@@ -1,5 +1,6 @@
 #include "picwin.h"
 #include "citycg.h"
+#include "cityfrm.h"       // 도시 그림 둘레의 액자(CITYFRM.CDS) — 게임 화면과 같은 모양으로 낸다
 #include "uikit.h"
 #include "cities_data.h"   // TradeUtilKR 의 kCities[226] — 도시 ID 순서. 그림 번호와 그대로 맞는다
 #include <windowsx.h>
@@ -45,13 +46,15 @@ static HINSTANCE g_hinst = NULL;
 static HWND      g_wnd = NULL;
 static RECT      g_closeRect;
 
-static int g_scale  = 1;    // 1 = 원본 도트(400x320), 2 = 두 배
+static int g_scale  = 1;    // 1 = 원본 도트(416x336), 2 = 두 배
 static int g_sel    = 0;    // 보고 있는 도시
 static int g_scroll = 0;    // 목록 맨 위에 보이는 행
+static int g_frame  = 0;    // 두르는 액자. 0 = 구리빛, 1 = 청회색 (F 로 바꾼다)
 static wchar_t g_msg[120];  // 내보내기·넣기 결과. 비어 있으면 조작 안내를 대신 띄운다
 
-static int PicW(void)  { return CITYPIC_W * g_scale; }
-static int PicH(void)  { return CITYPIC_H * g_scale; }
+// 그림 칸은 액자를 포함한 크기다(416x336). 그림 400x320 에 사방 8px 이 붙는다.
+static int PicW(void)  { return CITYFRM_W * g_scale; }
+static int PicH(void)  { return CITYFRM_H * g_scale; }
 static int VisRows(void) { return PicH() / ROW_H; }
 static int MaxScroll(void)
 {
@@ -180,14 +183,15 @@ static void OnPaint(HWND h)
     // 그림
     pr.left = PIC_X; pr.right = PIC_X + PicW();
     pr.top = LIST_Y; pr.bottom = LIST_Y + PicH();
-    if (!CityCg_Draw(dc, pr.left, pr.top, PicW(), PicH(), g_sel)) {
+    // 액자 바깥 한 겹은 뚫려 있어 창 바탕이 비친다 — UI_WindowFrame 이 깐 색을 준다.
+    if (!CityFrm_Draw(dc, pr.left, pr.top, PicW(), PicH(), g_sel, g_frame, COL_BG)) {
         HBRUSH b = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &pr, b); DeleteObject(b);
         UI_Text(dc, pr,
                 CityCg_Count() ? L"이 도시의 그림을 풀지 못했습니다."
                                : L"게임 폴더에서 CITYCG.CDS 를 읽지 못했습니다.",
                 g_font, COL_TEXT, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        { HBRUSH b2 = CreateSolidBrush(COL_DARK); FrameRect(dc, &pr, b2); DeleteObject(b2); }
     }
-    { HBRUSH b = CreateSolidBrush(COL_DARK); FrameRect(dc, &pr, b); DeleteObject(b); }
 
     // 아래 정보줄 — 왼쪽은 고른 도시, 가운데는 결과 알림(없으면 조작법), 오른쪽은 단추 둘
     ir.left = LIST_X; ir.right = PIC_X + PicW() - (BTN_W * BTN_N + (BTN_N - 1) * 4 + 8);
@@ -202,8 +206,9 @@ static void OnPaint(HWND h)
     if (g_msg[0]) {
         UI_Text(dc, ir, g_msg, g_smallFont, COL_WARN_TX, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     } else {
-        wsprintfW(buf, L"%d장 · ↑↓ 고르기 / Z 배율 x%d / E 내보내기%s / ESC 닫기",
-                  CityCg_Count(), g_scale, IMPORT_ENABLED ? L" / I 넣기 / R 초기화" : L"");
+        wsprintfW(buf, L"%d장 · ↑↓ 고르기 / Z 배율 x%d / F 액자 %s / E 내보내기%s / ESC 닫기",
+                  CityCg_Count(), g_scale, g_frame ? L"청회색" : L"구리빛",
+                  IMPORT_ENABLED ? L" / I 넣기 / R 초기화" : L"");
         UI_Text(dc, ir, buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
 
@@ -317,6 +322,7 @@ static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_CREATE:
         UI_CreateFonts();
         CityCg_Load();          // 20MB 짜리 파일이라 창을 열 때 읽고 닫을 때 놓는다
+        CityFrm_Load();         // 액자는 14KB 뿐이지만 짝이라 여닫는 자리를 맞춘다
         EnsureVisible();
         return 0;
     case WM_ERASEBKGND: return 1;
@@ -373,6 +379,8 @@ static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         case VK_HOME:  Select(h, 0); return 0;
         case VK_END:   Select(h, CITY_N - 1); return 0;
         case 'Z':      SetScale(h, g_scale == 1 ? 2 : 1); return 0;
+        // 액자가 두 벌인데 게임이 언제 어느 것을 쓰는지는 아직 모른다. 눈으로 견주라고 열어 둔다.
+        case 'F':      g_frame = g_frame ? 0 : 1; InvalidateRect(h, NULL, FALSE); return 0;
         case 'E':      g_msg[0] = 0; DoExport(h); InvalidateRect(h, NULL, FALSE); return 0;
 #if IMPORT_ENABLED
         case 'I':      g_msg[0] = 0; DoImport(h); InvalidateRect(h, NULL, FALSE); return 0;
@@ -383,6 +391,7 @@ static LRESULT CALLBACK PicProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_CLOSE: DestroyWindow(h); return 0;
     case WM_DESTROY:
         CityCg_Free();
+        CityFrm_Free();
         UI_DestroyFonts();
         g_wnd = NULL;
         return 0;

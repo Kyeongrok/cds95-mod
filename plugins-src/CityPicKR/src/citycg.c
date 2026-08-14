@@ -80,6 +80,11 @@ static int Decode(int pic)
     return 1;
 }
 
+const unsigned char* CityCg_Pixels(int pic)
+{
+    return Decode(pic) ? g_rgb : NULL;
+}
+
 int CityCg_Draw(HDC dc, int x, int y, int w, int h, int pic)
 {
     BITMAPINFO bi;

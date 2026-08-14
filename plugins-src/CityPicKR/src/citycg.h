@@ -29,6 +29,11 @@ int  CityCg_Count(void);   // 그림 장수. 0 이면 파일을 못 열었다
 // 못 풀면 아무 것도 안 그리고 0 — 빈 액자와 안내문은 부르는 쪽 몫이다.
 int  CityCg_Draw(HDC dc, int x, int y, int w, int h, int pic);
 
+// 푼 그림의 400x320 픽셀(B,G,R 순, 한 줄이 CITYPIC_W*3 바이트). 못 풀면 NULL.
+// 안쪽 버퍼를 그대로 돌려주므로, 다른 그림을 풀면 내용이 바뀐다.
+// 액자에 끼워 그리는 cityfrm.c 가 쓴다.
+const unsigned char* CityCg_Pixels(int pic);
+
 // ---- 내보내기 / 넣기 ----
 // 넣기는 게임 폴더의 CITYCG.CDS 를 다시 쓴다. faces.c 의 초상화 바꾸기와 같은 절차다.
 //   · 맨 처음 한 번 CITYCG.CDS.orig 로 원본을 남긴다(이미 있으면 그대로 둔다)

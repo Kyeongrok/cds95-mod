@@ -8,6 +8,8 @@
 #include "goods_names.h"
 #include "warp_data.h"
 #include "itempic.h"        // 교역품 그림 — CharacterUtilKR/src 의 ITEM.CDS 디코더를 같이 빌드한다
+#include "citycg.h"         // 도시 그림 — CityPicKR/src 의 CITYCG.CDS 디코더를 같이 빌드한다
+#include "cityfrm.h"        // 그 둘레의 액자(CITYFRM.CDS) — 게임 화면과 같은 모양으로 낸다
 
 // TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
 // 게임 메뉴바에 항목을 추가하고(서브클래싱으로 클릭 가로챔), 클릭 시 전 도시 목록을 표시한다.
@@ -243,11 +245,21 @@ static void EnsureFonts(void)
 // ---------------- 시세 일람 창 (여관 다이얼로그와 같은 세피아/브론즈 오너드로우) ----------------
 
 // 창 레이아웃 (컬럼 총폭보다 좁으면 리스트뷰가 가로 스크롤)
-#define WIN_W    672
-#define WIN_H    560
 #define FRAME    3        // 갈색 외곽 프레임 두께
 #define TITLE_H  26       // 커스텀 타이틀바 높이
 #define SISE_FILTER_H 30  // 타이틀바 아래 필터줄(문화권 고르기). 교역품 창 FILTER_H 와는 별개다
+
+// 왼쪽 목록 + 오른쪽 도시 그림 칸. 목록 폭은 그림 칸이 없던 시절의 창 폭 그대로다.
+#define LIST_W   666
+#define PANE_PAD 10
+#define PANE_W   (CITYFRM_W + PANE_PAD * 2)          // 액자까지 원본 도트 그대로(416) 놓을 폭
+#define WIN_W    (FRAME + LIST_W + PANE_W + FRAME)
+#define WIN_H    576                                 // 액자가 붙어 그림이 16px 커진 만큼 같이 키운다
+#define PANE_X   (FRAME + LIST_W)                    // 그림 칸 왼쪽 끝
+#define BODY_Y   (FRAME + TITLE_H + SISE_FILTER_H)   // 목록·그림이 시작하는 세로 위치
+#define LIST_H   (WIN_H - FRAME - BODY_Y)
+#define PIC_Y    (BODY_Y + 2)
+#define INFO_Y   (PIC_Y + CITYFRM_H + 6)             // 그림 아래 도시 상세줄이 시작하는 자리
 
 // 팔레트 (dialog.c 와 동일 계열)
 #define COL_BG        RGB(150,130,105)
@@ -319,6 +331,19 @@ typedef struct {
 static SiseRow g_sise[CITY_COUNT];      // 도시 번호 순서 그대로
 static int     g_view[CITY_COUNT];      // 걸러 내고 정렬한 결과(g_sise 색인)
 static int     g_viewN = 0;
+
+// 오른쪽 그림 칸이 보여 주는 도시 번호. -1 이면 아직 아무 줄도 안 골랐다.
+static int     g_picCity = -1;
+
+// 그림 칸만 다시 그린다 — 줄을 옮길 때마다 창 전체를 무효화하면 목록이 같이 깜빡인다.
+static void InvalidatePane(HWND h)
+{
+    RECT rc, pr;
+    GetClientRect(h, &rc);
+    pr.left = PANE_X; pr.right = rc.right - FRAME;
+    pr.top  = BODY_Y; pr.bottom = rc.bottom - FRAME;
+    InvalidateRect(h, &pr, FALSE);
+}
 
 static int  g_sortCol = -1;             // 정렬 기준 컬럼. -1 이면 정렬 안 함(도시 번호순)
 static int  g_sortDir = 0;              // 1 오름차순 / -1 내림차순 / 0 안 함
@@ -494,6 +519,67 @@ static void PopulateList(HWND lv)
     InvalidateRect(lv, NULL, TRUE);
 }
 
+// ---- 오른쪽 도시 그림 칸 ----
+// 그림(400x320)은 늘리지 않고 원본 도트 그대로 놓는다 — 목록 높이에 맞춰 1.55배로 늘리면
+// 각진 그림이 뭉갠다. 대신 아래 남는 자리에 그 도시의 라이브 값을 푼다. 목록의 "시장아이템"
+// 칸은 좁아 가로 스크롤을 해야 보이는데, 여기서는 여러 줄로 접어 한눈에 들어온다.
+static void PaintPane(HDC dc, RECT rc)
+{
+    const SiseRow* r = (g_picCity >= 0 && g_picCity < CITY_COUNT) ? &g_sise[g_picCity] : NULL;
+    RECT pr, ir; HBRUSH br; HFONT of;
+    wchar_t buf[512], sc[12], si[12];
+
+    pr.left = PANE_X + PANE_PAD; pr.right = pr.left + CITYFRM_W;
+    pr.top  = PIC_Y;             pr.bottom = pr.top + CITYFRM_H;
+
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, COL_TEXT);
+
+    // 그림을 액자(CITYFRM.CDS 파트 0)에 끼워 게임 화면과 같은 모양으로 낸다.
+    // 액자 바깥 한 겹은 뚫려 있어 창 바탕이 비치므로 COL_BG 를 준다.
+    // 못 풀면 빈 자리에 까닭을 적는다(파일이 없을 수도, 그 장만 안 풀릴 수도 있다).
+    if (!r || !CityFrm_Draw(dc, pr.left, pr.top, CITYFRM_W, CITYFRM_H, g_picCity, 0, COL_BG))
+    {
+        RECT tr = pr;
+        br = CreateSolidBrush(COL_ROW_A); FillRect(dc, &pr, br); DeleteObject(br);
+        of = (HFONT)SelectObject(dc, g_listFont);
+        DrawTextW(dc, !r ? L"줄을 누르면 그 도시의 그림이 나옵니다."
+                         : (CityCg_Count() ? L"이 도시의 그림을 풀지 못했습니다."
+                                           : L"게임 폴더에서 CITYCG.CDS 를 읽지 못했습니다."),
+                  -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, of);
+        br = CreateSolidBrush(COL_DARK); FrameRect(dc, &pr, br); DeleteObject(br);
+    }
+
+    if (!r) return;
+
+    // 그림 아래 — 고른 도시의 라이브 값. 목록에 있는 것과 같은 값을 그대로 쓴다(g_sise).
+    ir.left = pr.left; ir.right = pr.right;
+    ir.top  = INFO_Y;  ir.bottom = ir.top + 22;
+    of = (HFONT)SelectObject(dc, g_titleFont);
+    wsprintfW(buf, L"#%d  %s · %s", g_picCity, kCities[g_picCity].name, kCities[g_picCity].sphere);
+    DrawTextW(dc, buf, -1, &ir, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, g_listFont);
+
+    if (r->scale < 0) lstrcpyW(sc, L"-"); else wsprintfW(sc, L"%d", r->scale);
+    if (r->sise  < 0) lstrcpyW(si, L"-"); else wsprintfW(si, L"%d", r->sise);
+    ir.top = ir.bottom + 2; ir.bottom = ir.top + 18;
+    wsprintfW(buf, L"규모 %s · 시세 %s · %s", sc, si, StateName(r->state));
+    DrawTextW(dc, buf, -1, &ir, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    ir.top = ir.bottom; ir.bottom = ir.top + 18;
+    wsprintfW(buf, L"교역소 %s   시장 %s   도서관 %s   조선소 %s   조합 %s",
+              BitMark(r->trade), r->market ? L"○" : L"×",
+              BitMark(r->lib), BitMark(r->yard), BitMark(r->guild));
+    DrawTextW(dc, buf, -1, &ir, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    // 시장 품목은 줄을 접어 남는 자리를 끝까지 쓴다.
+    ir.top = ir.bottom + 4; ir.bottom = rc.bottom - FRAME - 4;
+    wsprintfW(buf, L"시장: %s", r->mkt[0] ? r->mkt : L"(없음)");
+    DrawTextW(dc, buf, -1, &ir, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL);
+    SelectObject(dc, of);
+}
+
 static void PaintFrame(HWND h)
 {
     PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
@@ -531,7 +617,7 @@ static void PaintFrame(HWND h)
         DrawTextW(dc, SphereLabel(), -1, &tr2, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         tr2 = sb; tr2.left = sb.right - 18;
         DrawTextW(dc, L"▼", -1, &tr2, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        fr.left = FRAME + 230; fr.right = rc.right - FRAME - 8;
+        fr.left = FRAME + 230; fr.right = FRAME + LIST_W - 8;   // 안내문은 목록 폭 안에서 끝낸다
         if (g_sortCol >= 0 && g_sortDir)
             wsprintfW(info, L"%d개 · %s %s (제목을 누르면 오름차순 → 내림차순 → 안 함)",
                       g_viewN, kCols[g_sortCol], g_sortDir > 0 ? L"오름차순" : L"내림차순");
@@ -540,6 +626,7 @@ static void PaintFrame(HWND h)
         DrawTextW(dc, info, -1, &fr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     }
     SelectObject(dc, of);
+    PaintPane(dc, rc);
     EndPaint(h, &ps);
 }
 
@@ -655,8 +742,7 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         // WS_CLIPSIBLINGS 는 펼친 문화권 목록을 리스트뷰가 덮어 그리지 않게 한다.
         g_list = CreateWindowExW(0, L"SysListView32", L"",
                                  WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | LVS_REPORT | LVS_SINGLESEL,
-                                 FRAME, FRAME + TITLE_H + SISE_FILTER_H,
-                                 WIN_W - 2 * FRAME, WIN_H - 2 * FRAME - TITLE_H - SISE_FILTER_H,
+                                 FRAME, BODY_Y, LIST_W, LIST_H,
                                  h, (HMENU)1, g_hinst, NULL);
         SendMessageW(g_list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
         SendMessageW(g_list, WM_SETFONT, (WPARAM)g_listFont, TRUE);
@@ -667,9 +753,12 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             for (c = 0; c < COL_COUNT; c++) AddCol(g_list, c, kCols[c], kColW[c]);
         }
         g_sortCol = -1; g_sortDir = 0;
+        g_picCity = -1;
         ReadRows();
         RebuildView();
         PopulateList(g_list);
+        // CITYCG.CDS 는 20MB 라 창을 열 때 미리 읽지 않는다 — 처음 줄을 고를 때 읽고
+        // 창을 닫을 때 놓는다(CityCg_Load 는 여러 번 불러도 한 번만 읽는다).
         // 헤더 오너드로우 서브클래스
         g_hdr = (HWND)SendMessageW(g_list, LVM_GETHEADER, 0, 0);
         if (g_hdr)
@@ -707,6 +796,20 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             }
             }
             return CDRF_DODEFAULT;
+        }
+        // 줄을 고르면(마우스든 ↑↓ 든) 오른쪽 그림 칸을 그 도시로 바꾼다.
+        if (nh->idFrom == 1 && nh->code == LVN_ITEMCHANGED)
+        {
+            LPNMLISTVIEW nl = (LPNMLISTVIEW)lp;
+            if ((nl->uNewState & LVIS_SELECTED) && !(nl->uOldState & LVIS_SELECTED)
+                && nl->iItem >= 0 && nl->iItem < g_viewN)
+            {
+                CityCg_Load();                    // 처음 고를 때 한 번만 파일을 읽는다
+                CityFrm_Load();                   // 액자는 14KB 뿐이지만 짝이라 같이 여닫는다
+                g_picCity = g_sise[g_view[nl->iItem]].id;
+                InvalidatePane(h);
+            }
+            return 0;
         }
         // 줄을 두 번 누르면 그 도시로 간다(항해 중이면 들어갈지도 묻는다).
         // 창을 먼저 닫고 게임 창에 부친다 — 게임 대화상자가 이 창 프로시저 안쪽에서
@@ -768,8 +871,11 @@ static LRESULT CALLBACK SiseProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         if (g_hdr && g_origHdr) { SetWindowLongPtrW(g_hdr, GWLP_WNDPROC, (LONG_PTR)g_origHdr); }
         // 폰트는 여기서 지우지 않는다 — 교역품 창이 같은 것을 쓰고 있을 수 있다(EnsureFonts 참고).
+        CityCg_Free();   // 20MB 를 늘 물고 있을 이유가 없다(CityPicKR 이 창을 닫을 때와 같다)
+        CityFrm_Free();
         g_hdr = NULL; g_origHdr = NULL; g_siseWnd = NULL; g_list = NULL;
         g_sphereDrop = NULL; g_sphereSel = 0; g_sortCol = -1; g_sortDir = 0;
+        g_picCity = -1;
         return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
