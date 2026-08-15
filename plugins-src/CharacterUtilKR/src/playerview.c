@@ -10,6 +10,8 @@
 //   위: 주인공의 지금 초상화(크게) + 이름/성별/나이/직업/명성 요약
 //   아래: 얼굴 격자. 한 칸 누르면 그 자리에서 주인공 레코드(0x1B60A8 +0x00)에 바로 쓴다.
 //
+// ★ 화면에 나오는 얼굴은 고른 코드와 다를 수 있다 — 36세부터 +16 이다. 아래 PL_ELDER_* 참고.
+//
 // 격자는 [남 표]/[여 표] 로 MALE.CDS · FEMALE.CDS 를 오가며 볼 수 있다. 두 파일을 읽는 것
 // 자체는 어렵지 않다(Face_Draw 가 이미 표를 골라 그린다) — 걸리는 건 파일이 나뉜 게 아니라,
 // 얼굴코드에 "어느 표인지"가 안 들어 있다는 점이다. 게임은 성별(+0x08)로 표를 고르므로
@@ -22,6 +24,41 @@
 // 필터는 CharDb_Cat 의 네 갈래를 하나도 빠뜨리지 않고 덮는다.
 // 예전에 [전체][기본][인물] 셋만 뒀더니 남자 414개 = 기본 98 + 인물 246 이 안 맞았다
 // (나머지 70개가 스폰서였는데 고를 버튼이 없었다). 개수가 안 맞아 보이면 필터가 샌 것이다.
+// ---- 36세부터는 얼굴코드에 16 이 붙는다 ----
+// 게임 코드 그대로다. 주인공 객체(0x5B60A0)의 vtable+8 이 "그릴 얼굴 번호" 를 내는데,
+//
+//   0x47CAF0  call [vtable+0x0C]      ; 만나이 (0x47CB20: [0x5A4D20] 연도 - 객체+0xE8 생년,
+//             cmp  eax, 0x24          ;            생일 안 지났으면 -1)
+//             jge  +7                 ; 36세 미만이면
+//             call 0x47CB10 ; ret     ;   얼굴코드([객체+8]) 그대로
+//             call 0x47CB10           ; 36세 이상이면
+//             add  eax, 0x10 ; ret    ;   얼굴코드 + 16
+//
+// 범위를 따지지도, 막지도 않는다 — 어떤 코드든 그냥 16 을 더한다. #95 를 골라 놓고 44세면
+// 화면에는 #111 이 나온다. 얼굴 표(남 414 · 여 144)를 넘어가면 게임은 그 자리를 못 풀고
+// 색인 0x2E 로 칠한 판을 그린다(0x4066C0 의 크기 검사).
+//
+// MALE.CDS 의 기본 얼굴 0~15 는 그래서 청년 그림이고, 그 +16 인 16~31 이 같은 사람의 중년
+// 그림이도록 아트를 짜 뒀다(픽셀로 견줘 확인 — 10/16 이 최적짝 +16, 13<->29 는 옷깃까지 같다).
+// 짝이 맞는 것은 그 구간뿐이지 규칙이 그 구간에만 도는 것은 아니다.
+//
+// 한동안 이것을 "주인공 초상화는 파트 16 고정" 으로 잘못 봤다 — 얼굴코드 0 + 44세였다.
+#define PL_ELDER_AGE   36   // 이 나이부터
+#define PL_ELDER_STEP  16   // 이만큼 더한 얼굴이 나온다
+
+// 그 나이에 화면에 실제로 나오는 얼굴 번호. 나이를 모르면(-9999 등) 고른 그대로 본다.
+static int ShownFace(int code, int age)
+{
+    if (code < 0) return code;
+    return (age != -9999 && age >= PL_ELDER_AGE) ? code + PL_ELDER_STEP : code;
+}
+
+// [PNG 넣기] · [끝에 추가] 노출 스위치. 0 이면 [이 얼굴 PNG로](내보내기)만 남는다.
+// 얼굴 파일(MALE/FEMALE.CDS)을 되쓰는 일이라 잠가 둔다 — CityPicKR 의 [넣기](picwin.c 의
+// IMPORT_ENABLED)와 같은 이유다. Face_ImportPng/AppendPng 와 아래 DoImport 는 그대로 남으므로
+// 1 로 되돌리면 단추가 다시 나온다.
+#define PL_IMPORT_ENABLED 0
+
 #define PL_FILT_N 5
 static const struct { const wchar_t* label; int cat; } kPlCat[PL_FILT_N] = {
     { L"전체",   -1 },  // -1 = 거르지 않는다
@@ -73,11 +110,13 @@ static RECT RcCell(int vis)
 static RECT RcTrack(void)
 { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_W; r.top=PL_GY; r.bottom=PL_GY+PL_ROWS*PL_CELL_H; return r; }
 // 정보 패널 아래쪽 단추 줄. 0 내보내기 1 갈아 끼우기 2 끝에 추가
-#define PL_BTN_N 3
+// 넣기를 감춰 두면 내보내기 하나만 남는다(자리는 그대로 왼쪽부터).
+#define PL_BTN_N (PL_IMPORT_ENABLED ? 3 : 1)
 static RECT RcBtn(int i)
 {
-    static const int kx[PL_BTN_N] = { 0, 122, 224 };
-    static const int kw[PL_BTN_N] = { 118,  98,  98 };
+    // 자리는 셋 다 들고 있는다 — 잠근 단추가 다시 열려도 이 표는 안 고쳐도 된다.
+    static const int kx[3] = { 0, 122, 224 };
+    static const int kw[3] = { 118,  98,  98 };
     RECT r;
     r.left   = PL_GX + PL_PORT_W + 12 + 8 + kx[i];
     r.right  = r.left + kw[i];
@@ -126,9 +165,17 @@ static void PaintHead(HDC dc)
     int age = Player_Age(), born = Player_BirthYear();
     int blood = Player_Blood(), job = Player_Job();
     int fame = Player_Fame(), infamy = Player_Infamy();
-    int y;
+    int shown, y;
 
-    Face_Draw(dc, PL_GX, PL_Y, PL_PORT_W, PL_PORT_H, gender, face);
+    // 나이는 +0x04 를 믿지 않는다 — 주인공 레코드는 그 자리가 0 이고(NPC 만 쓴다),
+    // 게임 화면의 "연령"도 생년과 지금 연도로 계산한 값이다. 연도를 못 읽을 때만 +0x04 를 쓴다.
+    // 얼굴 번호가 나이에 걸려 있으므로 그리기 전에 먼저 잡는다.
+    { int now = LiveChar_Year();
+      if (now && born) age = now - born; }
+    shown = ShownFace(face, age);
+
+    // 큰 초상화는 "고른 얼굴" 이 아니라 "게임이 그리는 얼굴" 로 둔다 — 화면과 맞아야 쓸모가 있다.
+    Face_Draw(dc, PL_GX, PL_Y, PL_PORT_W, PL_PORT_H, gender, shown);
 
     br = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &box, br); DeleteObject(br);
     br = CreateSolidBrush(COL_DARK);    FrameRect(dc, &box, br); DeleteObject(br);
@@ -142,17 +189,18 @@ static void PaintHead(HDC dc)
             DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
     y += 26;
 
-    wsprintfW(buf, L"얼굴 #%d · %s · %s형", face, gender == 1 ? L"여" : L"남",
-              blood >= 0 ? Maid_BloodName(blood) : L"?");
+    // 나이에 걸려 다른 얼굴이 나오는 중이면 그 번호도 같이 적는다.
+    if (shown != face)
+        wsprintfW(buf, L"얼굴 #%d → 화면 #%d · %s · %s형", face, shown,
+                  gender == 1 ? L"여" : L"남", blood >= 0 ? Maid_BloodName(blood) : L"?");
+    else
+        wsprintfW(buf, L"얼굴 #%d · %s · %s형", face, gender == 1 ? L"여" : L"남",
+                  blood >= 0 ? Maid_BloodName(blood) : L"?");
     ln.top = y; ln.bottom = y + 20;
     UI_Text(dc, ln, buf, g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     y += 21;
 
-    // 나이는 +0x04 를 믿지 않는다 — 주인공 레코드는 그 자리가 0 이고(NPC 만 쓴다),
-    // 게임 화면의 "연령"도 생년과 지금 연도로 계산한 값이다. 연도를 못 읽을 때만 +0x04 를 쓴다.
-    { int now = LiveChar_Year();
-      if (now && born)          age = now - born;
-      if (age != -9999 && born) wsprintfW(buf, L"%d세 · %d년생 · %s", age, born, JobName(job));
+    { if (age != -9999 && born) wsprintfW(buf, L"%d세 · %d년생 · %s", age, born, JobName(job));
       else if (born)            wsprintfW(buf, L"%d년생 · %s", born, JobName(job));
       else                      wsprintfW(buf, L"%s", JobName(job)); }
     ln.top = y; ln.bottom = y + 20;
@@ -175,15 +223,28 @@ static void PaintHead(HDC dc)
                       L"고르면 주인공 성별도 '남'으로 함께 바뀝니다 — 초상화뿐 아니라 게임 진행에도 "
                       L"영향이 갑니다.",
                 g_smallFont, COL_WARN_TX, DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL);
-    else
-        UI_Text(dc, ln,
-                L"아래에서 얼굴을 누르면 바로 바뀝니다. 게임 화면에는 인물 정보를 다시 열 때 "
-                L"보이고, 게임에서 저장하면 그대로 남습니다. 반대쪽 표도 볼 수 있습니다.",
-                g_smallFont, COL_TEXT, DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL);
+    else {
+        wchar_t note[256];
+        if (shown != face)
+            wsprintfW(note,
+                      L"게임은 %d세부터 고른 얼굴에 %d 을 더해 그립니다 — 지금 %d세라 #%d 를 "
+                      L"골라도 화면에는 #%d 가 나옵니다(위 초상화가 그 얼굴입니다). "
+                      L"기본 얼굴 0~15 는 그 짝인 16~31 이 같은 사람의 중년 그림입니다.",
+                      PL_ELDER_AGE, PL_ELDER_STEP, age, face, shown);
+        else
+            wsprintfW(note,
+                      L"얼굴을 누르면 바로 바뀝니다. 게임 화면에는 인물 정보를 다시 열 때 보이고, "
+                      L"게임에서 저장하면 그대로 남습니다. %d세부터는 고른 얼굴에 %d 을 더한 "
+                      L"얼굴이 나옵니다.", PL_ELDER_AGE, PL_ELDER_STEP);
+        UI_Text(dc, ln, note, g_smallFont, COL_TEXT,
+                DT_LEFT|DT_WORDBREAK|DT_NOPREFIX|DT_EDITCONTROL);
+    }
 
     UI_Button(dc, RcBtn(0), L"이 얼굴 PNG로", FALSE);
+#if PL_IMPORT_ENABLED
     UI_Button(dc, RcBtn(1), L"PNG 넣기",      FALSE);
     UI_Button(dc, RcBtn(2), L"끝에 추가",     FALSE);
+#endif
 
     if (g_msg[0]) {
         RECT m = RcHint();
@@ -309,6 +370,7 @@ static void DoExport(HWND h)
     else                   lstrcpynW(g_msg, ErrText(rc), 96);
 }
 
+#if PL_IMPORT_ENABLED
 // append 면 표 끝에 새 얼굴로 붙이고 주인공에게 그 번호를 바로 물린다.
 // 아니면 주인공이 지금 쓰는 자리를 갈아 끼운다.
 static void DoImport(HWND h, int append)
@@ -354,6 +416,7 @@ static void DoImport(HWND h, int append)
     Rebuild();          // 끝에 붙였으면 목록이 한 칸 길어졌다
     ScrollToCurrent();
 }
+#endif  // PL_IMPORT_ENABLED
 
 // ---- 조작 ----
 static void ScrollTo(HWND h, int row)
@@ -386,12 +449,14 @@ int Pl_Click(HWND h, POINT pt)
     if (PtInRect(&r, pt)) { Pl_Activate(h, 1); return 1; }
     if (!Player_Ready()) return 0;
 
-    for (i = 0; i < PL_BTN_N; i++) {   // PNG 내보내기 / 넣기 / 끝에 추가
+    for (i = 0; i < PL_BTN_N; i++) {   // PNG 내보내기 (넣기 · 끝에 추가는 잠가 뒀다)
         r = RcBtn(i);
         if (!PtInRect(&r, pt)) continue;
         if      (i == 0) DoExport(h);
+#if PL_IMPORT_ENABLED
         else if (i == 1) DoImport(h, 0);
         else             DoImport(h, 1);
+#endif
         InvalidateRect(h, NULL, FALSE);
         return 1;
     }

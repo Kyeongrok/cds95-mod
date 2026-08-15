@@ -7,10 +7,13 @@
 // navview/savedata 코드는 그대로 남으므로 1 로 되돌리면 그대로 복구된다.
 #define CHARKR_SHOW_NAV_TAB 1
 
-// "플레이어" 탭 노출 스위치. 지금은 미완성이라 0 — 탭 단추만 빠지고
-// playerview/livechar 코드는 그대로 남는다. 마무리되면 1 로 되돌리면 된다.
-// (초상화는 얼굴코드를 바꿔도 화면이 안 따라오고 MALE.CDS 파트 16 을 갈아야 먹는다.)
-#define CHARKR_SHOW_PLAYER_TAB 0
+// "플레이어" 탭 노출 스위치. 0 으로 두면 탭 단추만 빠지고 playerview/livechar 코드는 남는다.
+//
+// 한동안 0 이었다 — 얼굴코드(0x1B60A8 +0x00)를 고쳐도 화면이 안 따라오는 것으로 봤기 때문이다.
+// 실은 따라온다. 게임이 36세부터 얼굴코드에 16 을 더해 그리는 것이라(0x47CAF0 — playerview.c 의
+// PL_ELDER_* 참고) #0 을 골라도 #16 이 나왔던 것뿐이다. 그래서 다시 켠다.
+// 얼굴 파일을 되쓰는 [PNG 넣기]·[끝에 추가]는 playerview.c 의 PL_IMPORT_ENABLED 로 잠가 뒀다.
+#define CHARKR_SHOW_PLAYER_TAB 1
 
 #define TAB_H     26
 #define FILTER_H  30
