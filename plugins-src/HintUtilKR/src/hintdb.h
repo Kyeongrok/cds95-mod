@@ -27,6 +27,12 @@
 #define HINT_NONE  8    // 아직 힌트가 없다
 #define HINT_GOT   13   // 힌트를 얻었다
 #define HINT_DONE  15   // 발견까지 마쳤다
+// 값이 이 셋만 나오는 게 아니다 — 세이브를 뜯어 보면 11(1011) 과 7(0111) 도 있다.
+// 비트로 보면 bit1 이 곧 "찾았다" 이고(11 인 향료제도를 게임에서 발견한 것으로 확인),
+// bit0 은 "힌트를 손에 넣었다", bit3 은 "힌트가 걸려 있는 줄" 이다.
+// 그래서 값을 그대로 견주지 말고 아래 두 가지로 가른다.
+#define HINT_IS_DONE(st) (((st) & 2) != 0)
+#define HINT_IS_GOT(st)  (((st) & 3) == 1)
 
 int  HintDb_Load(void);                 // 분류 이름표를 읽는다. 성공 1
 int  HintDb_Ready(void);

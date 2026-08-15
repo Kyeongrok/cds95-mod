@@ -29,6 +29,7 @@ unsigned char CharDb_PatronPrefAt(int row);      // 취향 비트마스크
 const wchar_t* CharDb_PatronName(int row);
 const wchar_t* CharDb_PatronCity(int row);       // 후원자가 있는 도시
 int CharDb_PatronAppear(int row);                // 등장연도(관련). EXE 표에서 구운 값
+int CharDb_PatronRetire(int row);                // 은퇴연도. 0 이면 끝까지 남는다
 const wchar_t* CharDb_PrefName(int bit);         // 0 -> "지리" … 7 -> "보물"
 
 // 스폰서 상세를 여러 줄 문자열로. out 은 192 wchar 이상. 잘못된 행이면 0.

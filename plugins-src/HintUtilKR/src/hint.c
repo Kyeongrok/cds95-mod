@@ -14,7 +14,8 @@
 //
 // 힌트와 발견물은 서로 다른 목록이고 번호도 다르다 — 힌트 31 은 "트로이" 지만
 // 발견물 31 은 "아부심벨 대신전"이다(hintdb.h · disc.h 참고).
-// 힌트 상태는 실행 중 메모리에서, 발견 여부는 SAVEDATA.CDS 에서 읽는다. 아무것도 쓰지 않는다.
+// 힌트 상태도 발견 여부도 실행 중 메모리(힌트 배열)에서 읽는다. 아무것도 쓰지 않는다.
+// 발견물 줄의 발견 여부는 disc_hint.h 의 이음표로 힌트 번호를 찾아 그 상태를 가져온 것이다.
 
 #define ID_HINT_OPEN 0xBC00u   // Trade=0xB10x, Char=0xB301/0xB310+, Ship=0xB410, Patch=0xB500,
                                // Map=0xB600, Mod=0xB700, QMod=0xB800, Upd=0xB900,
@@ -144,12 +145,13 @@ static int Keep(int i)
     if (g_filt == F_ALL) return 1;
     if (g_mode == MODE_DISC) {
         int f = Disc_Found(i);
-        if (f == DISC_UNKNOWN) return 1;                 // 세이브가 없으면 추리지 않는다
-        return (g_filt == F_A) ? (f != DISC_NOT) : (f == DISC_NOT);
+        if (f == DISC_UNKNOWN) return 1;                 // 아직 못 읽으면 추리지 않는다
+        if (f == DISC_NOLINK) return 0;                  // 발견이라는 개념이 없는 줄
+        return (g_filt == F_A) ? (f == DISC_FOUND) : (f != DISC_FOUND);
     }
     {   int st = HintDb_State(i);
         if (st < 0) return 1;                            // 상태를 못 읽으면 추리지 않는다
-        return (g_filt == F_A) ? (st == HINT_GOT) : (st == HINT_DONE);
+        return (g_filt == F_A) ? HINT_IS_GOT(st) : HINT_IS_DONE(st);
     }
 }
 
@@ -171,18 +173,18 @@ static const wchar_t* StateText(int i, int* done, int* dim)
     *done = 0; *dim = 0;
     if (g_mode == MODE_DISC) {
         switch (Disc_Found(i)) {
-        case DISC_REPORTED: *done = 1; return L"발견 · 발표";
-        case DISC_FOUND:    *done = 1; return L"발견";
-        case DISC_NOT:      *dim = 1;  return L"—";
-        default:                       return L"세이브 없음";
+        case DISC_FOUND:   *done = 1; return L"발견";
+        case DISC_HINTED:             return L"힌트 있음";
+        case DISC_NOT:     *dim = 1;  return L"—";
+        case DISC_NOLINK:  *dim = 1;  return L"";     // 발견이라는 개념이 없는 줄(교역품 따위)
+        default:                      return L"세이브 전";
         }
     }
-    switch (HintDb_State(i)) {
-    case HINT_DONE: *done = 1; return L"발견 완료";
-    case HINT_GOT:             return L"힌트 있음";
-    case HINT_NONE: *dim = 1;  return L"—";
-    case -1:                   return L"?";
-    default:                   return L"·";      // 8/13/15 말고 9·11 도 나온다(뜻은 아직 모른다)
+    {   int st = HintDb_State(i);
+        if (st < 0) return L"?";
+        if (HINT_IS_DONE(st)) { *done = 1; return L"발견 완료"; }
+        if (HINT_IS_GOT(st))  {           return L"힌트 있음"; }
+        *dim = 1; return L"—";
     }
 }
 
@@ -211,8 +213,9 @@ static void Paint(HWND h)
         UI_Button(dc, RcFilt(i), (g_mode == MODE_DISC ? kFiltDisc : kFiltHint)[i], g_filt == i);
 
     if (g_mode == MODE_DISC)
-        wsprintfW(buf, Disc_HaveSave() ? L"%d개 · 세이브 기준"
-                                       : L"%d개 — SAVEDATA.CDS 를 못 읽었습니다", g_viewN);
+        wsprintfW(buf, Disc_Live() ? L"%d개 · 힌트 %d개와 이어 봄"
+                                   : L"%d개 — 세이브를 불러오면 상태가 나옵니다",
+                  g_viewN, Disc_LinkCount());
     else
         wsprintfW(buf, HintDb_Live() ? L"%d개" : L"%d개 — 세이브를 불러오면 상태가 나옵니다", g_viewN);
     r.left = LIST_X + 132 + FILT_N*84; r.right = LIST_X + LIST_W + SBW;
@@ -271,17 +274,23 @@ static void Paint(HWND h)
             UI_Text(dc, t2, buf, g_font, COL_TEXT,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
             t2.top += 19; t2.bottom += 19;
-            wsprintfW(buf, L"이 분류를 좋아하는 스폰서 %d명 — 오른쪽 도시를 누르면 워프", n);
+            // 지금 연도를 읽었으면 등장한 사람이 몇인지 같이 적는다(그 사람들이 위에 있다).
+            if (PPick_Year() > 0)
+                wsprintfW(buf, L"이 분류를 좋아하는 스폰서 %d명 — %d년 현재 %d명",
+                          n, PPick_Year(), PPick_LiveCount());
+            else
+                wsprintfW(buf, L"이 분류를 좋아하는 스폰서 %d명 — 오른쪽 도시를 누르면 워프", n);
             UI_Text(dc, t2, buf, g_smallFont, COL_DARK,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         }
 
         for (v = 0; v < PROWS_VIS; v++) {
-            int k = g_pscroll + v, row2, wi;
+            int k = g_pscroll + v, row2, wi, lv;
             RECT pr, tt;
             if (g_pick < 0 || k >= n) break;
             row2 = PPick_Row(k);
             wi   = PPick_WarpIndex(k);
+            lv   = PPick_Live(k);
             pr = RcPRow(v); pr.top += PANEL_HEAD_H; pr.bottom += PANEL_HEAD_H;
             if (pr.bottom > p.bottom) break;
             if (v & 1) { br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &pr, br); DeleteObject(br); }
@@ -289,11 +298,20 @@ static void Paint(HWND h)
                       CharDb_PatronGender(row2), CharDb_PatronFace(row2));
             tt = pr; tt.left = pr.left + PFACE_W + 12; tt.right = pr.right - 104;
             tt.top = pr.top + 2; tt.bottom = tt.top + 19;
-            UI_Text(dc, tt, CharDb_PatronName(row2), g_font, COL_TEXT,
+            // 아직 안 나왔거나 이미 물러난 사람은 이름부터 흐리게 — 찾아가도 못 만난다.
+            UI_Text(dc, tt, CharDb_PatronName(row2), g_font,
+                    lv == PPICK_NOW ? COL_TEXT : COL_DARK,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
             tt.top = tt.bottom; tt.bottom = tt.top + 17;
-            wsprintfW(buf, L"%s · %d만", CharDb_PatronCity(row2),
-                      CharDb_PatronWealthAt(row2) / 10000);
+            if (lv == PPICK_LATER)
+                wsprintfW(buf, L"%s · %d만 · %d년 등장", CharDb_PatronCity(row2),
+                          CharDb_PatronWealthAt(row2) / 10000, PPick_Appear(k));
+            else if (lv == PPICK_GONE)
+                wsprintfW(buf, L"%s · %d만 · %d년 은퇴", CharDb_PatronCity(row2),
+                          CharDb_PatronWealthAt(row2) / 10000, PPick_Retire(k));
+            else
+                wsprintfW(buf, L"%s · %d만", CharDb_PatronCity(row2),
+                          CharDb_PatronWealthAt(row2) / 10000);
             UI_Text(dc, tt, buf, g_smallFont, COL_DARK,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
             // 친밀도는 실행 중에만 있는 값이라 세이브를 불러오기 전에는 "—" 다.
@@ -321,7 +339,7 @@ static void Paint(HWND h)
     r.top = LIST_Y + LIST_H + 6; r.bottom = r.top + 22;
     UI_Text(dc, r,
             g_mode == MODE_DISC
-              ? L"발견 여부는 SAVEDATA.CDS 를 읽습니다 — 저장한 뒤 F5 를 누르면 갱신됩니다."
+              ? L"발견 여부는 이어진 힌트에서 바로 읽습니다 — 힌트가 없는 줄은 비워 둡니다."
               : L"힌트 상태는 실행 중인 게임에서 바로 읽습니다. 값은 고치지 않습니다.",
             g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
@@ -340,7 +358,7 @@ static void ScrollTo(HWND h, int v)
 static void Reload(HWND h)
 {
     HintDb_Load();
-    Disc_Load();          // 세이브를 다시 읽는다
+    Disc_Load();
     Rebuild();
     InvalidateRect(h, NULL, FALSE);
 }

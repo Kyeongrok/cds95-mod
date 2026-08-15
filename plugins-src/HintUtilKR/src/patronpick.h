@@ -19,3 +19,14 @@ int  PPick_Row(int i);            // 후원자 표의 행 번호
 
 // 그 후원자가 있는 도시의 워프 번호(TradeUtilKR 의 kWarps 색인). 없으면 -1.
 int  PPick_WarpIndex(int i);
+
+// 지금 게임 연도로 가른 상태. 등장한(=지금 찾아갈 수 있는) 쪽이 위로 오게 늘어놓는다.
+// 연도를 못 읽으면(세이브 전) 전부 PPICK_NOW 로 놓아 차례를 흔들지 않는다.
+#define PPICK_NOW    2            // 등장했고 아직 안 물러났다
+#define PPICK_LATER  1            // 등장연도가 아직 안 됐다
+#define PPICK_GONE   0            // 은퇴연도가 지났다
+int  PPick_Live(int i);
+int  PPick_Appear(int i);         // 등장연도. 모르면 0
+int  PPick_Retire(int i);         // 은퇴연도. 없으면 0
+int  PPick_LiveCount(void);       // 그 중 PPICK_NOW 인 수
+int  PPick_Year(void);            // 판정에 쓴 게임 연도. 못 읽었으면 0

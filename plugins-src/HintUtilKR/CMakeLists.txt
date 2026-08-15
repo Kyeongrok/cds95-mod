@@ -9,6 +9,8 @@ add_library(HintUtilKR SHARED
     # 오른쪽 판의 스폰서 — 후원자 표와 초상화도 CharacterUtilKR 것을 그대로 같이 빌드한다.
     ../CharacterUtilKR/src/chardb.c
     ../CharacterUtilKR/src/patrons.c
+    # 지금 게임 연도 — 등장한 스폰서를 위로 올리는 데 쓴다(LiveChar_Year).
+    ../CharacterUtilKR/src/livechar.c
     ../CharacterUtilKR/src/faces.c
     ../CharacterUtilKR/src/ls12.c
     ../CharacterUtilKR/src/imgio.c

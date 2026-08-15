@@ -1,13 +1,14 @@
 #include "disc.h"
+#include "hintdb.h"       // 발견 여부는 힌트 배열에서 온다
+#include "disc_hint.h"    // kDiscHint[274] — 발견물 -> 힌트 이음표
 
-// 자리는 disc.h 에 적어 뒀다. 여기서는 읽기만 한다.
+// 자리는 disc.h 에, 이음표를 만든 법은 disc_hint.h 에 적어 뒀다. 여기서는 읽기만 한다.
 
 static int  g_ready = 0;
-static int  g_haveSave = 0;
+static int  g_links = 0;
 static wchar_t g_name[DISC_N][40];
 static int  g_cat[DISC_N];
 static int  g_value[DISC_N];
-static unsigned char g_found[DISC_N];    // DISC_NOT / FOUND / REPORTED
 
 static int Commit(const void* p, unsigned n)
 {
@@ -26,55 +27,11 @@ static void Cp949(const char* s, wchar_t* out, int cch)
     MultiByteToWideChar(949, 0, s, -1, out, cch);
 }
 
-// 게임 폴더의 SAVEDATA.CDS. 실행 파일이 있는 자리에서 찾는다(faces.c 와 같은 관용구).
-static void SavePathW(wchar_t* out, int cch)
-{
-    wchar_t* p;
-    wchar_t* last;
-    GetModuleFileNameW(NULL, out, cch);
-    last = out;
-    for (p = out; *p; p++) if (*p == L'\\' || *p == L'/') last = p;
-    *last = 0;
-    lstrcatW(out, L"\\SAVEDATA.CDS");
-}
-
-// 세이브에서 발견 여부만 훑는다. 파일 전체를 들고 있지 않는다(310KB 를 붙들 이유가 없다).
-static int ReadSave(void)
-{
-    wchar_t path[MAX_PATH];
-    HANDLE f;
-    DWORD got = 0;
-    unsigned char* buf;
-    unsigned need = DISC_SAVE_OFF + (unsigned)DISC_SAVE_N * DISC_SAVE_SZ;
-    int i, any = 0;
-
-    SavePathW(path, MAX_PATH);
-    f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-    if (f == INVALID_HANDLE_VALUE) return 0;
-    buf = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, need);
-    if (!buf) { CloseHandle(f); return 0; }
-    if (!ReadFile(f, buf, need, &got, NULL) || got < need) {
-        HeapFree(GetProcessHeap(), 0, buf); CloseHandle(f); return 0;
-    }
-    CloseHandle(f);
-
-    for (i = 0; i < DISC_N; i++) g_found[i] = DISC_NOT;
-    for (i = 0; i < DISC_SAVE_N && i < DISC_N; i++) {
-        unsigned char b = buf[DISC_SAVE_OFF + (unsigned)i * DISC_SAVE_SZ];
-        if (b & 0x40) { g_found[i] = (b & 0x80) ? DISC_REPORTED : DISC_FOUND; any++; }
-    }
-    HeapFree(GetProcessHeap(), 0, buf);
-    return 1;
-}
-
 int Disc_Load(void)
 {
     unsigned char* base;
     const unsigned char* rec;
     int i, ok = 0;
-
-    // 세이브는 매번 다시 읽는다 — 게임을 하다 저장했을 수 있다.
-    g_haveSave = ReadSave();
 
     if (g_ready) return 1;
     base = (unsigned char*)GetModuleHandleW(NULL);
@@ -89,15 +46,17 @@ int Disc_Load(void)
         g_value[i] = *(const int*)(r + 0x18);
         if (g_cat[i] < 0 || g_cat[i] > 7) g_cat[i] = -1;
         if (g_name[i][0]) ok++;
+        if (kDiscHint[i] >= 0) g_links++;
     }
     if (ok < DISC_N / 2) return 0;       // 대부분이 이름을 못 내면 표 자리가 어긋난 것이다
     g_ready = 1;
     return 1;
 }
 
-int Disc_Ready(void)    { return g_ready; }
-int Disc_HaveSave(void) { return g_haveSave; }
-int Disc_Count(void)    { return DISC_N; }
+int Disc_Ready(void)     { return g_ready; }
+int Disc_Live(void)      { return HintDb_Live(); }
+int Disc_Count(void)     { return DISC_N; }
+int Disc_LinkCount(void) { return g_links; }
 
 const wchar_t* Disc_Name(int i)
 {
@@ -106,8 +65,23 @@ const wchar_t* Disc_Name(int i)
 int Disc_Cat(int i)   { return (g_ready && i >= 0 && i < DISC_N) ? g_cat[i] : -1; }
 int Disc_Value(int i) { return (g_ready && i >= 0 && i < DISC_N) ? g_value[i] : -1; }
 
+int Disc_HintId(int i)
+{
+    return (i >= 0 && i < DISC_N) ? kDiscHint[i] : -1;
+}
+
+// 힌트 상태의 비트로 가른다. 8=1000 아직 / 13=1101 힌트 취득 / 15=1111 발견 완료 이고,
+// 11=1011 과 7=0111 도 나온다 — bit1 이 곧 "찾았다" 다(향료제도가 11 인데 발견한 것을
+// 게임에서 확인했다). bit3 은 "힌트가 있는 발견물" 이라 판정에 쓰지 않는다.
 int Disc_Found(int i)
 {
-    if (!g_haveSave || i < 0 || i >= DISC_N) return DISC_UNKNOWN;
-    return g_found[i];
+    int h, st;
+    if (i < 0 || i >= DISC_N) return DISC_UNKNOWN;
+    h = kDiscHint[i];
+    if (h < 0) return DISC_NOLINK;
+    st = HintDb_State(h);
+    if (st < 0) return DISC_UNKNOWN;
+    if (st & 2) return DISC_FOUND;
+    if (st & 1) return DISC_HINTED;
+    return DISC_NOT;
 }
