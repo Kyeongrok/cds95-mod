@@ -37,7 +37,7 @@ $MinHookDir = Join-Path $PluginsSrc "third_party\minhook"
 
 # 여기서 빌드할 플러그인 타깃과 결과물 파일명을 나열합니다.
 # 새 플러그인을 plugins-src에 추가하면 이 목록에도 추가하세요.
-$PluginTargets = @("HotelUtilKR", "TradeUtilKR", "CharacterUtilKR", "WorldMapKR", "ShipSkinKR", "PatchUtilKR", "ModUtilKR", "QuestModKR", "UpdateUtilKR", "FatigueUtilKR", "HotkeyUtilKR", "HintUtilKR", "MarketUtilKR", "SaveUtilKR", "CityPicKR")
+$PluginTargets = @("HotelUtilKR", "TradeUtilKR", "CharacterUtilKR", "WorldMapKR", "ShipSkinKR", "PatchUtilKR", "ModUtilKR", "QuestModKR", "UpdateUtilKR", "FatigueUtilKR", "HotkeyUtilKR", "HintUtilKR", "MarketUtilKR", "SaveUtilKR", "CityPicKR", "DialogUtilKR")
 
 function Write-Step($msg) {
     Write-Host "==> $msg" -ForegroundColor Cyan
@@ -170,6 +170,23 @@ foreach ($data in $DataFiles) {
     } else {
         Copy-Item $data -Destination $dst -Force
         Write-Host "복사 완료: $dst" -ForegroundColor Green
+    }
+}
+
+# DialogUtilKR 이 읽는 대사 파일은 폴더째 둔다 (CDS95Util\dialogs\*.json).
+# 여기도 이미 있는 파일은 덮지 않는다 — 사용자가 고쳐 쓴 대사를 지우면 안 된다.
+$DialogSrc = Join-Path $PluginsSrc "DialogUtilKR\dialogs"
+if (Test-Path $DialogSrc) {
+    $DialogDst = Join-Path $UtilDir "dialogs"
+    if (-not (Test-Path $DialogDst)) { New-Item -ItemType Directory -Path $DialogDst | Out-Null }
+    foreach ($f in (Get-ChildItem $DialogSrc -Filter "*.json" -File)) {
+        $dst = Join-Path $DialogDst $f.Name
+        if (Test-Path $dst) {
+            Write-Host "그대로 둠: $dst (이미 있음 — 고쳐 쓴 것을 덮지 않는다)" -ForegroundColor DarkGray
+        } else {
+            Copy-Item $f.FullName -Destination $dst -Force
+            Write-Host "복사 완료: $dst" -ForegroundColor Green
+        }
     }
 }
 
