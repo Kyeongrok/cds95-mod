@@ -201,5 +201,26 @@
   > 86 → 64 → 48 → 32 로 줄여 가며 자동으로 다시 시도합니다.
   > 바뀐 그림은 게임에서 **그 도시에 다시 들어갈 때** 나옵니다.
 
-> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin` 만 포함됩니다.
+- **DialogUtilKR** — "파일 > 모드 > 대사". 게임 문구를 `CDS95Util\dialogs\*.json` 에 적어 둔 대로
+  **메모리에서** 갈아 끼웁니다(EXE 파일은 안 건드리므로 게임을 끄면 원래대로). 한국어 문구가
+  EXE 안에 CP949 그대로 있어서 가능한 일입니다. 새 글이 원래 자리에 들면 그 자리에 쓰고,
+  넘으면 따로 잡은 자리에 두고 **그 문구를 가리키던 포인터를 전부 새 주소로 돌립니다**
+  (데이터 표와 코드의 imm32 양쪽). 켠 채로 json 을 고쳤으면 창에서 **[다시 읽기]**.
+  문구마다 몇 자리를 고쳤는지, 그중 몇이 재배치였는지가 창에 나옵니다.
+- **SkillUtilKR** — "파일 > 모드 > 기능수련". 도시마다 다른 **수련 목록**(기능 13종 + 언어 14종)을
+  **조합 · 교회 · 학자 저택**으로 갈라 고칩니다. 체크를 누르면 **지금 하는 게임에 바로 먹고**
+  (세이브에도 들어갑니다) 동시에 다음 새 게임에도 먹습니다. 누를 때마다 `CDS95Util\skills.json`
+  에 적어 두고, 게임을 다시 켜면 플러그인이 그 파일을 다시 발라 줍니다.
+  **[이 줄 원래대로] / [전체 되돌리기]** 로 EXE 원래 값으로 돌릴 수 있고, 이미 하던 세이브에
+  밀어 넣으려면 **[지금 게임에 넣기]** 입니다.
+- **BookUtilKR** — "파일 > 모드 > 서적". 도서관 서적 **257권**을 한 판에 늘어놓습니다(읽기 전용).
+  **어느 도서관에 꽂혀 있는지**(함대에서 가까운 순, 지금 있는 도시 표시), **무슨 힌트를 주는지**
+  (힌트 이름 · 분류 · 이미 얻었는지), **무슨 언어로 쓰였는지**와 **우리 함대에서 그 언어를 제일
+  잘하는 사람의 레벨**(3 이라야 읽힙니다)이 함께 나옵니다.
+  책등 색은 게임이 쓰는 판정을 그대로 불러 **파랑(읽으면 새 힌트) / 빨강(조건 미달) /
+  초록(줄 힌트 없음)** 으로 표시합니다 — 초록은 "읽었다" 가 아니라 "이 책이 줄 새 힌트가
+  없다" 는 뜻이라, 다른 데서 힌트를 먼저 얻으면 안 편 책도 초록이 됩니다.
+  추리기는 **전체 / 힌트 있는 책 / 파랑 / 빨강 / 초록 / 지금 도시** 여섯입니다.
+
+> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
