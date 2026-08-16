@@ -1,7 +1,7 @@
 #include <windows.h>
-#include <commctrl.h>
 #include <commdlg.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <wchar.h>
 #include "btnwin.h"
 #include "band.h"
@@ -16,66 +16,95 @@
 //   색      게임 공용 색표
 //
 // 게임 화면은 건드리지 않는다. 만든 그림은 PNG 로 저장하거나 클립보드로 복사한다.
+//
+// **콤보 상자는 쓰지 않는다.** 처음에는 종류·글자색·그림자·배율을 콤보로 뒀는데, 게임 안에서
+// 콤보를 고르면 게임이 그 자리에서 죽었다(창 단독으로는 멀쩡했다). 콤보는 목록을 펼 때
+// 게임 창 위에 별도 팝업 창을 띄우고 제 모달 루프를 돌리는데, 그동안 게임의 메시지 루프가
+// 멈춰서 DirectDraw 쪽이 버티지 못하는 것으로 보인다. 라디오 버튼은 그냥 자식 창이라
+// 팝업도 모달 루프도 없다 — 그래서 전부 라디오로 바꿨다.
 
 #define ID_BTN_OPEN 0xC500u   // "파일>모드>버튼 만들기"
                               // (… Skill=0xC200, Book=0xC300, ShipInfo=0xC400 과 안 겹치게)
 
-#define ID_STYLE   1001
-#define ID_TEXT    1002
-#define ID_AUTO    1003
-#define ID_CELLS   1004
-#define ID_COLOR   1005
-#define ID_SHADOW  1006
-#define ID_ZOOM    1007
-#define ID_SAVE    1010
-#define ID_COPY    1011
-#define ID_STATUS  1012
+#define ID_TEXT     1002
+#define ID_AUTO     1003
+#define ID_CELLS    1004
+#define ID_SAVE     1010
+#define ID_COPY     1011
+#define ID_STATUS   1012
+
+// 라디오 묶음 — 각 묶음의 첫 ID 부터 개수만큼 이어 쓴다.
+#define ID_STYLE0   1100
+#define ID_COLOR0   1110
+#define ID_SHADOW0  1120
+#define ID_ZOOM0    1130
 
 #define PREVIEW_X   16
-#define PREVIEW_Y   118
-#define PREVIEW_W   700
-#define PREVIEW_H   130
+#define PREVIEW_Y   142
+#define PREVIEW_W   716
+#define PREVIEW_H   150
 #define TEXT_MARGIN 24        // 자동 폭일 때 글자 양옆으로 띄우는 픽셀.
                               // 끝 조각이 16px 이므로 24 면 장식과 글자 사이가 8px 뜬다.
 
 static HINSTANCE g_hinst = NULL;
-static HWND g_win = NULL, g_style = NULL, g_text = NULL, g_auto = NULL, g_cells = NULL;
-static HWND g_color = NULL, g_shadow = NULL, g_zoom = NULL, g_status = NULL;
+static HWND g_win = NULL, g_text = NULL, g_auto = NULL, g_cells = NULL, g_status = NULL;
 
 static unsigned char g_idx[BAND_MAX_PIX];
 static unsigned char g_pix[BAND_MAX_PIX * 3];
 static int           g_w = 0;                  // 마지막으로 지은 띠의 폭
-static int           g_busy = 0;               // Rebuild 안에서 칸 수를 고쳐 쓸 때 EN_CHANGE 되돌이 막기
+static int           g_busy = 0;               // 칸 수를 고쳐 쓸 때 EN_CHANGE 되돌이 막기
 
 static const wchar_t* kStyleName[SKIN_STYLES] = {
-    L"진홍 장식 — 타이틀", L"베이지 — 버튼", L"회녹색 — 다른 상태"
+    L"진홍 — 타이틀", L"베이지 — 버튼", L"회녹색 — 다른 상태"
 };
 
 // 고를 수 있는 글자색(게임 공용 색표의 색인). 화면에서 되짚은 값이 첫 둘이다 —
 // 타이틀 글자는 26, 베이지 버튼 글자는 17 이었다.
 typedef struct { const wchar_t* name; unsigned char idx; } ColorRow;
 static const ColorRow kColors[] = {
-    { L"크림 (타이틀 기본)", 26 },
-    { L"짙은 갈색 (버튼 기본)", 17 },
-    { L"흰빛",  10 },
-    { L"검정",  74 },
-    { L"밝은 살구", 41 },
-    { L"회색",  21 },
+    { L"크림",     26 },
+    { L"짙은갈색", 17 },
+    { L"흰빛",     10 },
+    { L"검정",     74 },
+    { L"살구",     41 },
+    { L"회색",     21 },
 };
 #define COLOR_N ((int)(sizeof(kColors)/sizeof(kColors[0])))
 
 static const wchar_t* kShadowName[3] = { L"없음", L"어둡게", L"밝게" };
 static const unsigned char kShadowIdx[3] = { 0, 74, 42 };
+static const wchar_t* kZoomName[4] = { L"1배", L"2배", L"3배", L"4배" };
+#define ZOOM_N 4
 
-static int Sel(HWND cb) { int i = (int)SendMessageW(cb, CB_GETCURSEL, 0, 0); return i < 0 ? 0 : i; }
+// DebugView 로 어디까지 갔는지 본다.
+static void Log(const wchar_t* fmt, ...)
+{
+    wchar_t buf[512];
+    va_list ap;
+    lstrcpyW(buf, L"[ButtonMakerKR] ");
+    va_start(ap, fmt);
+    wvsprintfW(buf + lstrlenW(buf), fmt, ap);
+    va_end(ap);
+    OutputDebugStringW(buf);
+}
+
+// 라디오 묶음에서 고른 칸. 아무것도 안 눌려 있으면 0.
+static int Radio(int base, int n)
+{
+    int i;
+    if (!g_win) return 0;
+    for (i = 0; i < n; i++)
+        if (SendMessageW(GetDlgItem(g_win, base + i), BM_GETCHECK, 0, 0) == BST_CHECKED) return i;
+    return 0;
+}
 
 static void SetStatus(const wchar_t* s) { if (g_status) SetWindowTextW(g_status, s); }
 
 // 창의 값으로 띠를 다시 짓는다. 성공하면 g_w 가 0 보다 크다.
-static void Rebuild(void)
+static void RebuildCore(void)
 {
     wchar_t text[256], num[32], msg[256];
-    int style, cells, zoom, sh;
+    int style, cells, zoom, sh, ci;
 
     if (g_busy) return;                 // 아래에서 칸 수를 고쳐 쓰면 EN_CHANGE 가 또 들어온다
     g_busy = 1;
@@ -83,9 +112,13 @@ static void Rebuild(void)
     g_w = 0;
     if (!MiscSkin_Ready()) { SetStatus(L"MISC.CDS 파트 4 를 못 읽었습니다."); g_busy = 0; return; }
 
+    text[0] = 0;
     GetWindowTextW(g_text, text, 256);
-    style = Sel(g_style);
-    sh = Sel(g_shadow);
+    style = Radio(ID_STYLE0, SKIN_STYLES);
+    sh    = Radio(ID_SHADOW0, 3);
+    ci    = Radio(ID_COLOR0, COLOR_N);
+    zoom  = Radio(ID_ZOOM0, ZOOM_N) + 1;
+    Log(L"rebuild: style=%d color=%d shadow=%d zoom=%d text=[%s]", style, ci, sh, zoom, text);
 
     if (SendMessageW(g_auto, BM_GETCHECK, 0, 0) == BST_CHECKED) {
         cells = Band_AutoCells(text, TEXT_MARGIN);
@@ -93,6 +126,7 @@ static void Rebuild(void)
         SetWindowTextW(g_cells, num);
         EnableWindow(g_cells, FALSE);
     } else {
+        num[0] = 0;
         GetWindowTextW(g_cells, num, 32);
         cells = _wtoi(num);
         EnableWindow(g_cells, TRUE);
@@ -100,21 +134,32 @@ static void Rebuild(void)
     if (cells < 1) cells = 1;
     if (cells > BAND_MAX_CELLS) cells = BAND_MAX_CELLS;
 
-    g_w = Band_Build(style, text, cells,
-                     kColors[Sel(g_color)].idx,
-                     sh != 0, kShadowIdx[sh], g_idx);
+    g_w = Band_Build(style, text, cells, kColors[ci].idx, sh != 0, kShadowIdx[sh], g_idx);
     if (!g_w) { SetStatus(L"띠를 못 지었습니다."); g_busy = 0; return; }
 
     Band_ToBgr(g_idx, g_w, SKIN_H, g_pix);
-    zoom = Sel(g_zoom) + 1;
     wsprintfW(msg, L"%d x %d 픽셀 (가운데 조각 %d칸)   미리보기 %d배%s",
               g_w, SKIN_H, cells, zoom,
               GameFont_Ready() ? L"" : L"   ※ 글꼴 파일을 못 읽어 글자가 안 나옵니다");
     SetStatus(msg);
+    Log(L"rebuild: done w=%d", g_w);
     g_busy = 0;
 }
 
-static void PaintPreview(HDC dc)
+// 1997년 게임 프로세스 안이라 여기서 죽으면 게임까지 같이 간다.
+// 터지면 잡아서 로그만 남기고 창을 살려 둔다.
+static void Rebuild(void)
+{
+    __try {
+        RebuildCore();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_busy = 0; g_w = 0;
+        Log(L"!! rebuild 에서 예외 0x%08X", GetExceptionCode());
+        SetStatus(L"띠를 짓다가 문제가 생겼습니다(로그 참고).");
+    }
+}
+
+static void PaintPreviewCore(HDC dc)
 {
     BITMAPINFO bi;
     RECT r;
@@ -130,7 +175,7 @@ static void PaintPreview(HDC dc)
 
     if (g_w <= 0) return;
 
-    zoom = Sel(g_zoom) + 1;
+    zoom = Radio(ID_ZOOM0, ZOOM_N) + 1;
     dw = g_w * zoom;
     dh = SKIN_H * zoom;
     x = PREVIEW_X + (PREVIEW_W - dw) / 2;
@@ -152,6 +197,15 @@ static void PaintPreview(HDC dc)
     SelectClipRgn(dc, NULL);
 }
 
+static void PaintPreview(HDC dc)
+{
+    __try {
+        PaintPreviewCore(dc);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log(L"!! paint 에서 예외 0x%08X", GetExceptionCode());
+    }
+}
+
 // ---------------------------------------------------------------- 내보내기
 
 static void SavePng(HWND owner)
@@ -159,6 +213,7 @@ static void SavePng(HWND owner)
     OPENFILENAMEW ofn;
     wchar_t path[MAX_PATH];
     wchar_t text[64];
+    int i;
 
     if (g_w <= 0) return;
     if (!Img_Available()) {
@@ -167,13 +222,11 @@ static void SavePng(HWND owner)
         return;
     }
 
+    text[0] = 0;
     GetWindowTextW(g_text, text, 40);
     if (!text[0]) lstrcpyW(text, L"button");
-    {   // 파일 이름에 못 쓰는 글자를 걷어낸다
-        int i;
-        for (i = 0; text[i]; i++)
-            if (wcschr(L"\\/:*?\"<>|", text[i])) text[i] = L'_';
-    }
+    for (i = 0; text[i]; i++)                    // 파일 이름에 못 쓰는 글자를 걷어낸다
+        if (wcschr(L"\\/:*?\"<>|", text[i])) text[i] = L'_';
     wsprintfW(path, L"%s.png", text);
 
     ZeroMemory(&ofn, sizeof(ofn));
@@ -236,68 +289,62 @@ static void CopyToClipboard(HWND owner)
 
 // ---------------------------------------------------------------- 창
 
+static HFONT g_font = NULL;
+
 static HWND Mk(const wchar_t* cls, const wchar_t* txt, DWORD st, int x, int y, int w, int h, int id, HWND par)
 {
-    return CreateWindowExW(0, cls, txt, WS_CHILD | WS_VISIBLE | st,
-                           x, y, w, h, par, (HMENU)(INT_PTR)id, g_hinst, NULL);
+    HWND c = CreateWindowExW(0, cls, txt, WS_CHILD | WS_VISIBLE | st,
+                             x, y, w, h, par, (HMENU)(INT_PTR)id, g_hinst, NULL);
+    if (c && g_font) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
+    return c;
+}
+
+// 라디오 한 묶음. 첫 칸에 WS_GROUP 을 줘서 화살표가 묶음 안에서만 돈다.
+static void MkRadios(HWND par, int base, const wchar_t* const* names, int n,
+                     int x, int y, int w, int sel)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        HWND c = Mk(L"BUTTON", names[i], BS_AUTORADIOBUTTON | (i == 0 ? WS_GROUP : 0),
+                    x + i * w, y, w - 6, 20, base + i, par);
+        if (c && i == sel) SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
+    }
 }
 
 static void MakeControls(HWND h)
 {
-    HFONT f = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    const wchar_t* colorNames[COLOR_N];
     int i;
-    HWND all[16];
-    int n = 0;
 
-    all[n++] = Mk(L"STATIC", L"종류", 0, 16, 16, 44, 20, 0, h);
-    g_style = Mk(L"COMBOBOX", NULL, CBS_DROPDOWNLIST | WS_VSCROLL, 64, 12, 200, 200, ID_STYLE, h);
-    all[n++] = g_style;
+    g_font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
-    all[n++] = Mk(L"STATIC", L"글자", 0, 16, 48, 44, 20, 0, h);
-    g_text = Mk(L"EDIT", L"귀족 저택", WS_BORDER | ES_AUTOHSCROLL, 64, 44, 200, 22, ID_TEXT, h);
-    all[n++] = g_text;
+    Mk(L"STATIC", L"종류", 0, 16, 18, 44, 20, 0, h);
+    MkRadios(h, ID_STYLE0, kStyleName, SKIN_STYLES, 66, 16, 150, 0);
 
-    g_auto = Mk(L"BUTTON", L"폭 자동", BS_AUTOCHECKBOX, 16, 80, 80, 20, ID_AUTO, h);
-    all[n++] = g_auto;
-    g_cells = Mk(L"EDIT", L"15", WS_BORDER | ES_NUMBER, 104, 78, 48, 22, ID_CELLS, h);
-    all[n++] = g_cells;
-    all[n++] = Mk(L"STATIC", L"칸 (가운데 8픽셀 조각 수)", 0, 158, 82, 180, 20, 0, h);
+    Mk(L"STATIC", L"글자", 0, 16, 50, 44, 20, 0, h);
+    g_text = Mk(L"EDIT", L"귀족 저택", WS_BORDER | ES_AUTOHSCROLL, 66, 46, 250, 22, ID_TEXT, h);
 
-    all[n++] = Mk(L"STATIC", L"글자색", 0, 300, 16, 52, 20, 0, h);
-    g_color = Mk(L"COMBOBOX", NULL, CBS_DROPDOWNLIST | WS_VSCROLL, 356, 12, 170, 220, ID_COLOR, h);
-    all[n++] = g_color;
-
-    all[n++] = Mk(L"STATIC", L"그림자", 0, 300, 48, 52, 20, 0, h);
-    g_shadow = Mk(L"COMBOBOX", NULL, CBS_DROPDOWNLIST, 356, 44, 170, 160, ID_SHADOW, h);
-    all[n++] = g_shadow;
-
-    all[n++] = Mk(L"STATIC", L"미리보기", 0, 552, 16, 60, 20, 0, h);
-    g_zoom = Mk(L"COMBOBOX", NULL, CBS_DROPDOWNLIST, 616, 12, 100, 160, ID_ZOOM, h);
-    all[n++] = g_zoom;
-
-    Mk(L"BUTTON", L"PNG 저장", 0, 16, 262, 110, 26, ID_SAVE, h);
-    Mk(L"BUTTON", L"클립보드 복사", 0, 136, 262, 130, 26, ID_COPY, h);
-    g_status = Mk(L"STATIC", L"", 0, 280, 268, 436, 20, ID_STATUS, h);
-
-    for (i = 0; i < SKIN_STYLES; i++) SendMessageW(g_style, CB_ADDSTRING, 0, (LPARAM)kStyleName[i]);
-    for (i = 0; i < COLOR_N; i++)     SendMessageW(g_color, CB_ADDSTRING, 0, (LPARAM)kColors[i].name);
-    for (i = 0; i < 3; i++)           SendMessageW(g_shadow, CB_ADDSTRING, 0, (LPARAM)kShadowName[i]);
-    SendMessageW(g_zoom, CB_ADDSTRING, 0, (LPARAM)L"1배");
-    SendMessageW(g_zoom, CB_ADDSTRING, 0, (LPARAM)L"2배");
-    SendMessageW(g_zoom, CB_ADDSTRING, 0, (LPARAM)L"3배");
-    SendMessageW(g_zoom, CB_ADDSTRING, 0, (LPARAM)L"4배");
-    SendMessageW(g_style, CB_SETCURSEL, 0, 0);
-    SendMessageW(g_color, CB_SETCURSEL, 0, 0);
-    SendMessageW(g_shadow, CB_SETCURSEL, 0, 0);
-    SendMessageW(g_zoom, CB_SETCURSEL, 2, 0);
+    g_auto  = Mk(L"BUTTON", L"폭 자동", BS_AUTOCHECKBOX | WS_GROUP, 336, 48, 80, 20, ID_AUTO, h);
+    g_cells = Mk(L"EDIT", L"11", WS_BORDER | ES_NUMBER, 422, 46, 48, 22, ID_CELLS, h);
+    Mk(L"STATIC", L"칸 (가운데 8픽셀 조각 수)", 0, 478, 50, 200, 20, 0, h);
     SendMessageW(g_auto, BM_SETCHECK, BST_CHECKED, 0);
 
-    // 라벨과 입력칸 글꼴을 창 기본으로 맞춘다
-    for (i = 0; i < n; i++) SendMessageW(all[i], WM_SETFONT, (WPARAM)f, TRUE);
-    SendMessageW(GetDlgItem(h, ID_SAVE),   WM_SETFONT, (WPARAM)f, TRUE);
-    SendMessageW(GetDlgItem(h, ID_COPY),   WM_SETFONT, (WPARAM)f, TRUE);
-    SendMessageW(g_status, WM_SETFONT, (WPARAM)f, TRUE);
+    for (i = 0; i < COLOR_N; i++) colorNames[i] = kColors[i].name;
+    Mk(L"STATIC", L"글자색", 0, 16, 82, 52, 20, 0, h);
+    MkRadios(h, ID_COLOR0, colorNames, COLOR_N, 74, 80, 96, 0);
+
+    Mk(L"STATIC", L"그림자", 0, 16, 114, 52, 20, 0, h);
+    MkRadios(h, ID_SHADOW0, kShadowName, 3, 74, 112, 86, 0);
+
+    Mk(L"STATIC", L"미리보기", 0, 350, 114, 60, 20, 0, h);
+    MkRadios(h, ID_ZOOM0, kZoomName, ZOOM_N, 414, 112, 62, 2);
+
+    Mk(L"BUTTON", L"PNG 저장", WS_GROUP, 16, 306, 110, 26, ID_SAVE, h);
+    Mk(L"BUTTON", L"클립보드 복사", 0, 136, 306, 130, 26, ID_COPY, h);
+    g_status = Mk(L"STATIC", L"", 0, 280, 312, 452, 20, ID_STATUS, h);
 }
+
+static int InGroup(int id, int base, int n) { return id >= base && id < base + n; }
 
 static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
@@ -309,9 +356,22 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
 
     case WM_COMMAND: {
         int id = LOWORD(w), code = HIWORD(w);
-        if (id == ID_SAVE && code == BN_CLICKED) { SavePng(h); return 0; }
-        if (id == ID_COPY && code == BN_CLICKED) { CopyToClipboard(h); return 0; }
-        if ((code == CBN_SELCHANGE) || (code == EN_CHANGE) || (id == ID_AUTO && code == BN_CLICKED)) {
+        Log(L"WM_COMMAND id=%d code=%d", id, code);
+        if (id == ID_SAVE && code == BN_CLICKED) {
+            __try { SavePng(h); } __except (EXCEPTION_EXECUTE_HANDLER) { Log(L"!! PNG 저장 예외 0x%08X", GetExceptionCode()); }
+            return 0;
+        }
+        if (id == ID_COPY && code == BN_CLICKED) {
+            __try { CopyToClipboard(h); } __except (EXCEPTION_EXECUTE_HANDLER) { Log(L"!! 클립보드 예외 0x%08X", GetExceptionCode()); }
+            return 0;
+        }
+        if (code == EN_CHANGE ||
+            (code == BN_CLICKED &&
+             (id == ID_AUTO ||
+              InGroup(id, ID_STYLE0,  SKIN_STYLES) ||
+              InGroup(id, ID_COLOR0,  COLOR_N)     ||
+              InGroup(id, ID_SHADOW0, 3)           ||
+              InGroup(id, ID_ZOOM0,   ZOOM_N)))) {
             Rebuild();
             InvalidateRect(h, NULL, FALSE);
             return 0;
@@ -372,8 +432,9 @@ static void BtnWin_Show(HWND owner)
     }
     g_win = CreateWindowExW(0, L"ButtonMakerKRWin", L"버튼 만들기 — ButtonMakerKR",
                 WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-                CW_USEDEFAULT, CW_USEDEFAULT, 748, 350, owner, NULL, g_hinst, NULL);
+                CW_USEDEFAULT, CW_USEDEFAULT, 764, 400, owner, NULL, g_hinst, NULL);
     if (g_win) { ShowWindow(g_win, SW_SHOW); UpdateWindow(g_win); }
+    Log(L"창 열기 %s", g_win ? L"OK" : L"실패");
 }
 
 // ================================================================== 메뉴 설치 + 서브클래싱

@@ -14,7 +14,9 @@ target_include_directories(ButtonMakerKR PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src   # ls12.h · imgio.h · game_palette.h
 )
 
-target_link_libraries(ButtonMakerKR PRIVATE user32 gdi32 comctl32 comdlg32)
+# comdlg32: PNG 저장 대화상자. gdiplus 는 링크하지 않고 실행 중에 부른다(imgio.c).
+# comctl32 는 안 쓴다 — 표준 컨트롤(COMBOBOX/EDIT/BUTTON/STATIC)만 쓰므로 걸지 않는다.
+target_link_libraries(ButtonMakerKR PRIVATE user32 gdi32 comdlg32)
 
 target_compile_definitions(ButtonMakerKR PRIVATE UNICODE _UNICODE)
 
