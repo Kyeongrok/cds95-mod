@@ -222,5 +222,13 @@
   없다" 는 뜻이라, 다른 데서 힌트를 먼저 얻으면 안 편 책도 초록이 됩니다.
   추리기는 **전체 / 힌트 있는 책 / 파랑 / 빨강 / 초록 / 지금 도시** 여섯입니다.
 
-> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin` 만 포함됩니다.
+- **ShipInfoKR** — "파일 > 모드 > 선체". 조선소 구입 창에는 배 그림이 없습니다. 그런데 게임
+  폴더의 `SHIPSTIL.CDS` 안에 **320x240 배 그림 6장**이 그대로 들어 있어서, 그걸 풀어
+  선체 8종을 그림과 함께 보여줍니다(읽기 전용).
+  왼쪽에서 선체를 고르면 **배 그림**과 **내구력 · 추진력 · 적재용량 · 적재중량 · 필요승인 ·
+  대포수**, 그리고 **그 배를 파는 조선소 도시 목록**이 나옵니다.
+  그림이 여섯 장인데 선체는 여덟 종이라 짝은 눈으로 맞췄습니다 — 창의 **[◀ 그림 N/6 ▶]**
+  으로 넘겨 볼 수 있습니다.
+
+> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
