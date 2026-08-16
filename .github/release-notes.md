@@ -229,6 +229,15 @@
   대포수**, 그리고 **그 배를 파는 조선소 도시 목록**이 나옵니다.
   그림이 여섯 장인데 선체는 여덟 종이라 짝은 눈으로 맞췄습니다 — 창의 **[◀ 그림 N/6 ▶]**
   으로 넘겨 볼 수 있습니다.
+- **ButtonMakerKR** — "파일 > 모드 > 버튼 만들기". 게임의 메뉴 타이틀·버튼 띠를 **글자만
+  바꿔 그대로 만들어 줍니다**. 종류(**진홍 장식**=타이틀 · **베이지**=버튼 · **회녹색**)를
+  고르고 글자를 치면 미리보기가 바로 바뀌고, **[PNG 저장]** 또는 **[클립보드 복사]** 로
+  꺼내 씁니다. 게임 화면은 건드리지 않고 파일도 읽기만 합니다.
+  띠는 게임이 짓는 방식 그대로입니다 — `MISC.CDS` 파트 4 의 **왼끝(16x24) + 가운데(8x24)를
+  폭만큼 되풀이 + 오른끝(16x24)**, 그래서 높이는 늘 24 이고 폭은 `16 + 8 x 칸 + 16` 입니다.
+  글자도 윈도 글꼴이 아니라 **게임 비트맵 글꼴 그대로**(`ALL_FONT.16P` 16x14 한글 2,350자,
+  `ANKFONT.DAT` 8x16 ASCII)라 화면에 찍히는 것과 한 점도 다르지 않습니다.
+  폭은 글자에 맞춰 자동으로 잡거나 칸 수로 직접 줄 수 있고, 글자색과 그림자도 고릅니다.
 
-> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin` 만 포함됩니다.
+> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
