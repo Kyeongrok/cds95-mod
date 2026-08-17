@@ -22,16 +22,29 @@
 #define ID_FILTER_N 6
 #define ID_DETAIL   1020
 #define ID_STATUS   1021
+#define ID_CITY     1030
+#define ID_CITYLBL  1031
 
 #define TOP_H     28
 #define DETAIL_H  190
 #define BOT_H     24
+#define CITY_W    172       // 왼쪽 도시 목록 너비
 
 static HINSTANCE g_hinst = NULL;
 static HWND      g_win = NULL, g_list = NULL, g_detail = NULL, g_status = NULL;
+static HWND      g_cityList = NULL;
 static int       g_filter = 0;
 static int       g_map[BOOK_N];
 static int       g_rows = 0;
+
+// 왼쪽 도시 목록 — 책이 한 권이라도 놓인 도시만 담는다.
+// 콤보박스는 쓰지 않는다. 게임 DirectDraw 화면 위에서 펼칠 때 별도 최상위 창을 띄우고
+// 캡처·포커스를 가져가 게임이 죽는다(TradeUtilKR·CharacterUtilKR 이 같은 이유로 피한다).
+// 리스트박스는 그냥 자식 창이라 안전하다.
+#define CITY_MAX  256
+static int       g_cityIds[CITY_MAX];   // 목록 줄(0번 "전체" 제외) -> 도시 번호
+static int       g_cityN = 0;
+static int       g_cityPick = -1;       // 고른 도시. -1 이면 전체
 
 static const wchar_t* kFilterName[ID_FILTER_N] = {
     L"전체", L"힌트 있는 책", L"파랑(읽으면 힌트)", L"빨강(조건 미달)", L"초록(볼 일 없음)", L"지금 도시"
@@ -45,6 +58,17 @@ static const wchar_t* CityName(int c)
 static const wchar_t* LangName(int v)
 {
     return (v >= 0) ? SkillDb_LangName(v) : L"—";
+}
+
+// DebugView 로 도시 고르기가 어디서 어긋나는지 본다.
+static void LogW(const wchar_t* fmt, ...)
+{
+    wchar_t buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    wvsprintfW(buf, fmt, ap);
+    va_end(ap);
+    OutputDebugStringW(buf);
 }
 
 // 안전한 이어 붙이기 — 넘치면 조용히 자른다.
@@ -80,6 +104,56 @@ static int InFilter(int k)
     }
     default: return 1;
     }
+}
+
+// 고른 도시에 놓인 책인가. 안 골랐으면 다 통과.
+static int InCityPick(int k)
+{
+    int i;
+    if (g_cityPick < 0) return 1;
+    for (i = 0; i < BOOK_SLOTS; i++)
+        if (Book_City(k, i) == g_cityPick) return 1;
+    return 0;
+}
+
+// 책이 놓인 도시를 모아 왼쪽 목록을 채운다. 도시마다 몇 권인지 같이 적고,
+// 도서관 건물이 없는 도시는 ※ 로 표시한다(상세 창의 표기와 같다).
+static void BuildCityList(void)
+{
+    static unsigned char seen[CITY_MAX];
+    static short count[CITY_MAX];
+    int k, i, c, row;
+
+    if (!g_cityList) return;
+    ZeroMemory(seen, sizeof(seen));
+    ZeroMemory(count, sizeof(count));
+    g_cityN = 0;
+
+    for (k = 0; k < Book_Count(); k++)
+        for (i = 0; i < BOOK_SLOTS; i++) {
+            c = Book_City(k, i);
+            if (c < 0 || c >= CITY_MAX) continue;
+            if (!seen[c]) seen[c] = 1;
+            count[c]++;
+        }
+
+    SendMessageW(g_cityList, LB_RESETCONTENT, 0, 0);
+    SendMessageW(g_cityList, LB_ADDSTRING, 0, (LPARAM)L"(전체 도시)");
+    for (c = 0; c < CITY_MAX; c++) {
+        wchar_t s[96];
+        if (!seen[c]) continue;
+        wsprintfW(s, L"%s  %d권%s", CityName(c), count[c],
+                  Book_CityHasLibrary(c) == 0 ? L"  ※" : L"");
+        row = (int)SendMessageW(g_cityList, LB_ADDSTRING, 0, (LPARAM)s);
+        // 줄 번호와 도시 번호를 줄 자체에 붙여 둔다. 곁 배열로 맞추면 한 줄만 어긋나도
+        // 엉뚱한 도시가 걸리므로, 목록이 스스로 들고 있게 한다.
+        if (row >= 0) SendMessageW(g_cityList, LB_SETITEMDATA, (WPARAM)row, (LPARAM)c);
+        if (g_cityN < CITY_MAX) g_cityIds[g_cityN++] = c;
+    }
+    SendMessageW(g_cityList, LB_SETCURSEL, 0, 0);
+    g_cityPick = -1;
+    LogW(L"[BookUtilKR] 도시 목록 %d곳 (줄 %d개)", g_cityN,
+         (int)SendMessageW(g_cityList, LB_GETCOUNT, 0, 0));
 }
 
 static void CitiesText(int k, wchar_t* out, int cap)
@@ -124,6 +198,11 @@ static void SetStatus(void)
     else
         wsprintfW(s, L"서적 %d권 · 힌트 있는 책 %d권 · (세이브를 불러오기 전이라 색·힌트 상태는 모릅니다)",
                   Book_Count(), withHint);
+    if (g_cityPick >= 0) {
+        wchar_t t[128];
+        wsprintfW(t, L"   ◀ %s 에 놓인 책만", CityName(g_cityPick));
+        Cat(s, 512, t);
+    }
     SetWindowTextW(g_status, s);
 }
 
@@ -136,7 +215,7 @@ static void FillList(void)
         LVITEMW it;
         wchar_t buf[1024];
         int col;
-        if (!InFilter(k)) continue;
+        if (!InFilter(k) || !InCityPick(k)) continue;
         ZeroMemory(&it, sizeof(it));
         it.mask = LVIF_TEXT | LVIF_PARAM;
         it.iItem = g_rows; it.iSubItem = 0;
@@ -253,6 +332,14 @@ static void CreateChildren(HWND h)
             0, 0, 10, 10, h, (HMENU)(UINT_PTR)(ID_FILTER0 + i), g_hinst, NULL);
     SendMessageW(GetDlgItem(h, ID_FILTER0), BM_SETCHECK, BST_CHECKED, 0);
 
+    CreateWindowExW(0, L"STATIC", L"도시로 추리기 (※ = 도서관 건물 없음)",
+                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+                0, 0, 10, 10, h, (HMENU)(UINT_PTR)ID_CITYLBL, g_hinst, NULL);
+    g_cityList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_GROUP |
+                LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+                0, 0, 10, 10, h, (HMENU)(UINT_PTR)ID_CITY, g_hinst, NULL);
+
     g_detail = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_GROUP |
                 ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
@@ -282,7 +369,9 @@ static void LayoutChildren(HWND h, int cw, int ch)
     if (listH < 80) listH = 80;
     for (i = 0; i < ID_FILTER_N; i++)
         MoveWindow(GetDlgItem(h, ID_FILTER0 + i), 8 + i * 138, 5, 134, 20, TRUE);
-    MoveWindow(g_list, 6, TOP_H, cw - 12, listH, TRUE);
+    MoveWindow(GetDlgItem(h, ID_CITYLBL), 8 + ID_FILTER_N * 138, 7, 300, 18, TRUE);
+    MoveWindow(g_cityList, 6, TOP_H, CITY_W, listH, TRUE);
+    MoveWindow(g_list, 6 + CITY_W + 6, TOP_H, cw - CITY_W - 24, listH, TRUE);
     dw = cw - 12; if (dw < 100) dw = 100;
     MoveWindow(g_detail, 6, TOP_H + listH + 4, dw, DETAIL_H, TRUE);
     MoveWindow(g_status, 8, ch - BOT_H + 4, dw, 16, TRUE);
@@ -294,6 +383,7 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_CREATE:
         g_win = h;
         CreateChildren(h);
+        BuildCityList();
         FillList();
         ShowDetail(-1);
         return 0;
@@ -319,11 +409,26 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
             FillList();
             ShowDetail(-1);
         }
+        if (id == ID_CITY && HIWORD(w) == LBN_SELCHANGE) {
+            int sel = (int)SendMessageW(g_cityList, LB_GETCURSEL, 0, 0);
+            // 0번 줄이 "(전체 도시)". 도시 번호는 줄에 붙여 둔 값에서 꺼낸다.
+            LRESULT dat = (sel > 0) ? SendMessageW(g_cityList, LB_GETITEMDATA, (WPARAM)sel, 0)
+                                    : (LRESULT)-1;
+            g_cityPick = (sel <= 0 || dat == LB_ERR || dat < 0) ? -1 : (int)dat;
+            LogW(L"[BookUtilKR] 도시 고름: 줄=%d 데이터=%d -> 도시=%d",
+                 sel, (int)dat, g_cityPick);
+            FillList();
+            ShowDetail(-1);
+            LogW(L"[BookUtilKR] 걸러낸 줄 %d개", g_rows);
+        }
         return 0;
     }
 
     case WM_CLOSE:   DestroyWindow(h); return 0;
-    case WM_DESTROY: g_win = NULL; g_list = NULL; g_detail = NULL; g_status = NULL; return 0;
+    case WM_DESTROY:
+        g_win = NULL; g_list = NULL; g_detail = NULL; g_status = NULL;
+        g_cityList = NULL; g_cityPick = -1; g_cityN = 0;
+        return 0;
     }
     return DefWindowProcW(h, m, w, l);
 }
