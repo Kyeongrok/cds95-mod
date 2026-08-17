@@ -43,6 +43,15 @@ void UI_BufEnd(UiBuf* b);
 void UI_VGradient(HDC dc, RECT r, COLORREF top, COLORREF bot);
 void UI_Bevel(HDC dc, RECT r, BOOL sunken);
 void UI_Button(HDC dc, RECT r, const wchar_t* t, BOOL active);
+
+// 단추 그리는 법 갈아 끼우기.
+// UI_Button 은 여기 걸린 것을 먼저 불러 보고, 0 을 돌려주면 원래대로 그린다.
+// (게임 껍데기로 그리려면 ButtonMakerKR/src/gameskin.h 의 GameSkin_Button 을 건다 —
+//  MISC.CDS 를 못 읽는 환경에서도 0 을 돌려주므로 저절로 기본 모양으로 물러난다.)
+void UI_ButtonPlain(HDC dc, RECT r, const wchar_t* t, BOOL active);   // 원래 모양(되돌림용)
+
+typedef int (*UiButtonFn)(HDC dc, RECT r, const wchar_t* t, BOOL active);
+void UI_SetButtonDraw(UiButtonFn fn);   // NULL 이면 기본으로 되돌린다
 void UI_Text(HDC dc, RECT r, const wchar_t* t, HFONT f, COLORREF c, UINT fmt);
 
 // 콤보박스처럼 보이는 눌림 상자 + 오른쪽 ▼. 펼친 목록은 쓰는 쪽이 직접 그린다.

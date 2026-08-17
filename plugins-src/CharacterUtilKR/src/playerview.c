@@ -125,6 +125,21 @@ static RECT RcBtn(int i)
     return r;
 }
 
+// 명성·악명 단추 — 0 명성-1000  1 명성+1000  2 악명-1000  3 악명+1000
+// 이름(+26) 얼굴줄(+21) 나이줄(+21) 다음이 명성 줄이라 패널 위에서 76 픽셀 아래다.
+#define PL_FAME_STEP 1000
+#define PL_FAME_BTN  4
+static RECT RcFameBtn(int i)
+{
+    RECT box = RcInfo(), r;
+    const int w = 62, gap = 4;
+    r.right  = box.right - 10 - (PL_FAME_BTN - 1 - i) * (w + gap);
+    r.left   = r.right - w;
+    r.top    = box.top + 76;
+    r.bottom = r.top + 19;
+    return r;
+}
+
 static int TotalRows(void) { return (g_n + PL_COLS - 1) / PL_COLS; }
 static int MaxScroll(void) { int m = TotalRows() - PL_ROWS; return m > 0 ? m : 0; }
 
@@ -210,6 +225,10 @@ static void PaintHead(HDC dc)
     wsprintfW(buf, L"명성 %d · 악명 %d", fame < 0 ? 0 : fame, infamy < 0 ? 0 : infamy);
     ln.top = y; ln.bottom = y + 20;
     UI_Text(dc, ln, buf, g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    UI_Button(dc, RcFameBtn(0), L"명성 -1000", FALSE);
+    UI_Button(dc, RcFameBtn(1), L"명성 +1000", FALSE);
+    UI_Button(dc, RcFameBtn(2), L"악명 -1000", FALSE);
+    UI_Button(dc, RcFameBtn(3), L"악명 +1000", FALSE);
     y += 24;
 
     ln.top = y; ln.bottom = box.bottom - 34;   // 아래 34 는 단추 줄 몫
@@ -448,6 +467,23 @@ int Pl_Click(HWND h, POINT pt)
     r = RcReload();
     if (PtInRect(&r, pt)) { Pl_Activate(h, 1); return 1; }
     if (!Player_Ready()) return 0;
+
+    for (i = 0; i < PL_FAME_BTN; i++) {   // 명성 ∓1000 · 악명 ∓1000
+        int v;
+        r = RcFameBtn(i);
+        if (!PtInRect(&r, pt)) continue;
+        if (i < 2) {
+            v = Player_AddFame(i == 0 ? -PL_FAME_STEP : PL_FAME_STEP);
+            if (v < 0) lstrcpyW(g_msg, L"명성을 고치지 못했습니다");
+            else       wsprintfW(g_msg, L"명성 %d 이 되었습니다", v);
+        } else {
+            v = Player_AddInfamy(i == 2 ? -PL_FAME_STEP : PL_FAME_STEP);
+            if (v < 0) lstrcpyW(g_msg, L"악명을 고치지 못했습니다");
+            else       wsprintfW(g_msg, L"악명 %d 이 되었습니다", v);
+        }
+        InvalidateRect(h, NULL, FALSE);
+        return 1;
+    }
 
     for (i = 0; i < PL_BTN_N; i++) {   // PNG 내보내기 (넣기 · 끝에 추가는 잠가 뒀다)
         r = RcBtn(i);

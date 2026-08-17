@@ -103,6 +103,11 @@ int  Player_Blood(void);       // 0=A 1=B 2=O 3=AB. 못 읽으면 -1
 int  Player_Job(void);         // 못 읽으면 -1
 int  Player_Fame(void);        // 못 읽으면 -1
 int  Player_Infamy(void);      // 못 읽으면 -1
+// 명성·악명 더하기(빼려면 음수). 0 아래로는 안 내려가고 FAME_MAX 위로는 안 올라간다.
+// 레코드가 세이브에 그대로 들어가므로 게임에서 저장하면 남는다.
+// 바뀐 값을 돌려준다. 못 쓰면 -1.
+int  Player_AddFame(int delta);
+int  Player_AddInfamy(int delta);
 
 // 주인공이 데리고 다니는 네 자리(부관/항해사/측량사/통역).
 // 0x1B61A0 부터 4바이트씩 넷이고, 값은 4096 + 인물 배열 칸 번호, 0xFFFFFFFF 면 비어 있다.

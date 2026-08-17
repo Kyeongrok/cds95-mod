@@ -4,6 +4,7 @@
 #include "marketdb.h"
 #include "itempic.h"   // CharacterUtilKR/src — ITEM.CDS 그림
 #include "uikit.h"     // CharacterUtilKR/src — 세피아 색표와 위젯
+#include "gameskin.h"  // ButtonMakerKR/src — 단추를 게임 껍데기(MISC.CDS 파트 4)로 그린다
 
 // MarketUtilKR — 교역소 매매.
 //   왼쪽: 지금 도시가 파는 것 (그림 + 이름 + 단가 + 공급량 + 담은 수량)
@@ -773,6 +774,9 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
     switch (m) {
     case WM_CREATE:
         UI_CreateFonts();
+        // 단추를 게임 것과 같은 베이지 띠로 갈아 끼운다. MISC.CDS 를 못 읽으면
+        // GameSkin_Button 이 0 을 돌려주므로 저절로 원래 모양으로 물러난다.
+        UI_SetButtonDraw(GameSkin_Button);
         if (!g_priceFont)
             g_priceFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                       DEFAULT_CHARSET, 0, 0, 0, 0, L"바탕");

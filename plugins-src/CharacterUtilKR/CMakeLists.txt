@@ -12,6 +12,11 @@ add_library(CharacterUtilKR SHARED
     src/imgio.c
     src/questjson.c
     src/questdb.c
+    # 단추를 게임 껍데기(MISC.CDS 파트 4)로 그리는 조각 — ButtonMakerKR 것을 같이 빌드한다
+    ../ButtonMakerKR/src/gameskin.c
+    ../ButtonMakerKR/src/band.c
+    ../ButtonMakerKR/src/miscskin.c
+    ../ButtonMakerKR/src/gamefont.c
     src/savedata.c
     src/chardb.c
     src/maids.c
@@ -33,6 +38,8 @@ target_link_libraries(CharacterUtilKR PRIVATE user32 gdi32 comdlg32)
 # 도시 이름표(kCities)는 TradeUtilKR 쪽 cities_data.h 를 그대로 쓴다.
 # 같은 표를 두 벌 두면 한쪽만 고쳐지는 사고가 나므로 복사하지 않고 참조한다.
 target_include_directories(CharacterUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ButtonMakerKR/src   # gameskin.h · band.h …
+    ${CMAKE_CURRENT_SOURCE_DIR}/src                    # 위 조각들이 찾는 ls12.h · game_palette.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../HotkeyUtilKR/src
 )

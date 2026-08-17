@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include "warwin.h"
 #include "landwar.h"
+#include "gameskin.h"   // 창을 게임 껍데기로 입힌다
 
 // LandWarKR — 육상전 부대의 병종을 갈아 끼운다.
 //
@@ -24,18 +25,49 @@
 #define ID_PRESET  1011
 #define ID_CLEAR   1012
 #define ID_ALLOWBIG 1013
+#define ID_SAVE    1014
+#define ID_TGT0    1030      // 예약 대상: 모든 적장 공통
+#define ID_TGT1    1031      // 예약 대상: 이 적장만
 #define ID_DESC    1020
+#define ID_ENEMY   1022
 #define ID_STATUS  1021
 
+#define TITLE_H  28        // 위쪽 제목 띠 몫
 #define UNIT_W   300
 #define TYPE_W   170
-#define LIST_H   260
+#define LIST_H   240
 
 static HINSTANCE g_hinst = NULL;
 static HWND g_win = NULL, g_units = NULL, g_types = NULL, g_desc = NULL, g_status = NULL;
+static HWND g_enemy = NULL;
 static HFONT g_font = NULL;
 
 static void SetStatus(const wchar_t* s) { if (g_status) SetWindowTextW(g_status, s); }
+
+// 예약을 어느 벌에 넣을까 — [이 적장만] 을 골랐고 적장을 읽을 수 있으면 그 id, 아니면 공통.
+static int CurTargetId(void)
+{
+    int id;
+    if (!g_win) return LW_ID_COMMON;
+    if (SendMessageW(GetDlgItem(g_win, ID_TGT1), BM_GETCHECK, 0, 0) != BST_CHECKED)
+        return LW_ID_COMMON;
+    id = LandWar_EnemyId();
+    return (id >= 0) ? id : LW_ID_COMMON;
+}
+
+// 위쪽에 이번 전투의 적장을 적는다.
+static void ShowEnemy(void)
+{
+    wchar_t s[160], nm[64];
+    int id = LandWar_EnemyId();
+    if (!g_enemy) return;
+    if (id < 0) lstrcpyW(s, L"적장: (전투 밖이라 모름) — 지금은 [공통] 예약만 됩니다");
+    else if (LandWar_EnemyName(id, nm, 64))
+        wsprintfW(s, L"적장: %s   (id 0x%X · 갈래 %d · 번호 %d)", nm, id, id >> 12, id & 0xFFF);
+    else
+        wsprintfW(s, L"적장: id 0x%X (갈래 %d · 번호 %d)", id, id >> 12, id & 0xFFF);
+    SetWindowTextW(g_enemy, s);
+}
 
 // 게임 함수는 부르지 않는다 — 전투 밖에서 부르면 객체가 안 서 있어 게임이 죽는다.
 // 부대 레코드를 그냥 읽어서 보여 준다(메모리 읽기라 언제든 안전하다).
@@ -49,7 +81,7 @@ static void FillUnits(void)
     for (i = 0; i < LW_UNIT_N; i++) {
         wchar_t s[160], tail[64];
         int t = LandWar_Type(i);
-        int pre = (i < LW_MINE_N) ? LandWar_Preset(i) : -1;
+        int pre = LandWar_Preset(CurTargetId(), i);
         tail[0] = 0;
         if (pre >= 0) wsprintfW(tail, L"   → %s (예약)", LandWar_TypeName(pre));
         if (live && t >= 0 && t < LW_TYPE_N)
@@ -128,16 +160,22 @@ static void ApplyPreset(void)
     int t    = (int)SendMessageW(g_types, LB_GETCURSEL, 0, 0);
     wchar_t s[256];
     if (slot < 0 || t < 0) { SetStatus(L"칸과 병종을 하나씩 고르세요."); return; }
-    if (slot >= LW_MINE_N) { SetStatus(L"예약은 아군 칸(1~6)만 됩니다."); return; }
     if (!LandWar_TypeOkForSlot(slot, t)) {
         wsprintfW(s, L"%s 는 그림이 커서 아군 칸에 못 넣습니다. [큰 그림 병종 허용]을 켜세요.",
                   LandWar_TypeName(t));
         SetStatus(s);
         return;
     }
-    LandWar_SetPreset(slot, t);
-    wsprintfW(s, L"아군 %d칸을 다음 전투부터 %s 로 — 그림까지 그 병종으로 나옵니다.",
-              slot + 1, LandWar_TypeName(t));
+    {
+        int id = CurTargetId();
+        wchar_t nm[64];
+        if (!LandWar_SetPreset(id, slot, t)) { SetStatus(L"예약을 못 넣었습니다(벌이 가득 찼을 수 있습니다)."); return; }
+        if (id == LW_ID_COMMON) lstrcpyW(nm, L"모든 적장");
+        else if (!LandWar_EnemyName(id, nm, 64)) wsprintfW(nm, L"적장 0x%X", id);
+        wsprintfW(s, L"[%s] %s %d칸 → %s. 다음 전투부터 그림까지 그 병종으로 나옵니다.",
+                  nm, (slot < LW_MINE_N) ? L"아군" : L"적",
+                  (slot % LW_MINE_N) + 1, LandWar_TypeName(t));
+    }
     SetStatus(s);
     FillUnits();
 }
@@ -148,7 +186,7 @@ static HWND Mk(const wchar_t* cls, const wchar_t* txt, DWORD st, DWORD ex,
                int x, int y, int w, int h, int id, HWND par)
 {
     HWND c = CreateWindowExW(ex, cls, txt, WS_CHILD | WS_VISIBLE | st,
-                             x, y, w, h, par, (HMENU)(INT_PTR)id, g_hinst, NULL);
+                             x, y + TITLE_H, w, h, par, (HMENU)(INT_PTR)id, g_hinst, NULL);
     if (c && g_font) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
     return c;
 }
@@ -156,7 +194,7 @@ static HWND Mk(const wchar_t* cls, const wchar_t* txt, DWORD st, DWORD ex,
 static void MakeControls(HWND h)
 {
     LOGFONTW lf;
-    int t;
+    int t, yList = 50, yBtn;
 
     ZeroMemory(&lf, sizeof(lf));
     lf.lfHeight = -12; lf.lfCharSet = HANGEUL_CHARSET;
@@ -164,13 +202,15 @@ static void MakeControls(HWND h)
     g_font = CreateFontIndirectW(&lf);
     if (!g_font) g_font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
-    Mk(L"STATIC", L"부대 12칸 (아군 1~6 · 적 1~6)", 0, 0, 12, 8, 260, 18, 0, h);
-    g_units = Mk(L"LISTBOX", L"", WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-                 WS_EX_CLIENTEDGE, 12, 28, UNIT_W, LIST_H, ID_UNITS, h);
+    g_enemy = Mk(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, 12, 8, UNIT_W + TYPE_W + 12, 18, ID_ENEMY, h);
 
-    Mk(L"STATIC", L"병종 24종", 0, 0, 12 + UNIT_W + 12, 8, 160, 18, 0, h);
+    Mk(L"STATIC", L"부대 12칸 (아군 1~6 · 적 1~6)", 0, 0, 12, 30, 260, 18, 0, h);
+    g_units = Mk(L"LISTBOX", L"", WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+                 WS_EX_CLIENTEDGE, 12, yList, UNIT_W, LIST_H, ID_UNITS, h);
+
+    Mk(L"STATIC", L"병종 24종", 0, 0, 12 + UNIT_W + 12, 30, 160, 18, 0, h);
     g_types = Mk(L"LISTBOX", L"", WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-                 WS_EX_CLIENTEDGE, 12 + UNIT_W + 12, 28, TYPE_W, LIST_H, ID_TYPES, h);
+                 WS_EX_CLIENTEDGE, 12 + UNIT_W + 12, yList, TYPE_W, LIST_H, ID_TYPES, h);
 
     for (t = 0; t < LW_TYPE_N; t++) {
         wchar_t s[64];
@@ -179,15 +219,25 @@ static void MakeControls(HWND h)
         SendMessageW(g_types, LB_ADDSTRING, 0, (LPARAM)s);
     }
 
-    g_desc = Mk(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, 12, 28 + LIST_H + 8, UNIT_W + TYPE_W + 12, 34, ID_DESC, h);
+    g_desc = Mk(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, 12, yList + LIST_H + 6,
+                UNIT_W + TYPE_W + 12, 34, ID_DESC, h);
 
-    Mk(L"BUTTON", L"지금 바꾸기", WS_GROUP, 0, 12, 28 + LIST_H + 46, 120, 26, ID_NOW, h);
-    Mk(L"BUTTON", L"전투 시작 때", 0, 0, 140, 28 + LIST_H + 46, 120, 26, ID_PRESET, h);
-    Mk(L"BUTTON", L"예약 지우기", 0, 0, 268, 28 + LIST_H + 46, 110, 26, ID_CLEAR, h);
-    Mk(L"BUTTON", L"큰 그림 병종 허용(옆 칸 그림 깨짐)", BS_AUTOCHECKBOX, 0,
-       390, 28 + LIST_H + 50, 240, 20, ID_ALLOWBIG, h);
+    // 예약 대상 — 콤보 대신 라디오. 게임 화면 위에서 목록을 펼치면 게임이 죽는다.
+    yBtn = yList + LIST_H + 44;
+    Mk(L"STATIC", L"예약 대상", 0, 0, 12, yBtn + 3, 60, 18, 0, h);
+    Mk(L"BUTTON", L"모든 적장 공통", BS_AUTORADIOBUTTON | WS_GROUP, 0, 76, yBtn + 2, 118, 20, ID_TGT0, h);
+    Mk(L"BUTTON", L"이 적장만",     BS_AUTORADIOBUTTON, 0, 198, yBtn + 2, 96, 20, ID_TGT1, h);
+    SendMessageW(GetDlgItem(h, ID_TGT0), BM_SETCHECK, BST_CHECKED, 0);
+    Mk(L"BUTTON", L"큰 그림 병종 허용(옆 칸 그림 깨짐)", BS_AUTOCHECKBOX | WS_GROUP, 0,
+       302, yBtn + 2, 230, 20, ID_ALLOWBIG, h);
 
-    g_status = Mk(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, 12, 28 + LIST_H + 82,
+    yBtn += 26;
+    Mk(L"BUTTON", L"지금 바꾸기",  WS_GROUP, 0,  12, yBtn, 108, 26, ID_NOW, h);
+    Mk(L"BUTTON", L"전투 시작 때", 0, 0, 128, yBtn, 108, 26, ID_PRESET, h);
+    Mk(L"BUTTON", L"이 벌 지우기", 0, 0, 244, yBtn, 108, 26, ID_CLEAR, h);
+    Mk(L"BUTTON", L"파일로 남기기", 0, 0, 360, yBtn, 116, 26, ID_SAVE, h);
+
+    g_status = Mk(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, 12, yBtn + 32,
                   UNIT_W + TYPE_W + 12, 18, ID_STATUS, h);
 }
 
@@ -208,14 +258,17 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     switch (m) {
     case WM_CREATE:
         MakeControls(h);
+        GameSkin_Apply(h);          // 밀어넣기 단추를 게임 띠로
         SendMessageW(g_types, LB_SETCURSEL, 0, 0);
         ShowDesc();
         Guarded(Refresh, L"Refresh");
+        Guarded(ShowEnemy, L"ShowEnemy");
         SetTimer(h, 1, 1000, NULL);      // 전투가 서면 목록이 저절로 채워지게
         return 0;
 
     case WM_TIMER:
         Guarded(FillUnits, L"FillUnits");
+        Guarded(ShowEnemy, L"ShowEnemy");
         return 0;
 
     case WM_COMMAND: {
@@ -225,8 +278,11 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
         if (code == BN_CLICKED) {
             if (id == ID_NOW)    { ApplyNow();    return 0; }
             if (id == ID_PRESET) { ApplyPreset(); return 0; }
-            if (id == ID_CLEAR)  { LandWar_ClearPresets(); FillUnits();
-                                   SetStatus(L"예약을 지웠습니다."); return 0; }
+            if (id == ID_CLEAR)  { LandWar_ClearPreset(CurTargetId()); FillUnits();
+                                   SetStatus(L"이 벌의 예약을 지웠습니다."); return 0; }
+            if (id == ID_SAVE)   { SetStatus(LandWar_Save() ? L"CDS95Util\\landwar.txt 에 남겼습니다."
+                                                            : L"파일로 남기지 못했습니다."); return 0; }
+            if (id == ID_TGT0 || id == ID_TGT1) { FillUnits(); InvalidateRect(h, NULL, FALSE); return 0; }
             if (id == ID_ALLOWBIG) {
                 LandWar_AllowBig(SendMessageW(GetDlgItem(h, ID_ALLOWBIG), BM_GETCHECK, 0, 0) == BST_CHECKED);
                 Refresh();
@@ -236,6 +292,20 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
         break;
     }
 
+    case WM_DRAWITEM:
+        if (GameSkin_DrawItem((const DRAWITEMSTRUCT*)l)) return TRUE;
+        break;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        RECT t;
+        GetClientRect(h, &t); t.left = 8; t.right -= 8; t.top = 3; t.bottom = TITLE_H - 1;
+        GameSkin_Title(dc, t, L"육상전 부대");
+        EndPaint(h, &ps);
+        return 0;
+    }
+
     case WM_CTLCOLORSTATIC:
         SetBkMode((HDC)w, TRANSPARENT);
         return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
@@ -243,7 +313,7 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_CLOSE:   DestroyWindow(h); return 0;
     case WM_DESTROY:
         KillTimer(h, 1);
-        g_win = NULL; g_units = NULL; g_types = NULL; g_desc = NULL; g_status = NULL;
+        g_win = NULL; g_units = NULL; g_types = NULL; g_desc = NULL; g_status = NULL; g_enemy = NULL;
         return 0;
     }
     return DefWindowProcW(h, m, w, l);
@@ -272,7 +342,7 @@ static void LandWin_Show(HWND owner)
     }
     g_win = CreateWindowExW(0, L"LandWarKRWin", L"육상전 부대 — LandWarKR",
                 WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-                CW_USEDEFAULT, CW_USEDEFAULT, 660, 440, owner, NULL, g_hinst, NULL);
+                CW_USEDEFAULT, CW_USEDEFAULT, 680, 470 + TITLE_H, owner, NULL, g_hinst, NULL);
     if (g_win) { ShowWindow(g_win, SW_SHOW); UpdateWindow(g_win); }
 }
 

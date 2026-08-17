@@ -4,6 +4,7 @@ add_library(ButtonMakerKR SHARED
     src/band.c
     src/miscskin.c
     src/gamefont.c
+    src/gameskin.c
     # LS12 디코더와 PNG 입출력은 CharacterUtilKR 것을 그대로 같이 빌드한다
     # (복사하면 한쪽만 고쳐진다).
     ../CharacterUtilKR/src/ls12.c

@@ -8,6 +8,7 @@
 #include "miscskin.h"
 #include "gamefont.h"
 #include "imgio.h"      // CharacterUtilKR/src — PNG 쓰기(GDI+ 를 실행 중에 부른다)
+#include "gameskin.h"   // 창을 게임 껍데기로 입힌다(단추 = 베이지 띠, 제목 = 진홍 띠)
 
 // ButtonMakerKR — 게임과 똑같은 메뉴 띠(타이틀·버튼)를 글자만 바꿔 만들어 준다.
 //
@@ -39,8 +40,9 @@
 #define ID_SHADOW0  1120
 #define ID_ZOOM0    1130
 
+#define TITLE_H     28        // 위쪽 제목 띠 몫
 #define PREVIEW_X   16
-#define PREVIEW_Y   142
+#define PREVIEW_Y   (142 + TITLE_H)
 #define PREVIEW_W   716
 #define PREVIEW_H   150
 #define TEXT_MARGIN 24        // 자동 폭일 때 글자 양옆으로 띄우는 픽셀.
@@ -291,10 +293,11 @@ static void CopyToClipboard(HWND owner)
 
 static HFONT g_font = NULL;
 
+// 자식은 모두 제목 띠 아래로 내려 그린다(y 에 TITLE_H 을 더한다).
 static HWND Mk(const wchar_t* cls, const wchar_t* txt, DWORD st, int x, int y, int w, int h, int id, HWND par)
 {
     HWND c = CreateWindowExW(0, cls, txt, WS_CHILD | WS_VISIBLE | st,
-                             x, y, w, h, par, (HMENU)(INT_PTR)id, g_hinst, NULL);
+                             x, y + TITLE_H, w, h, par, (HMENU)(INT_PTR)id, g_hinst, NULL);
     if (c && g_font) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
     return c;
 }
@@ -351,8 +354,13 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     switch (m) {
     case WM_CREATE:
         MakeControls(h);
+        GameSkin_Apply(h);          // 밀어넣기 단추를 게임 띠로
         Rebuild();
         return 0;
+
+    case WM_DRAWITEM:
+        if (GameSkin_DrawItem((const DRAWITEMSTRUCT*)l)) return TRUE;
+        break;
 
     case WM_COMMAND: {
         int id = LOWORD(w), code = HIWORD(w);
@@ -382,6 +390,8 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
+        { RECT t; GetClientRect(h, &t); t.left = 8; t.right -= 8; t.top = 3; t.bottom = TITLE_H - 1;
+          GameSkin_Title(dc, t, L"버튼 만들기"); }
         PaintPreview(dc);
         EndPaint(h, &ps);
         return 0;
@@ -432,7 +442,7 @@ static void BtnWin_Show(HWND owner)
     }
     g_win = CreateWindowExW(0, L"ButtonMakerKRWin", L"버튼 만들기 — ButtonMakerKR",
                 WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-                CW_USEDEFAULT, CW_USEDEFAULT, 764, 400, owner, NULL, g_hinst, NULL);
+                CW_USEDEFAULT, CW_USEDEFAULT, 764, 400 + TITLE_H, owner, NULL, g_hinst, NULL);
     if (g_win) { ShowWindow(g_win, SW_SHOW); UpdateWindow(g_win); }
     Log(L"창 열기 %s", g_win ? L"OK" : L"실패");
 }

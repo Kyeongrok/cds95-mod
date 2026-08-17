@@ -437,6 +437,28 @@ int Player_BirthYear(void) { return PlField(LC_BORNY, YEAR_MIN, YEAR_MAX, 0); }
 int Player_Fame(void)      { return PlField(LC_FAME,   0, FAME_MAX,  -1); }
 int Player_Infamy(void)    { return PlField(LC_INFAMY, 0, FAME_MAX,  -1); }
 
+// 명성·악명 더하기. 0 아래로 안 내려가고 FAME_MAX 위로 안 올라간다.
+static int PlAdd(int off, int delta)
+{
+    unsigned char* p;
+    DWORD old = 0;
+    int v;
+    if (!g_pl) return -1;
+    p = g_pl + off;
+    v = *(const int*)p;
+    if (v < 0 || v > FAME_MAX) v = 0;      // 쓰레기가 들어 있으면 0 부터 센다
+    v += delta;
+    if (v < 0) v = 0;
+    if (v > FAME_MAX) v = FAME_MAX;
+    if (!VirtualProtect(p, sizeof(int), PAGE_READWRITE, &old)) return -1;
+    *(int*)p = v;
+    VirtualProtect(p, sizeof(int), old, &old);
+    return v;
+}
+
+int Player_AddFame(int delta)   { return PlAdd(LC_FAME,   delta); }
+int Player_AddInfamy(int delta) { return PlAdd(LC_INFAMY, delta); }
+
 int Player_SetGender(int g)
 {
     unsigned char* p;

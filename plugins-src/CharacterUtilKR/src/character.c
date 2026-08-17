@@ -11,6 +11,7 @@
 #include "playerview.h"
 #include "questdb.h"     // Quest_Init — 창을 열기 전에 quests.json 을 반영해야 한다
 #include "hkjson.h"      // HotkeyUtilKR/src — 탭에 적을 단축키를 hotkeys.json 에서 읽는다
+#include "gameskin.h"    // ButtonMakerKR/src — 단추를 게임 껍데기(MISC.CDS 파트 4)로 그린다
 #include <windowsx.h>
 
 // fb15/fb16: 인물(얼굴) 코드 브라우저 — 갤러리(2열, 스크롤) + 남/여/카테고리 필터.
@@ -702,6 +703,9 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     switch (m) {
     case WM_CREATE:
         UI_CreateFonts();
+        // 단추를 게임 것과 같은 띠로 갈아 끼운다(uikit 의 UI_SetButtonDraw).
+        // MISC.CDS 를 못 읽으면 GameSkin_Button 이 0 을 돌려주므로 원래 모양으로 물러난다.
+        UI_SetButtonDraw(GameSkin_Button);
         Face_Load();
         g_maidsOk = Maid_Load();   // 실패하면 여급도 예전처럼 얼굴코드 단위 + char_info.h 로
         Patron_Load();             // 실패하면 스폰서 등장연도 상자를 아예 안 띄운다

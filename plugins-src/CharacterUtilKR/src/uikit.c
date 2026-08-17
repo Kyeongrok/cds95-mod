@@ -84,7 +84,18 @@ void UI_Bevel(HDC dc, RECT r, BOOL sunken)
     SelectObject(dc, old); DeleteObject(pl); DeleteObject(pd);
 }
 
+static UiButtonFn g_btnDraw = NULL;
+
+void UI_SetButtonDraw(UiButtonFn fn) { g_btnDraw = fn; }
+
+// 갈아 끼운 것이 있으면 그것으로, 없거나 못 그리면 원래 모양으로.
 void UI_Button(HDC dc, RECT r, const wchar_t* t, BOOL active)
+{
+    if (g_btnDraw && g_btnDraw(dc, r, t, active)) return;
+    UI_ButtonPlain(dc, r, t, active);
+}
+
+void UI_ButtonPlain(HDC dc, RECT r, const wchar_t* t, BOOL active)
 {
     HBRUSH br = CreateSolidBrush(COL_BG); FillRect(dc, &r, br); DeleteObject(br);
     br = CreateSolidBrush(COL_TEXT); FrameRect(dc, &r, br); DeleteObject(br);
