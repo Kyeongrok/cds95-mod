@@ -3,6 +3,7 @@
 #include "hint.h"
 #include "hintdb.h"
 #include "disc.h"
+#include "discinst.h"
 #include "patronpick.h"
 #include "chardb.h"   // CharacterUtilKR/src — 후원자 이름·도시·직업·자금
 #include "patrons.h"  // CharacterUtilKR/src — 실행 중 친밀도
@@ -14,8 +15,11 @@
 //
 // 힌트와 발견물은 서로 다른 목록이고 번호도 다르다 — 힌트 31 은 "트로이" 지만
 // 발견물 31 은 "아부심벨 대신전"이다(hintdb.h · disc.h 참고).
-// 힌트 상태도 발견 여부도 실행 중 메모리(힌트 배열)에서 읽는다. 아무것도 쓰지 않는다.
-// 발견물 줄의 발견 여부는 disc_hint.h 의 이음표로 힌트 번호를 찾아 그 상태를 가져온 것이다.
+// 힌트 상태도 발견 여부도 실행 중 메모리에서 읽는다. 아무것도 쓰지 않는다.
+//
+// ★ 발견과 보고는 다른 일이다 — 힌트 배열의 "발견" 비트는 후원자에게 보고해야 켜진다.
+//   발견만 하고 아직 보고를 안 한 것은 발견물 인스턴스(discinst.h)의 사람 칸에만 남는다.
+//   그래서 이 창은 인스턴스를 먼저 보고, 그것이 없는 줄만 힌트 배열로 가른다.
 
 #define ID_HINT_OPEN 0xBC00u   // Trade=0xB10x, Char=0xB301/0xB310+, Ship=0xB410, Patch=0xB500,
                                // Map=0xB600, Mod=0xB700, QMod=0xB800, Upd=0xB900,
@@ -36,7 +40,7 @@
 // 오른쪽 판 — 고른 줄의 분류를 좋아하는 후원자. 도시를 누르면 그리로 워프한다.
 #define PANEL_X    (LIST_X + LIST_W + SBW + 12)
 #define PANEL_W    330
-#define PANEL_HEAD_H 44        // 판 위 제목 두 줄
+#define PANEL_HEAD_H 62        // 판 위 제목 세 줄(맨 아래가 발견·보고 줄)
 #define PROW_H     58          // 이름 / 도시·자금 / 친밀도 세 줄
 #define PFACE_W    38          // 초상화(원본 80x96 의 비를 지킨다)
 #define PFACE_H    46
@@ -50,13 +54,13 @@
 #define MODE_HINT 0
 #define MODE_DISC 1
 
-// 상태 추리기. 뜻은 보는 것에 따라 다르다 — 힌트면 [힌트만]/[발견 완료],
-// 발견물이면 [발견]/[아직].
+// 상태 추리기. 뜻은 보는 것에 따라 다르다 — 힌트면 [힌트만]/[발견함],
+// 발견물이면 [발견]/[아직]. 여기서 [발견] 은 보고 전이라도 발견한 것을 말한다.
 #define F_ALL  0
 #define F_A    1
 #define F_B    2
 #define FILT_N 3
-static const wchar_t* kFiltHint[FILT_N] = { L"전체", L"힌트만", L"발견 완료" };
+static const wchar_t* kFiltHint[FILT_N] = { L"전체", L"힌트만", L"발견함" };
 static const wchar_t* kFiltDisc[FILT_N] = { L"전체", L"발견",   L"아직" };
 
 static HINSTANCE g_hinst = NULL;
@@ -140,18 +144,36 @@ static RECT RcRow(int v)
 
 static int MaxScroll(void) { int m = g_viewN - ROWS_VIS; return m > 0 ? m : 0; }
 
+// 힌트 한 줄이 어디까지 왔나. 인스턴스를 먼저 본다 — 발견 비트는 보고해야 켜지니까.
+#define HS_UNKNOWN  -1
+#define HS_NONE      0      // 힌트도 없다
+#define HS_GOT       1      // 힌트만 얻었다
+#define HS_FOUND     2      // 발견했지만 아직 보고 안 했다
+#define HS_REPORTED  3      // 보고까지 마쳤다
+static int HintStage(int i)
+{
+    int st = HintDb_State(i);
+    if (st < 0) return HS_UNKNOWN;
+    if (HINT_IS_DONE(st))          return HS_REPORTED;   // 발견 비트 = 보고까지 마쳤다
+    if (DInst_HintReported(i) > 0) return HS_REPORTED;
+    if (DInst_HintFound(i) > 0)    return HS_FOUND;
+    return (st & 1) ? HS_GOT : HS_NONE;
+}
+
 static int Keep(int i)
 {
     if (g_filt == F_ALL) return 1;
     if (g_mode == MODE_DISC) {
         int f = Disc_Found(i);
+        int found = (f == DISC_FOUND || f == DISC_REPORTED);
         if (f == DISC_UNKNOWN) return 1;                 // 아직 못 읽으면 추리지 않는다
         if (f == DISC_NOLINK) return 0;                  // 발견이라는 개념이 없는 줄
-        return (g_filt == F_A) ? (f == DISC_FOUND) : (f != DISC_FOUND);
+        return (g_filt == F_A) ? found : !found;
     }
-    {   int st = HintDb_State(i);
-        if (st < 0) return 1;                            // 상태를 못 읽으면 추리지 않는다
-        return (g_filt == F_A) ? HINT_IS_GOT(st) : HINT_IS_DONE(st);
+    {   int stage = HintStage(i);
+        if (stage == HS_UNKNOWN) return 1;               // 상태를 못 읽으면 추리지 않는다
+        // [힌트만] 은 "아직 안 찾은 힌트" 다 — 찾아 놓고 보고만 안 한 줄은 여기서 빠진다.
+        return (g_filt == F_A) ? (stage == HS_GOT) : (stage >= HS_FOUND);
     }
 }
 
@@ -173,19 +195,60 @@ static const wchar_t* StateText(int i, int* done, int* dim)
     *done = 0; *dim = 0;
     if (g_mode == MODE_DISC) {
         switch (Disc_Found(i)) {
-        case DISC_FOUND:   *done = 1; return L"발견";
-        case DISC_HINTED:             return L"힌트 있음";
-        case DISC_NOT:     *dim = 1;  return L"—";
-        case DISC_NOLINK:  *dim = 1;  return L"";     // 발견이라는 개념이 없는 줄(교역품 따위)
-        default:                      return L"세이브 전";
+        case DISC_REPORTED: *done = 1; return L"발견 · 보고함";
+        case DISC_FOUND:    *done = 1; return L"발견 · 보고 전";
+        case DISC_HINTED:              return L"힌트 있음";
+        case DISC_NOT:      *dim = 1;  return Disc_Taken(i) > 0 ? L"— 남이 선취" : L"—";
+        case DISC_NOLINK:   *dim = 1;  return L"";     // 발견이라는 개념이 없는 줄(교역품 따위)
+        default:                       return L"세이브 전";
         }
     }
-    {   int st = HintDb_State(i);
-        if (st < 0) return L"?";
-        if (HINT_IS_DONE(st)) { *done = 1; return L"발견 완료"; }
-        if (HINT_IS_GOT(st))  {           return L"힌트 있음"; }
-        *dim = 1; return L"—";
+    switch (HintStage(i)) {
+    case HS_REPORTED: *done = 1; return L"발견 · 보고함";
+    case HS_FOUND:    *done = 1; return L"발견 · 보고 전";
+    case HS_GOT:                 return L"힌트 있음";
+    case HS_NONE:     *dim = 1;  return DInst_HintTaken(i) > 0 ? L"— 남이 선취" : L"—";
+    default:                     return L"?";
     }
+}
+
+// 고른 줄에 딸린 발견물 인스턴스. 힌트에 여럿 걸리면 내가 발견한 것을 앞세운다.
+static int PickInst(void)
+{
+    int k, n, best = -1;
+    if (g_pick < 0) return -1;
+    if (g_mode == MODE_DISC) return Disc_Inst(g_pick);
+    n = DInst_CountOfHint(g_pick);
+    for (k = 0; k < n; k++) {
+        int inst = DInst_OfHint(g_pick, k);
+        if (best < 0) best = inst;
+        if (DInst_Filled(inst, DINST_ME)) return inst;
+    }
+    return best;
+}
+
+// 판 셋째 줄 — 언제 발견했고 보고는 했는지. 인스턴스가 없는 줄은 그렇다고 적는다.
+static void PickTrace(wchar_t* out)
+{
+    int inst = PickInst();
+    if (inst < 0)      { lstrcpyW(out, L"이 줄은 발견물 칸이 없어 힌트 상태로만 봅니다"); return; }
+    if (!DInst_Live()) { lstrcpyW(out, L"발견 자취는 세이브를 불러온 뒤에 나옵니다"); return; }
+
+    if (DInst_Filled(inst, DINST_ME)) {
+        if (DInst_Filled(inst, DINST_REPORT))
+            wsprintfW(out, L"발견 %d년 %d월 · 보고 %d년 %d월",
+                      DInst_Year(inst, DINST_ME), DInst_Month(inst, DINST_ME),
+                      DInst_Year(inst, DINST_REPORT), DInst_Month(inst, DINST_REPORT));
+        else
+            wsprintfW(out, L"발견 %d년 %d월 · 아직 보고 안 함 — 후원자에게 보고해야 값을 받습니다",
+                      DInst_Year(inst, DINST_ME), DInst_Month(inst, DINST_ME));
+        return;
+    }
+    if (DInst_Filled(inst, DINST_OTHER))
+        wsprintfW(out, L"아직 못 찾음 — %s 이(가) %d년에 먼저 발견",
+                  DInst_Who(inst, DINST_OTHER), DInst_Year(inst, DINST_OTHER));
+    else
+        lstrcpyW(out, L"아직 못 찾음");
 }
 
 static void Paint(HWND h)
@@ -213,9 +276,9 @@ static void Paint(HWND h)
         UI_Button(dc, RcFilt(i), (g_mode == MODE_DISC ? kFiltDisc : kFiltHint)[i], g_filt == i);
 
     if (g_mode == MODE_DISC)
-        wsprintfW(buf, Disc_Live() ? L"%d개 · 힌트 %d개와 이어 봄"
+        wsprintfW(buf, Disc_Live() ? L"%d개 · 발견 여부가 있는 줄 %d개"
                                    : L"%d개 — 세이브를 불러오면 상태가 나옵니다",
-                  g_viewN, Disc_LinkCount());
+                  g_viewN, DINST_N);
     else
         wsprintfW(buf, HintDb_Live() ? L"%d개" : L"%d개 — 세이브를 불러오면 상태가 나옵니다", g_viewN);
     r.left = LIST_X + 132 + FILT_N*84; r.right = LIST_X + LIST_W + SBW;
@@ -282,6 +345,11 @@ static void Paint(HWND h)
                 wsprintfW(buf, L"이 분류를 좋아하는 스폰서 %d명 — 오른쪽 도시를 누르면 워프", n);
             UI_Text(dc, t2, buf, g_smallFont, COL_DARK,
                     DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+            // 셋째 줄 — 언제 발견했고 보고는 했는지(힌트 배열만으로는 안 보이던 것이다).
+            t2.top += 18; t2.bottom += 18;
+            PickTrace(buf);
+            UI_Text(dc, t2, buf, g_smallFont, COL_LANG_TX,
+                    DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
         }
 
         for (v = 0; v < PROWS_VIS; v++) {
@@ -339,8 +407,8 @@ static void Paint(HWND h)
     r.top = LIST_Y + LIST_H + 6; r.bottom = r.top + 22;
     UI_Text(dc, r,
             g_mode == MODE_DISC
-              ? L"발견 여부는 이어진 힌트에서 바로 읽습니다 — 힌트가 없는 줄은 비워 둡니다."
-              : L"힌트 상태는 실행 중인 게임에서 바로 읽습니다. 값은 고치지 않습니다.",
+              ? L"발견 여부는 발견물 칸에서 바로 읽습니다 — 보고는 그 다음 일입니다."
+              : L"발견하면 보고 전에도 [힌트만] 에서 빠집니다. 값은 고치지 않습니다.",
             g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
     UI_BufEnd(&b);
@@ -359,6 +427,7 @@ static void Reload(HWND h)
 {
     HintDb_Load();
     Disc_Load();
+    DInst_Load();
     Rebuild();
     InvalidateRect(h, NULL, FALSE);
 }
@@ -371,6 +440,7 @@ static LRESULT CALLBACK HintProc(HWND h, UINT m, WPARAM w, LPARAM l)
         Face_Load();          // 오른쪽 판의 스폰서 초상화
         HintDb_Load();
         Disc_Load();
+        DInst_Load();
         Rebuild();
         return 0;
     case WM_ERASEBKGND: return 1;

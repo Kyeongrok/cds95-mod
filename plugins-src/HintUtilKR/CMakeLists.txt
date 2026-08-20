@@ -3,6 +3,7 @@ add_library(HintUtilKR SHARED
     src/hint.c
     src/hintdb.c
     src/disc.c
+    src/discinst.c
     src/patronpick.c
     # 창은 다른 KR 창들과 같은 세피아 판이다 — 그리기 도구를 복사하지 않고 원본을 같이 빌드한다.
     ../CharacterUtilKR/src/uikit.c

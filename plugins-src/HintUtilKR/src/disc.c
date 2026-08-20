@@ -1,5 +1,6 @@
 #include "disc.h"
-#include "hintdb.h"       // 발견 여부는 힌트 배열에서 온다
+#include "discinst.h"     // 앞 107개는 인스턴스에 "내가 발견/보고" 가 그대로 남는다
+#include "hintdb.h"       // 인스턴스가 없는 줄만 힌트 배열로 가른다
 #include "disc_hint.h"    // kDiscHint[274] — 발견물 -> 힌트 이음표
 
 // 자리는 disc.h 에, 이음표를 만든 법은 disc_hint.h 에 적어 뒀다. 여기서는 읽기만 한다.
@@ -34,6 +35,7 @@ int Disc_Load(void)
     int i, ok = 0;
 
     if (g_ready) return 1;
+    DInst_Load();
     base = (unsigned char*)GetModuleHandleW(NULL);
     if (!base) return 0;
     rec = base + DISC_RVA;
@@ -70,18 +72,42 @@ int Disc_HintId(int i)
     return (i >= 0 && i < DISC_N) ? kDiscHint[i] : -1;
 }
 
-// 힌트 상태의 비트로 가른다. 8=1000 아직 / 13=1101 힌트 취득 / 15=1111 발견 완료 이고,
-// 11=1011 과 7=0111 도 나온다 — bit1 이 곧 "찾았다" 다(향료제도가 11 인데 발견한 것을
-// 게임에서 확인했다). bit3 은 "힌트가 있는 발견물" 이라 판정에 쓰지 않는다.
+int Disc_Inst(int i)  { return DInst_OfDisc(i); }
+
+int Disc_Taken(int i)
+{
+    int inst = DInst_OfDisc(i);
+    if (inst < 0 || !DInst_Live()) return -1;
+    return DInst_Filled(inst, DINST_OTHER) ? 1 : 0;
+}
+
+// 인스턴스가 있는 줄은 사람 칸으로 가른다 — 발견한 그 순간에 0번 칸이 채워지고,
+// 후원자에게 보고하면 2번 칸이 채워진다. 힌트 배열의 발견 비트는 보고까지 마쳐야
+// 켜지므로(discinst.h 머리 참고) 여기서 앞세우지 않는다.
+//
+// 인스턴스가 없는 줄(교역품·비보 따위)만 힌트 상태의 비트로 가른다.
+// 8=1000 아직 / 13=1101 힌트 취득 / 15=1111 발견 완료 이고, 11=1011 과 7=0111 도 나온다
+// — bit1 이 곧 "찾았다"(=보고까지 했다) 다. bit3 은 "힌트가 있는 줄" 이라 안 쓴다.
 int Disc_Found(int i)
 {
-    int h, st;
+    int h, st, inst;
     if (i < 0 || i >= DISC_N) return DISC_UNKNOWN;
+
+    inst = DInst_OfDisc(i);
+    if (inst >= 0) {
+        if (!DInst_Live()) return DISC_UNKNOWN;
+        if (DInst_Filled(inst, DINST_REPORT)) return DISC_REPORTED;
+        if (DInst_Filled(inst, DINST_ME))     return DISC_FOUND;
+        h = kDiscHint[i];
+        st = (h >= 0) ? HintDb_State(h) : -1;
+        return (st > 0 && (st & 1)) ? DISC_HINTED : DISC_NOT;
+    }
+
     h = kDiscHint[i];
     if (h < 0) return DISC_NOLINK;
     st = HintDb_State(h);
     if (st < 0) return DISC_UNKNOWN;
-    if (st & 2) return DISC_FOUND;
+    if (st & 2) return DISC_REPORTED;
     if (st & 1) return DISC_HINTED;
     return DISC_NOT;
 }
