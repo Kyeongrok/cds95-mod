@@ -2,12 +2,14 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include "mod.h"
+#include "playermod.h"     // 모드 > 플레이어 수정 — 소지금 · 명성
 
 #define MAX_MODS 64
 // "파일 > 플러그인 관리" 커맨드. 게임 창 하나를 여러 플러그인이 같이 서브클래싱하므로 ID 가 겹치면
 // 먼저 가로챈 쪽이 대신 열린다(0xB600 을 쓰다가 WorldMapKR 의 지도가 떴다).
 // 쓰이는 값: Trade=0xB101/0xB102/0xC0xx, Char=0xB301, Ship=0xB410, Patch=0xB500, Map=0xB600.
 #define ID_MOD_OPEN 0xB700u
+#define ID_PLAYER_OPEN 0xB701u   // 모드 > 플레이어 수정
 
 typedef struct {
     wchar_t file[MAX_PATH];      // 확장자 뺀 플러그인 파일명
@@ -21,7 +23,7 @@ typedef struct {
 // 플러그인 설명. 목록에 파일명만 있으면 무엇인지 알 수 없어서 아는 것만 붙인다.
 static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"DDrawWrapper",    L"플러그인 로더 + DirectDraw 에뮬레이션. 끄면 나머지가 다 안 뜬다." },
-    { L"ModUtilKR",       L"이 창. 어떤 플러그인을 쓸지 고른다." },
+    { L"ModUtilKR",       L"이 창 + 플레이어 수정(소지금 · 명성). 어떤 플러그인을 쓸지 고른다." },
     { L"QuestModKR",      L"퀘스트 모드 — mods 폴더의 퀘스트 파일 묶음을 골라 깐다." },
     { L"UpdateUtilKR",    L"업데이트 — GitHub 릴리즈를 받아 깐다. 옛 판으로 되돌릴 수도 있다." },
     { L"HotelUtilKR",     L"여관 숙박 일수를 직접 입력한다." },
@@ -366,6 +368,7 @@ static LRESULT CALLBACK SubProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
     WNDPROC op = g_origProc;
     if (m == WM_COMMAND && LOWORD(w) == ID_MOD_OPEN) { ShowModWindow(); return 0; }
+    if (m == WM_COMMAND && LOWORD(w) == ID_PLAYER_OPEN) { PlayerMod_Show(g_hinst, h); return 0; }
     if (m == WM_DESTROY && h == g_subHwnd) {
         SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)op);
         g_origProc = NULL; g_subHwnd = NULL; g_gameHwnd = NULL;
@@ -445,13 +448,19 @@ static DWORD WINAPI MenuThread(LPVOID p)
             if (bar) {
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
-                if (!MenuHasId(target, ID_MOD_OPEN)) {
-                    {   // 파일 메뉴가 아니라 "모드" 아래에 붙인다
+                // 항목마다 따로 본다 — 하나가 이미 붙어 있다고 나머지를 안 달면 안 된다.
+                if (!MenuHasId(target, ID_MOD_OPEN) || !MenuHasId(target, ID_PLAYER_OPEN)) {
                     HMENU modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, TRUE);
-                    AppendMenuW(modMenu ? modMenu : target, MF_STRING, ID_MOD_OPEN, L"플러그인 관리");
-                }
+                    HMENU into = modMenu ? modMenu : target;
+                    if (!MenuHasId(target, ID_MOD_OPEN)) {
+                        AppendMenuW(into, MF_STRING, ID_MOD_OPEN, L"플러그인 관리");
+                        LogW(L"[ModUtilKR] \"플러그인 관리\" 메뉴 설치.");
+                    }
+                    if (!MenuHasId(target, ID_PLAYER_OPEN)) {
+                        AppendMenuW(into, MF_STRING, ID_PLAYER_OPEN, L"플레이어 수정");
+                        LogW(L"[ModUtilKR] \"플레이어 수정\" 메뉴 설치.");
+                    }
                     DrawMenuBar(g_gameHwnd);
-                    LogW(L"[ModUtilKR] \"플러그인 관리\" 메뉴 설치.");
                 }
                 if (g_subHwnd != g_gameHwnd) {
                     g_origProc = (WNDPROC)SetWindowLongPtrW(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)SubProc);

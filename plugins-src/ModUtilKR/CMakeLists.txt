@@ -1,6 +1,22 @@
 add_library(ModUtilKR SHARED
     src/dllmain.c
     src/mod.c
+    src/playermod.c
+    # 플레이어 수정 창이 쓰는 조각들 — 다른 플러그인 것을 그대로 같이 빌드한다
+    # (복사하면 한쪽만 고쳐진다).
+    ../CharacterUtilKR/src/uikit.c        # 세피아 판과 위젯
+    ../CharacterUtilKR/src/inventory.c    # 소지금
+    ../CharacterUtilKR/src/livechar.c     # 명성 · 주인공 레코드
+    ../ButtonMakerKR/src/gameskin.c       # 단추를 게임 띠로
+    ../ButtonMakerKR/src/band.c
+    ../ButtonMakerKR/src/miscskin.c
+    ../ButtonMakerKR/src/gamefont.c
+    ../CharacterUtilKR/src/ls12.c
+)
+
+target_include_directories(ModUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src   # uikit.h · inventory.h · livechar.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ButtonMakerKR/src     # gameskin.h · band.h …
 )
 
 target_link_libraries(ModUtilKR PRIVATE user32 gdi32 comctl32 shell32)
