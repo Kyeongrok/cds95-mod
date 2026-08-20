@@ -231,8 +231,48 @@ int Mkt_Money(void)
     return (p && Readable(p, 4)) ? *p : -1;
 }
 
-// 그 도시가 파는 것 — 게임 빌더(0x480CC0)의 세 갈래 중 둘을 그대로 옮겼다.
-//   1) 지역 공통품 5칸 (재고는 도시 struct +0x44~0x54, 단가는 지역 기준가 표)
+// 그 도시의 특산품 — 게임 0x42A030 을 그대로 옮겼다. 없거나 지금 못 팔면 -1.
+//   도시 struct +0x04 상태의 bit0 이 켜져 있고 bit2 는 꺼져 있어야 하며,
+//   특산품 종류(+0x10)가 판매 게이트를 지나야 한다. 게임이 이 셋을 다 본다.
+// 공통품 자리 계산이 이 값에 걸려 있으므로(아래) 조건을 게임과 어긋나게 두면 안 된다.
+static int Specialty(int city)
+{
+    const int* st = CityField(city, 0x04);
+    const int* p;
+    int kind;
+    if (!st) return -1;
+    if (!(*st & 1)) return -1;
+    if (*st & 4)   return -1;
+    p = CityField(city, 0x10);
+    kind = p ? *p : -1;
+    if (kind < 0 || kind >= MKT_GOODS_N) return -1;
+    return Sellable(kind) ? kind : -1;
+}
+
+// 그 도시의 공통 교역품 — 게임 0x42A160 을 그대로 옮겼다. 돌려준 자리 번호가 곧 재고 칸이다
+// (재고 = 도시 struct +0x44 + 자리*4. 게임은 0x42A0B0 으로 이 목록에서 자리를 되찾는다).
+//
+// ★ 지역 표 다섯 칸에서 **그 도시 특산품과 같은 종류는 통째로 빠지고 자리도 안 차지한다.**
+//   캘리컷(지역 17)이 그 짝이다 — 표가 [후추 · 면화 · 면직물 · 편사] 인데 특산품이 후추라
+//   게임의 자리는 면화 0 · 면직물 1 · 편사 2 다. 예전에는 표 순서를 그대로 자리로 써서
+//   후추 0 · 면화 1 … 로 한 칸씩 밀렸다. 그래서 화면에는 면화 재고가 "후추" 라고 뜨고,
+//   그 줄을 사면 면화 재고가 깎였다(2026-08-21 제보). 진짜 후추 500 은 특산품 자리(+0x18)에
+//   따로 있어서 아예 안 보였다.
+static int CommonList(int city, int* out)
+{
+    int spec = Specialty(city), region = Region(city), i, n = 0;
+    if (region < 0) return 0;
+    for (i = 0; i < 5; i++) {
+        int kind = CommonGood(region, i);
+        if (kind < 0) break;               // -1 이면 거기서 끝이다
+        if (kind == spec) continue;        // 특산품과 겹치면 뺀다 — 자리도 안 준다
+        out[n++] = kind;
+    }
+    return n;
+}
+
+// 그 도시가 파는 것 — 게임 빌더(0x480CC0)의 세 갈래를 그대로 옮겼다.
+//   1) 지역 공통품 (재고는 도시 struct +0x44~0x54 — 자리는 위 CommonList 가 정한다)
 //   2) 그 도시 특산품 (재고 +0x18, 단가는 그 도시 +0x14)
 //   3) 연결 내륙도시의 특산품 — 그 목록은 도시 record +0x10 · +0x14 에 있다
 //      (세비야->톨레도, 카디스->코르도바. 게임의 "톨레도산 대포" 가 이것이다)
@@ -240,32 +280,34 @@ static void AddSpecialty(int from, int to);
 
 int Mkt_BuildList(int city)
 {
-    int region = Region(city), n;
-    const int* f;
+    int list[5], n, i;
 
     g_rowN = 0;
-    if (!Base() || region < 0) return 0;
+    if (!Base() || Region(city) < 0) return 0;
 
-    for (n = 0; n < 5; n++) {
-        int kind = CommonGood(region, n), stock;
-        if (kind < 0) break;
-        if (!Sellable(kind)) continue;
-        f = CityField(city, 0x44 + n * 4);
+    n = CommonList(city, list);
+    for (i = 0; i < n; i++) {
+        const int* f;
+        int stock;
+        // 게이트에 걸린 품목은 줄만 빠진다 — 자리는 그대로다(게임 빌더 0x480D5C 도 그렇다).
+        if (!Sellable(list[i])) continue;
+        f = CityField(city, 0x44 + i * 4);
         stock = f ? *f : 0;
         if (stock < 0) stock = 0;      // 재고 0 도 게임 구입창처럼 줄은 보여 준다
-        g_row[g_rowN].kind   = kind;
-        g_row[g_rowN].price  = Mkt_BuyPriceAt(city, kind);
+        if (g_rowN >= (int)(sizeof(g_row)/sizeof(g_row[0]))) break;
+        g_row[g_rowN].kind   = list[i];
+        g_row[g_rowN].price  = Mkt_BuyPriceAt(city, list[i]);
         g_row[g_rowN].supply = stock;
         g_row[g_rowN].origin = city;
-        g_row[g_rowN].slot   = n;
+        g_row[g_rowN].slot   = i;
         g_rowN++;
     }
 
     AddSpecialty(city, city);          // 이 도시 특산품
 
-    for (n = 0; n < 2; n++) {          // 연결 내륙도시 특산품(수입품)
+    for (i = 0; i < 2; i++) {          // 연결 내륙도시 특산품(수입품)
         const int* q = (const int*)(g_base + MKT_REC_RVA + (unsigned)city * MKT_REC_SZ
-                                    + MKT_REC_INLAND + n * 4);
+                                    + MKT_REC_INLAND + i * 4);
         if (!Readable(q, 4)) break;
         if (*q >= 0 && *q < MKT_CITY_N) AddSpecialty(*q, city);
     }
@@ -273,28 +315,26 @@ int Mkt_BuildList(int city)
 }
 
 // 도시 from 의 특산품을 목록에 얹는다(원산지 = from). to 는 지금 서 있는 도시.
+// 같은 종류가 이미 있어도 빼지 않는다 — 게임도 안 뺀다. 공통품 쪽에서 이미 빠졌고,
+// 내륙도시 특산품은 원산지가 달라 다른 물건이다("톨레도산 대포" 와 "코르도바산 대포").
 static void AddSpecialty(int from, int to)
 {
-    const int* f = CityField(from, 0x10);
-    int spec = f ? *f : -1;
-    int i;
-    if (spec < 0 || spec >= MKT_GOODS_N || !Sellable(spec)) return;
+    int spec = Specialty(from);
+    const int* ps;
+    int stock;
+    if (spec < 0) return;
     if (g_rowN >= (int)(sizeof(g_row)/sizeof(g_row[0]))) return;
-    {
-        const int* ps = CityField(from, 0x18);
-        int stock = ps ? *ps : 0;
-        if (stock < 0) stock = 0;      // 위와 같다 — 0 개도 줄은 나온다
-        // 이미 공통품으로 들어와 있으면 게임도 그쪽을 뺀다(중복 제외).
-        for (i = 0; i < g_rowN; i++) if (g_row[i].kind == spec) return;
-        g_row[g_rowN].kind   = spec;
-        // 값은 "지금 서 있는 도시" 기준으로 셈한다 — 게임 함수가 수입품(연결 내륙도시
-        // 특산품)까지 그 안에서 알아서 처리한다.
-        g_row[g_rowN].price  = Mkt_BuyPriceAt(to, spec);
-        g_row[g_rowN].supply = stock;
-        g_row[g_rowN].origin = from;
-        g_row[g_rowN].slot   = -1;
-        g_rowN++;
-    }
+    ps = CityField(from, 0x18);
+    stock = ps ? *ps : 0;
+    if (stock < 0) stock = 0;          // 위와 같다 — 0 개도 줄은 나온다
+    g_row[g_rowN].kind   = spec;
+    // 값은 "지금 서 있는 도시" 기준으로 셈한다 — 게임 함수가 수입품(연결 내륙도시
+    // 특산품)까지 그 안에서 알아서 처리한다.
+    g_row[g_rowN].price  = Mkt_BuyPriceAt(to, spec);
+    g_row[g_rowN].supply = stock;
+    g_row[g_rowN].origin = from;
+    g_row[g_rowN].slot   = -1;
+    g_rowN++;
 }
 
 const MktRow* Mkt_At(int i) { return (i >= 0 && i < g_rowN) ? &g_row[i] : NULL; }
