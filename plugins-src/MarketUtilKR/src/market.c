@@ -5,6 +5,7 @@
 #include "itempic.h"   // CharacterUtilKR/src — ITEM.CDS 그림
 #include "uikit.h"     // CharacterUtilKR/src — 세피아 색표와 위젯
 #include "gameskin.h"  // ButtonMakerKR/src — 단추를 게임 껍데기(MISC.CDS 파트 4)로 그린다
+#include "band.h"      // ButtonMakerKR/src — 띠 폭 규칙(16 + 8n + 16)
 
 // MarketUtilKR — 교역소 매매.
 //   왼쪽: 지금 도시가 파는 것 (그림 + 이름 + 단가 + 공급량 + 담은 수량)
@@ -211,29 +212,45 @@ static void BarReset(void) { g_barPct = 100; g_barTries = 0; g_barOn = 0; }
 // ── 상인의 판 ─────────────────────────────────────────────────────────────────
 // 게임 것과 같은 모양이다 — 짙은 자주갈색 바탕에 크림 테두리, 그 안에 게임 띠 단추 셋이
 // 세로로 쌓인다. 오리지널 화면에서 색을 집어 맞췄다(바탕 49,24,24 · 테두리 226,214,189).
-#define BAR_BTN_W  136          // 게임 띠는 16 + 8n + 16 로 늘어난다(136 = 16 + 8x13 + 16)
 #define BAR_BTN_H  24           // 띠의 제 높이
-#define BAR_GAP    5
-#define BAR_PAD    10
-#define BAR_W      (BAR_BTN_W + BAR_PAD * 2)
+// 단추 사이는 2 픽셀뿐이다 — 게임 화면을 재보니 거의 붙어 있다(단추 자체에 위아래 테두리가
+// 있어 0 으로 붙이면 그 선이 겹쳐 굵어 보인다).
+#define BAR_GAP    2
+#define BAR_PAD    12
 #define BAR_H      (BAR_BTN_H * 3 + BAR_GAP * 2 + BAR_PAD * 2)
 #define BAR_BG     RGB( 49, 24, 24)
 #define BAR_EDGE   RGB(226, 214, 189)
+#define BAR_MARGIN 24           // 글자 양옆 여백. ButtonMakerKR 의 자동 폭과 같은 값이다
 
 static const wchar_t* kBarMenu[3] = { L"결정", L"값을 깎는다", L"돌아간다" };
+
+// 단추 폭은 게임 띠 규칙(16 + 8n + 16)으로 잰다 — 셋 중 가장 긴 "값을 깎는다" 에 맞춰
+// 셋을 같은 폭으로 세운다(게임 화면도 세 단추 폭이 같다). 글꼴을 못 읽으면 136 으로 둔다
+// ("값을 깎는다" 가 글자폭 88 이라 16 + 8x13 + 16 = 136 인 그 값이다).
+static int BarBtnW(void)
+{
+    int k, n = 0, w;
+    for (k = 0; k < 3; k++) {
+        int c = Band_AutoCells(kBarMenu[k], BAR_MARGIN);
+        if (c > n) n = c;
+    }
+    w = Band_Width(n);
+    return w >= 96 ? w : 136;
+}
 
 static RECT RcBarPanel(void)
 {
     RECT r;
-    r.left = (CLIENT_W - BAR_W) / 2;
+    int w = BarBtnW() + BAR_PAD * 2;
+    r.left = (CLIENT_W - w) / 2;
     r.top  = (CLIENT_H - BAR_H) / 2;
-    r.right = r.left + BAR_W; r.bottom = r.top + BAR_H;
+    r.right = r.left + w; r.bottom = r.top + BAR_H;
     return r;
 }
 static RECT RcBarBtn(int k)
 {
     RECT p = RcBarPanel(), r;
-    r.left = p.left + BAR_PAD; r.right = r.left + BAR_BTN_W;
+    r.left = p.left + BAR_PAD; r.right = p.right - BAR_PAD;
     r.top = p.top + BAR_PAD + k * (BAR_BTN_H + BAR_GAP);
     r.bottom = r.top + BAR_BTN_H;
     return r;
