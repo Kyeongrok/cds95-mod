@@ -36,3 +36,37 @@ int Fleet_SetFatigue(int v)
     *p = v;
     return 1;
 }
+
+// n 바이트를 그 자리에서 읽어도 되는가. 한 구역 안에 다 들어와야 한다.
+static int Readable(const void* p, SIZE_T n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p) return 0;
+    if (!VirtualQuery(p, &mbi, sizeof(mbi))) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return 0;
+    if ((const unsigned char*)p + n >
+        (const unsigned char*)mbi.BaseAddress + mbi.RegionSize) return 0;
+    return 1;
+}
+
+int Fleet_Crew(void)
+{
+    const unsigned char* base = (const unsigned char*)GetModuleHandleW(NULL);
+    int i, sum = 0, ships = 0;
+    if (!base) return -1;
+    for (i = 0; i < FLEET_SHIPS; i++) {
+        const int* slot = (const int*)(base + FLEET_LIST_RVA + (unsigned)i * 4);
+        const unsigned char* s;
+        int id, crew;
+        if (!Readable(slot, 4)) return -1;          // 세이브 전이면 자리 자체가 없다
+        id = *slot;
+        if (id < 0 || id >= FLEET_SHIP_N) continue; // -1 이면 빈 칸
+        s = base + FLEET_SHIP_RVA + (unsigned)id * FLEET_SHIP_SZ;
+        if (!Readable(s, FLEET_SHIP_SZ)) continue;
+        crew = *(const int*)(s + FLEET_SHIP_CREW);
+        if (crew < 0 || crew > 99999) continue;
+        sum += crew; ships++;
+    }
+    return ships ? sum : -1;                        // 한 척도 못 읽었으면 아직 아니다
+}

@@ -4,6 +4,7 @@ add_library(CharacterUtilKR SHARED
     src/navview.c
     src/questview.c
     src/invview.c
+    src/askbox.c
     src/inventory.c
     src/itemdb.c
     src/itempic.c

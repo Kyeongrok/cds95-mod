@@ -51,6 +51,8 @@ int LiveChar_PlayerFame(void);
 int LiveChar_Find(const wchar_t* name, int faceCode);
 
 int LiveChar_Age(int slot);                 // 현재 나이. 실패면 -9999
+int LiveChar_Face(int slot);                // 얼굴코드. 못 읽으면 -1
+int LiveChar_Gender(int slot);              // 0 남 / 1 여. 못 읽으면 -1
 int LiveChar_SetBirthYear(int slot, int year);   // 나이 = 지금연도 - 생년. 성공 1
 
 // 특기 레벨. id 는 세이브와 같은 1~27(항해술 … 동아시아어), 값은 0~3.

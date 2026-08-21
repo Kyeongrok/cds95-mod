@@ -3,7 +3,10 @@
 #include "ui.h"
 #include "itemdb.h"        // exe 안 아이템 표 — 그림 번호 · 분류 · 설명문
 #include "itempic.h"       // ITEM.CDS 그림
-#include "fleet.h"         // 함대 피로도 — 아래 kItemUse 가 쓴다
+#include "fleet.h"         // 함대 피로도 · 선원 수 — 아래 kItemUse 가 쓴다
+#include "askbox.h"        // 게임 다이얼로그 모양의 [YES][NO] 판
+#include "livechar.h"      // 부관이 누구인지 — 판에 그 얼굴을 넣는다
+#include "faces.h"         // 그 얼굴 그림
 #include "item_names.h"    // TradeUtilKR/src — kItemNames[286]
 
 // 칸마다 한 줄. 소지 16칸을 먼저 늘어놓고 보관 99칸이 이어진다.
@@ -35,9 +38,10 @@
 #define IP_Y (IV_Y + 40)
 
 // 정보 판에서 바로 써먹을 수 있는 아이템. 여기 적힌 것만 판에 단추가 하나 더 붙는다.
-// 아이템을 없애지는 않는다 — 몇 번이고 누를 수 있다.
-static const struct { int item; int fatigue; const wchar_t* label; } kItemUse[] = {
-    { 34, 20, L"피로 20 줄이기" },      // 육분의
+// 아이템을 없애지는 않는다 — 몇 번이고 누를 수 있다. 대신 값을 치른다:
+// 피로를 더는 것은 선원들에게 금화를 돌리는 일이라, 한 사람당 coin 닢씩 소지금에서 나간다.
+static const struct { int item; int fatigue; int coin; const wchar_t* label; } kItemUse[] = {
+    { 34, 20, 100, L"피로 20 줄이기" },      // 육분의 — 선원 한 사람에 100닢
 };
 #define ITEM_USE_N ((int)(sizeof(kItemUse)/sizeof(kItemUse[0])))
 
@@ -45,7 +49,8 @@ static int  g_tab = 0;          // 0 = 소지품(16칸), 1 = 보관함(99칸)
 static int  g_scroll = 0;
 static int  g_open = -1;        // 아이템 목록을 펼친 칸 번호. -1 = 안 펼침
 static int  g_info = -1;        // [정보] 판에 띄운 아이템 번호. -1 = 안 띄움
-static wchar_t g_useMsg[96] = L"";   // 판 안에서 단추를 누른 결과 한 줄
+static wchar_t g_useMsg[160] = L"";  // 판 안에서 단추를 누른 결과 한 줄
+static int  g_ask = -1;         // 부관에게 묻는 중인 kItemUse 번호. -1 = 안 묻는 중
 static int  g_ddScroll = 0;
 static RECT g_ddRc;
 static wchar_t g_msg[128] = L"";
@@ -244,21 +249,129 @@ static int DropHit(POINT pt)
     return (i >= 0 && i < DD_N) ? i : -1;
 }
 
-// kItemUse[u] 를 써먹는다. 결과는 판 아래 한 줄로 알린다.
+// 말하는 사람은 부관이다. 자리가 비었으면 -1 이 나가 판에 초상화가 빠진다.
+static void DeputyFace(int* gender, int* face)
+{
+    int dep;
+    LiveChar_Load();
+    Face_Load();
+    dep = LiveChar_Crew(0);
+    *gender = dep >= 0 ? LiveChar_Gender(dep) : -1;
+    *face   = dep >= 0 ? LiveChar_Face(dep)   : -1;
+}
+
+// 판에 쓴 글을 판 아래 한 줄로도 남긴다 — 판을 닫은 뒤에 무슨 일이 있었는지 보이게.
+// 판에서는 줄을 나눠 놓았으니 한 줄로 이어 붙인다.
+static void Echo(const wchar_t* s)
+{
+    int i = 0;
+    while (*s && i < 159) { g_useMsg[i++] = (*s == L'\n') ? L' ' : *s; s++; }
+    g_useMsg[i] = 0;
+}
+
+// 부관이 한마디 하고 [확인] 하나로 닫는 판.
+static void Say(const wchar_t* msg)
+{
+    int gender, face;
+    DeputyFace(&gender, &face);
+    Echo(msg);
+    Ask_Info(msg, gender, face);
+}
+
+// 부관 말이 아니라 이쪽 사정(자리를 못 읽었다 같은)일 때. 초상화 없이 글만 띄운다.
+static void Warn(const wchar_t* msg)
+{
+    Echo(msg);
+    Ask_Info(msg, -1, -1);
+}
+
+// 이 아이템을 쓰면 얼마가 드나. 선원 수를 못 읽으면 -1.
+static int UseCost(int u)
+{
+    int crew = Fleet_Crew();
+    if (crew < 0) return -1;
+    return crew * kItemUse[u].coin;
+}
+
+// kItemUse[u] 를 써먹기 전에 부관이 값을 알리고 물어 본다.
+// 답을 기다리는 동안은 g_ask 에 무엇을 묻는지 담아 두고, 판이 닫히면 UseCommit 이 치른다.
 static void UseItem(int u)
 {
-    int cur = Fleet_Fatigue();
+    int cur = Fleet_Fatigue(), crew, cost, money, gender, face;
+    wchar_t ask[320];
+
     if (cur < 0) {
-        lstrcpyW(g_useMsg, L"피로도를 읽지 못했습니다. 세이브를 불러온 뒤에 눌러 주세요.");
+        Warn(L"피로도를 읽지 못했습니다.\n세이브를 불러온 뒤에 눌러 주세요.");
         return;
     }
-    if (cur == 0) { lstrcpyW(g_useMsg, L"피로도가 이미 0 입니다."); return; }
-    {
-        int next = cur - kItemUse[u].fatigue;
-        if (next < 0) next = 0;
-        if (!Fleet_SetFatigue(next)) { lstrcpyW(g_useMsg, L"피로도를 쓰지 못했습니다."); return; }
-        wsprintfW(g_useMsg, L"피로도 %d → %d", cur, next);
+    if (cur == 0) { Say(L"지금은 금화를 분배하지 않아도 됩니다."); return; }
+
+    crew = Fleet_Crew();
+    if (crew < 0) {
+        Warn(L"선원 수를 읽지 못했습니다.\n세이브를 불러온 뒤에 눌러 주세요.");
+        return;
     }
+    cost = crew * kItemUse[u].coin;
+
+    money = Inv_Money();
+    if (money < 0) { Warn(L"소지금을 읽지 못했습니다."); return; }
+    if (money < cost) {
+        wsprintfW(ask, L"소지금 %s닢으로는\n%s닢을 못 냅니다.", Comma(money), Comma(cost));
+        Say(ask);
+        return;
+    }
+
+    DeputyFace(&gender, &face);
+    // 셈을 다 늘어놓지 않는다 — 드는 값과 물음만 있으면 된다.
+    wsprintfW(ask, L"선원들에게 한사람당 %d닢씩 나누어 주려면 %s닢이 듭니다.\n"
+                   L"금화를 나눠 주시겠습니까?",
+              kItemUse[u].coin, Comma(cost));
+    Ask_Open(ask, gender, face);
+    g_ask = u;
+    g_useMsg[0] = 0;
+}
+
+// 부관에게 그러라고 한 뒤. 물을 때 본 값이 그 사이 달라졌을 수 있으니 다시 읽어 확인한다.
+static void UseCommit(int u)
+{
+    int cur = Fleet_Fatigue(), crew = Fleet_Crew(), money = Inv_Money(), cost, next;
+    wchar_t msg[192];
+
+    if (cur < 0 || crew < 0 || money < 0) {
+        Warn(L"값을 다시 읽지 못했습니다.\n그대로 두었습니다.");
+        return;
+    }
+    cost = crew * kItemUse[u].coin;
+    if (money < cost) {
+        wsprintfW(msg, L"소지금 %s닢으로는\n%s닢을 못 냅니다.", Comma(money), Comma(cost));
+        Say(msg);
+        return;
+    }
+
+    next = cur - kItemUse[u].fatigue;
+    if (next < 0) next = 0;
+    if (!Inv_SetMoney(money - cost)) { Warn(L"소지금을 쓰지 못했습니다."); return; }
+    if (!Fleet_SetFatigue(next)) {
+        Inv_SetMoney(money);            // 피로도를 못 고쳤으면 낸 돈도 되돌린다
+        Warn(L"피로도를 쓰지 못했습니다.");
+        return;
+    }
+    // 판에는 한 줄만. 얼마를 쓰고 피로도가 어떻게 됐는지는 판을 닫은 뒤
+    // 정보 판 아래 줄에 남는다(Say 가 적어 둔 것을 여기서 자세한 쪽으로 바꾼다).
+    Say(L"금화를 나눠 주어 선원들이 기뻐합니다!");
+    wsprintfW(msg, L"%s닢 씀 · 피로도 %d → %d", Comma(cost), cur, next);
+    Echo(msg);
+}
+
+// 판에서 나온 답을 받는다. 1 = 예 / 0 = 아니오 / -1 = 아직.
+static void AskAnswer(int answer)
+{
+    int u = g_ask;
+    if (answer < 0) return;
+    g_ask = -1;
+    if (u < 0 || u >= ITEM_USE_N) return;
+    if (answer) UseCommit(u);
+    else        Say(L"알겠습니다. 다음 기회에 하지요.");
 }
 
 static void OpenItemInfo(int item)
@@ -328,6 +441,16 @@ static void PaintItemPanel(HDC dc, int itemId)
       if (g_useMsg[0])
           UI_Text(dc, bottom, g_useMsg, g_smallFont, COL_TEXT,
                   DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+      else if (u >= 0) {
+          // 누르기 전에 값을 먼저 보여 준다 — 선원이 늘면 값도 같이 오른다.
+          int cost = UseCost(u);
+          wchar_t hint[160];
+          if (cost >= 0) wsprintfW(hint, L"선원 한 사람에 %d닢 — 지금 나눠 주면 %s닢이 듭니다.",
+                                   kItemUse[u].coin, Comma(cost));
+          else           lstrcpyW(hint, L"선원 수를 아직 못 읽었습니다(세이브를 불러오면 값이 나옵니다).");
+          UI_Text(dc, bottom, hint, g_smallFont, cost >= 0 ? COL_DARK : COL_WARN_TX,
+                  DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+      }
       else if (ItemPic_Count() <= 0)
           UI_Text(dc, bottom, L"게임 폴더의 ITEM.CDS 를 열지 못해 그림은 못 보여 줍니다.",
                   g_smallFont, COL_WARN_TX, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
@@ -422,6 +545,7 @@ void Inv_Paint(HDC dc)
     UI_Scrollbar(dc, RcTrack(), g_scroll, MaxScroll(), IV_ROWS, TabLines());
     PaintDrop(dc);
     if (g_info >= 0) PaintItemPanel(dc, g_info);
+    Ask_Paint(dc);              // 묻는 판은 맨 위에 — 뜬 동안 아래는 손댈 수 없다
 }
 
 static void ScrollTo(HWND h, int row)
@@ -441,6 +565,7 @@ void Inv_Activate(HWND h, int active)
     ItemDb_Load();      // 줄마다 그림을 그리려면 그림 번호가 필요하다
     ItemPic_Load();
     g_open = -1; g_info = -1; g_msg[0] = 0; g_useMsg[0] = 0; g_msgWarn = 0;
+    g_ask = -1; Ask_Close();        // 탭을 옮기면 묻던 것은 없던 일이 된다
     if (g_scroll > MaxScroll()) g_scroll = MaxScroll();
     if (h) InvalidateRect(h, NULL, FALSE);
 }
@@ -449,6 +574,14 @@ int Inv_Click(HWND h, POINT pt)
 {
     RECT r;
     int i;
+
+    // 부관이 묻는 중이면 그 판이 다 먹는다(모달). 답이 나면 그때 값을 치른다.
+    { int answer;
+      if (Ask_Click(pt, &answer)) {
+          AskAnswer(answer);
+          InvalidateRect(h, NULL, FALSE);
+          return 1;
+      } }
 
     // 펼친 목록이 먼저 먹는다. 하나 고르면 닫힌다.
     if (g_open >= 0) {
@@ -510,6 +643,12 @@ int Inv_Click(HWND h, POINT pt)
 
 int Inv_Key(HWND h, WPARAM wp)
 {
+    { int answer;
+      if (Ask_Key(wp, &answer)) {
+          AskAnswer(answer);
+          InvalidateRect(h, NULL, FALSE);
+          return 1;
+      } }
     if (wp == VK_ESCAPE && (g_open >= 0 || g_info >= 0)) {
         g_open = -1; g_info = -1; g_useMsg[0] = 0; InvalidateRect(h, NULL, FALSE); return 1;
     }

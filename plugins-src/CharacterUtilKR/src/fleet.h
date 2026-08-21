@@ -16,3 +16,19 @@
 
 int Fleet_Fatigue(void);        // 지금 피로도. 못 읽거나 말이 안 되면 -1
 int Fleet_SetFatigue(int v);    // 성공 1
+
+// 지금 데리고 다니는 선원 수 — 육분의를 쓸 때 "한 사람당 얼마" 를 셈하는 데 쓴다.
+// 자리는 MarketUtilKR/src/marketdb.h 와 같다(별개 DLL 이라 코드를 못 나눈다. 한쪽을
+// 고치면 다른 쪽도 같이 봐야 한다).
+//   함대 객체(0x5B3928)의 +0x04 부터 여덟 칸이 배 번호다(-1 이면 빈 칸).
+//   배 struct 는 0x5A4E18 + id*0x6C 이고 그 +0x34 가 현재승원이다.
+// ★ 배 struct 열여섯 칸을 그냥 훑으면 안 된다 — 판 배도 이름·내구도가 그대로 남아 있어
+//   선원 수가 부푼다. 게임도 이 목록만 본다(0x473DB0 · 0x473DC0).
+#define FLEET_LIST_RVA   0x1B392Cu
+#define FLEET_SHIPS      8
+#define FLEET_SHIP_RVA   0x1A4E18u
+#define FLEET_SHIP_SZ    0x6Cu
+#define FLEET_SHIP_N     16
+#define FLEET_SHIP_CREW  0x34u          // 현재승원
+
+int Fleet_Crew(void);           // 함대 배들의 현재승원 합. 못 읽으면 -1

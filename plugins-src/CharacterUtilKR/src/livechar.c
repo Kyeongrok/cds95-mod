@@ -216,6 +216,21 @@ int LiveChar_Age(int slot)
     return *(const int*)(g_tbl + slot * LIVECHAR_SIZE + LC_AGE);
 }
 
+// 얼굴과 성별. 살아 있는 인물을 그 자리에서 그리는 데 쓴다(askbox 의 초상화).
+int LiveChar_Face(int slot)
+{
+    if (!g_ready || slot < 0 || slot >= LIVECHAR_COUNT) return -1;
+    return *(const int*)(g_tbl + slot * LIVECHAR_SIZE + LC_FACE);
+}
+
+int LiveChar_Gender(int slot)
+{
+    int v;
+    if (!g_ready || slot < 0 || slot >= LIVECHAR_COUNT) return -1;
+    v = *(const int*)(g_tbl + slot * LIVECHAR_SIZE + 0x08);
+    return (v == 0 || v == 1) ? v : -1;      // 0 남 / 1 여 (ce/CDS_95.CT "성별")
+}
+
 #define LC_SKILL0 0x38   /* 특기 1(항해술). 이후 4바이트씩 27개 */
 
 static int* SkillPtr(int slot, int id)
