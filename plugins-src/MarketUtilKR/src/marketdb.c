@@ -1,5 +1,6 @@
 #include "marketdb.h"
 #include <MinHook.h>
+#include <stdlib.h>       // rand — 게임 판정 함수를 못 잡았을 때만 쓴다
 #include "goods_names.h"   // TradeUtilKR/src — kTradeGoods[70]
 #include "cities_data.h"   // TradeUtilKR/src — kCities[226]
 
@@ -484,7 +485,10 @@ static int CargoSlotFor(int kind, int origin)
     return empty;
 }
 
-int Mkt_Buy(int city, int row, int qty)
+int Mkt_Buy(int city, int row, int qty) { return Mkt_BuyAt(city, row, qty, 0); }
+
+// 흥정으로 깎인 단가로 산다. unit <= 0 이면 그 줄의 제 값이다.
+int Mkt_BuyAt(int city, int row, int qty, int unit)
 {
     const MktRow* r = Mkt_At(row);
     int cost, *money, *stock, slot;
@@ -494,7 +498,8 @@ int Mkt_Buy(int city, int row, int qty)
     if (qty > r->supply) return MKT_E_SUPPLY;
     if (r->price <= 0) return MKT_E_READ;
 
-    cost = r->price * qty;
+    if (unit <= 0) unit = r->price;
+    cost = unit * qty;
     money = (int*)(g_base + MKT_MONEY_RVA);
     if (!Writable(money, 4)) return MKT_E_READ;
     if (*money < cost) return MKT_E_MONEY;
@@ -616,4 +621,149 @@ int Mkt_GoodsMass(int kind)
     p = (const int*)(g_base + MKT_PRICE_RVA + (unsigned)kind * MKT_GOODS_REC + MKT_GOODS_MASS);
     if (!Readable(p, 4)) return -1;
     return (*p > 0 && *p < 10000) ? *p : -1;
+}
+
+// ── 흥정(값 깎기) ────────────────────────────────────────────────────────────
+// 게임 메뉴 함수 0x4811E0 을 통째로 부를 수는 없다 — this 가 교역 대화 컨텍스트라서
+// 우리 창에는 그런 것이 없다. 대신 그 함수가 부르는 조각 중 컨텍스트를 안 보는 셋을
+// 그대로 부른다(주인공 · 게이트 · 성공 판정). 규칙과 대사는 note 에 적은 그대로 옮겼다.
+#define MKT_PLAYERFN_RVA  0x000A17F0u   // __thiscall int BargainSkill(Ctx*) — 아래 참고
+#define MKT_GATEFN_RVA    0x00081400u   // __cdecl int CanBargain(int skill, int price)
+#define MKT_ROLLFN_RVA    0x00081330u   // __cdecl int BargainRoll(void)
+#define MKT_BARODDS_RVA   0x00169330u   // 확률표 {40,70,85,95}
+#define MKT_BARLINE_RVA   0x00132770u   // 성공 대사 셋의 첫 자리(0x532770)
+
+// 대사 여섯 개의 자리. 게임 0x481380 이 스택에 세우는 표 그대로다.
+static const unsigned kBarLineRva[2][3] = {
+    { 0x00132770u, 0x001327A0u, 0x001327C8u },   // 깎아 줬을 때(%ld 가 들어 있다)
+    { 0x00132800u, 0x00132828u, 0x00132858u },   // 거절했을 때
+};
+
+// 못 읽을 때 쓸 우리 말. 게임 문장을 그대로 옮겨 적었다.
+static const wchar_t* kBarLineFallback[2][3] = {
+    { L"으음, 그래 좋소. 금화 %ld닢에 타협해 봅시다.",
+      L"어쩔 수 없군. 금화 %ld닢에 어떤가?",
+      L"카-앗. 곤란하군! 금화 %ld닢! 이 이상은 무리라네!" },
+    { L"무리한 얘기다. 이 가격에 봐 주게.",
+      L"이쪽은 바쁘다네. 살 마음이 없으면 돌아가게.",
+      L"구두쇠에게는 팔 마음 없네! 두번 다시 오지 말게!" },
+};
+
+// 함수 앞머리를 눈으로 확인하고서야 부른다 — 주소만 믿고 뛰면 다른 판에서 죽는다.
+static void* Fn(unsigned rva, const unsigned char* sig, unsigned n)
+{
+    unsigned char* p;
+    unsigned i;
+    if (!Base()) return NULL;
+    p = g_base + rva;
+    if (!Readable(p, n)) return NULL;
+    for (i = 0; i < n; i++) if (p[i] != sig[i]) return NULL;
+    return p;
+}
+
+static const unsigned char kPlayerSig[] = { 0xE8, 0xCB, 0xFF, 0xFF, 0xFF, 0x8B, 0xC8, 0xE9 };
+static const unsigned char kGateSig[]   = { 0x83, 0x7C, 0x24, 0x08, 0x00, 0x7E, 0x1A,
+                                            0x8B, 0x44, 0x24, 0x04, 0x6A, 0x00, 0x50 };
+static const unsigned char kRollSig[]   = { 0x56, 0xB9, 0xA0, 0x60, 0x5B, 0x00,
+                                            0x8B, 0x35, 0x04, 0x61, 0x5B, 0x00, 0x6A, 0x00, 0x6A, 0x00 };
+
+// 0x4A17F0 은 주인공을 돌려주는 함수가 아니었다 — __thiscall 이고, 교역 대화 객체의
+// +0x90(도시 id)을 따라가 그 도시 문화권이 흥정에 보는 **재주 번호**를 돌려준다
+// (0x4A17C0 -> 0x429970 -> 0x429DA0 -> [0x4CA374 + n*24]). 그래서 우리도 가격 함수
+// (Mkt_GamePrice)와 같은 수를 쓴다 — +0x90 만 채운 껍데기를 this 로 넘긴다.
+// 그 번호를 0x481400 이 0x468FE0(함대 통틀어 그 재주의 최고치)에 물어 2 이상인지 본다.
+static int BargainSkill(int city)
+{
+    static unsigned char self[0x100];
+    typedef int (__fastcall *SkillFn)(void* ecx, void* edx);
+    SkillFn fn = (SkillFn)Fn(MKT_PLAYERFN_RVA, kPlayerSig, sizeof(kPlayerSig));
+
+    if (!fn || city < 0 || city >= MKT_CITY_N) return -1;
+    ZeroMemory(self, sizeof(self));
+    *(int*)(self + 0x90) = city;
+    return fn(self, NULL);
+}
+
+int Mkt_BargainAllowed(int city, int price)
+{
+    typedef int (__cdecl *GateFn)(int skill, int price);
+    GateFn gate = (GateFn)Fn(MKT_GATEFN_RVA, kGateSig, sizeof(kGateSig));
+    int skill;
+
+    if (price <= 0 || !gate) return 0;
+    skill = BargainSkill(city);
+    if (skill < 0) return 0;                 // 게임도 -1 이면 0 을 돌려준다(0x468FE8)
+    return gate(skill, price) ? 1 : 0;
+}
+
+int Mkt_BargainRoll(void)
+{
+    typedef int (__cdecl *RollFn)(void);
+    RollFn roll = (RollFn)Fn(MKT_ROLLFN_RVA, kRollSig, sizeof(kRollSig));
+    const int* odds;
+    int lv;
+
+    if (roll) return roll() ? 1 : 0;
+
+    // 게임 함수를 못 잡았을 때 — 같은 표로 우리가 던진다. 능력은 못 읽으므로
+    // 가장 낮은 칸(40%)으로 본다. 판정만 무를 뿐 규칙은 같다.
+    odds = Base() ? (const int*)(g_base + MKT_BARODDS_RVA) : NULL;
+    lv = (odds && Readable(odds, 4) && *odds > 0 && *odds <= 100) ? *odds : 40;
+    return (rand() % 100) < lv;
+}
+
+// 게임 .data 의 한 줄(CP949)을 우리 글자로. 못 읽으면 옮겨 적어 둔 문장으로 물러난다.
+static void GameLine(unsigned rva, const wchar_t* fallback, wchar_t* out, int n)
+{
+    const char* p = NULL;
+    if (Base()) {
+        const char* s = (const char*)(g_base + rva);
+        if (Readable(s, 8)) p = s;
+    }
+    if (p) MultiByteToWideChar(949, 0, p, -1, out, n);
+    else   lstrcpynW(out, fallback, n);
+}
+
+const wchar_t* Mkt_BargainLine(int ok, int tries, int price)
+{
+    static wchar_t out[192];
+    wchar_t form[192];
+    int t = tries < 0 ? 0 : (tries > 2 ? 2 : tries);
+    int k = ok ? 0 : 1;
+
+    GameLine(kBarLineRva[k][t], kBarLineFallback[k][t], form, 192);
+    // 성공 대사에만 %ld 가 있다. 없는 문장에 값을 넘겨도 wsprintfW 는 그대로 둔다.
+    wsprintfW(out, form, (long)price);
+    return out;
+}
+
+const wchar_t* Mkt_BargainQuitLine(void)
+{
+    static wchar_t out[192];
+    GameLine(0x001328C0u, L"날 바보 취급하는 건가? 살 건지 안 살 건지 빨리하게!", out, 192);
+    return out;
+}
+
+// 공급량 벌칙. 게임 0x481190 이 판매목록을 훑으며 하는 일을 그대로 옮겼다 —
+// 각 줄에서 (공급량 x pct / 100) 을 그 물건을 대는 도시의 재고에서 뺀다.
+// 재고 자리는 살 때(Mkt_BuyAt)와 같다: 공통품은 +0x44 + 자리*4, 특산·수입품은 원산지 +0x18.
+int Mkt_SupplyCut(int city, int pct)
+{
+    int i, n = 0;
+    (void)city;
+    if (pct <= 0) return 0;
+    for (i = 0; i < g_rowN; i++) {
+        const MktRow* r = &g_row[i];
+        int* stock;
+        int cut;
+        if (r->supply <= 0) continue;
+        stock = (r->slot >= 0) ? CityField(r->origin, 0x44 + r->slot * 4)
+                               : CityField(r->origin, 0x18);
+        if (!stock || !Writable(stock, 4)) continue;
+        cut = r->supply * pct / 100;
+        if (cut <= 0) continue;
+        *stock = (*stock > cut) ? (*stock - cut) : 0;   // 게임도 0 밑으론 안 내려간다
+        n++;
+    }
+    return n;
 }

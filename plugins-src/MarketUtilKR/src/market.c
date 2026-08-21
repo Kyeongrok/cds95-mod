@@ -174,6 +174,84 @@ static void CartClear(void)
     for (i = 0; i < MKT_CARGO_MAX; i++) g_sell[i] = 0;
 }
 
+// ── 흥정(값 깎기) ─────────────────────────────────────────────────────────────
+// 게임 구입창도 [결정] 을 누르면 바로 사지 않는다 — "결정 / 값을 깎는다 / 돌아간다" 를
+// 묻는다(게임 함수 0x4811E0). 그 규칙을 그대로 옮겨 왔다:
+//   · 한 번 깎일 때마다 값이 90% 가 된다(여러 번 깎이면 곱해진다)
+//   · 세 번째로 깎아 주면 더 못 깎고 그대로 산다
+//   · 두 번째로 거절당하면 상인이 등을 돌린다 — 거래가 깨지고 창이 닫힌다
+//   · 능력이 모자라면(게임 게이트 0x481400) 메뉴 없이 예전처럼 바로 산다
+// 자세한 것은 note/TradeBargain-0x4811E0.md 에 적어 뒀다.
+static int      g_barPct   = 100;   // 지금까지 깎인 값. 100 이면 아직 제 값이다
+static int      g_barTries = 0;     // 이번 [결정] 에서 몇 번 걸었나
+static int      g_barOn    = 0;     // 상인의 판이 떠 있나
+
+// 흥정이 걸린 단가. 게임도 깎은 값이 1 닢 아래로는 안 내려간다.
+static int BarUnit(int price)
+{
+    int p;
+    if (price <= 0) return price;
+    p = price * g_barPct / 100;
+    return p > 0 ? p : 1;
+}
+
+// 지금 값으로 친 총액 — 깎였으면 깎인 값이다. 화면도 이 값을 보여 준다.
+static int CartCostNow(void)
+{
+    int i, sum = 0;
+    for (i = 0; i < g_rows && i < MKT_ROWS_MAX; i++) {
+        const MktRow* w = Mkt_At(i);
+        if (w && g_qty[i] > 0) sum += g_qty[i] * BarUnit(w->price);
+    }
+    return sum;
+}
+
+static void BarReset(void) { g_barPct = 100; g_barTries = 0; g_barOn = 0; }
+
+// ── 상인의 판 ─────────────────────────────────────────────────────────────────
+// 게임 것과 같은 모양이다 — 짙은 자주갈색 바탕에 크림 테두리, 그 안에 게임 띠 단추 셋이
+// 세로로 쌓인다. 오리지널 화면에서 색을 집어 맞췄다(바탕 49,24,24 · 테두리 226,214,189).
+#define BAR_BTN_W  136          // 게임 띠는 16 + 8n + 16 로 늘어난다(136 = 16 + 8x13 + 16)
+#define BAR_BTN_H  24           // 띠의 제 높이
+#define BAR_GAP    5
+#define BAR_PAD    10
+#define BAR_W      (BAR_BTN_W + BAR_PAD * 2)
+#define BAR_H      (BAR_BTN_H * 3 + BAR_GAP * 2 + BAR_PAD * 2)
+#define BAR_BG     RGB( 49, 24, 24)
+#define BAR_EDGE   RGB(226, 214, 189)
+
+static const wchar_t* kBarMenu[3] = { L"결정", L"값을 깎는다", L"돌아간다" };
+
+static RECT RcBarPanel(void)
+{
+    RECT r;
+    r.left = (CLIENT_W - BAR_W) / 2;
+    r.top  = (CLIENT_H - BAR_H) / 2;
+    r.right = r.left + BAR_W; r.bottom = r.top + BAR_H;
+    return r;
+}
+static RECT RcBarBtn(int k)
+{
+    RECT p = RcBarPanel(), r;
+    r.left = p.left + BAR_PAD; r.right = r.left + BAR_BTN_W;
+    r.top = p.top + BAR_PAD + k * (BAR_BTN_H + BAR_GAP);
+    r.bottom = r.top + BAR_BTN_H;
+    return r;
+}
+static void PaintBargain(HDC dc)
+{
+    RECT p = RcBarPanel(), r;
+    HBRUSH br;
+    int k;
+    if (!g_barOn) return;
+    br = CreateSolidBrush(BAR_BG); FillRect(dc, &p, br); DeleteObject(br);
+    br = CreateSolidBrush(BAR_EDGE);
+    r = p; FrameRect(dc, &r, br);
+    InflateRect(&r, -1, -1); FrameRect(dc, &r, br);    // 두 줄 — 게임 테두리도 굵다
+    DeleteObject(br);
+    for (k = 0; k < 3; k++) UI_Button(dc, RcBarBtn(k), kBarMenu[k], FALSE);
+}
+
 // 매각 담기 — 짐 칸 하나에서 뺄 수량.
 static void SellAdd(int v, int n)
 {
@@ -632,7 +710,7 @@ static void Paint(HWND h)
         int massMax = 0, capMax = 0;
         int hold = Mkt_Hold(NULL, &massMax, &capMax);   // 배 척수는 안 쓴다
         int supV = hold ? Mkt_SupplyVolume() : -1, supM = hold ? Mkt_SupplyMass() : -1;
-        int cost = CartCost(), gain = SellGain(), prof = SellProfit();
+        int cost = CartCostNow(), gain = SellGain(), prof = SellProfit();
         RECT lb;
 
         // ── 첫 줄: 소지금. 목록 바로 밑이다 — 예전에는 28 이나 떠 있어 허전했다.
@@ -662,7 +740,13 @@ static void Paint(HWND h)
             kv.left = RIGHT_X; kv.right = RcApply().left - 12;
             kv.top = BOT_Y + 30; kv.bottom = kv.top + 22;
             wsprintfW(buf, L"%s닢", N(cost));
-            PaintKV(dc, kv, L"지출", buf, COL_TEXT);
+            // 흥정으로 깎였으면 그렇게 적는다 — 지출 칸 숫자가 왜 줄었는지 보여야 한다.
+            if (g_barPct < 100) {
+                wchar_t lab[24];
+                wsprintfW(lab, L"지출(%d%%↓)", 100 - g_barPct);
+                PaintKV(dc, kv, lab, buf, COL_LANG_TX);
+            }
+            else PaintKV(dc, kv, L"지출", buf, COL_TEXT);
             kv.top = BOT_Y + 52; kv.bottom = kv.top + 22;
             wsprintfW(buf, L"%s닢", N(gain));
             PaintKV(dc, kv, L"수입", buf, COL_TEXT);
@@ -684,13 +768,14 @@ static void Paint(HWND h)
         }
     }
 
+    PaintBargain(dc);       // 상인의 판은 맨 나중에 — 창 위에 얹힌다
     UI_BufEnd(&b);
     EndPaint(h, &ps);
 }
 
 // 담아 둔 것을 실제로 산다. 한 줄이라도 실패하면 그 줄에서 멈추고 무엇이 문제인지 적는다
 // (이미 산 줄은 그대로 둔다 — 소지금과 짐은 줄 단위로 맞아 있다).
-static void CartApply(HWND h)
+static void CartApply(HWND h, int keepOpen)
 {
     int i, total = 0, bought = 0;
     (void)0;
@@ -709,7 +794,7 @@ static void CartApply(HWND h)
         const MktRow* w = Mkt_At(i);
         int got;
         if (!w || g_qty[i] <= 0) continue;
-        got = Mkt_Buy(g_city, i, g_qty[i]);
+        got = Mkt_BuyAt(g_city, i, g_qty[i], BarUnit(w->price));
         if (got < 0) {
             const wchar_t* why =
                 got == MKT_E_MONEY  ? L"소지금이 모자랍니다" :
@@ -719,20 +804,90 @@ static void CartApply(HWND h)
                       Mkt_GoodsName(w->kind), why, N(bought), N(total));
             Say(buf, 1);
             CartClear();
+            BarReset();
             Reload(h);
             return;
         }
         total += got; bought += g_qty[i];
     }
     if (!bought) { Say(L"담은 것이 없습니다.", 1); InvalidateRect(h, NULL, FALSE); return; }
-    if (total >= 0) wsprintfW(buf, L"%s개 · 지출 %s닢.", N(bought), N(total));
-    else            wsprintfW(buf, L"%s개 · %s닢 남았습니다.", N(bought), N(-total));
+    if (g_barPct < 100)  wsprintfW(buf, L"%s개 · 지출 %s닢 (%d%% 깎았습니다).",
+                                   N(bought), N(total >= 0 ? total : -total), 100 - g_barPct);
+    else if (total >= 0) wsprintfW(buf, L"%s개 · 지출 %s닢.", N(bought), N(total));
+    else                 wsprintfW(buf, L"%s개 · %s닢 남았습니다.", N(bought), N(-total));
     Say(buf, 0);
     CartClear();
+    BarReset();
     Reload(h);
     // 다 사고 팔았으면 창을 닫는다 — 게임 구입창처럼 [결정] 한 번으로 끝난다.
     // (막힌 자리에서 멈췄을 때는 위에서 이미 돌아갔다 — 무엇이 문제였는지 창에 남는다.)
-    ShowWindow(h, SW_HIDE);
+    // 흥정 끝에 산 것이면 상인이 한 말을 읽어야 하므로 창을 남긴다.
+    if (!keepOpen) ShowWindow(h, SW_HIDE);
+}
+
+// [결정] 을 눌렀을 때. 살 것이 없거나 흥정이 안 되는 처지면 예전처럼 바로 산다.
+static void CartDecide(HWND h)
+{
+    int cost = CartCost();
+    BarReset();
+    if (cost <= 0 || !Mkt_BargainAllowed(g_city, cost)) { CartApply(h, 0); return; }
+    g_barOn = 1;
+    InvalidateRect(h, NULL, FALSE);
+}
+
+// 판에서 고른 것. k 는 0 = 결정, 1 = 값을 깎는다, 2 = 돌아간다.
+static void BargainPick(HWND h, int k)
+{
+    wchar_t buf[160];
+    int ok, cut;
+
+    if (k == 0) { g_barOn = 0; CartApply(h, 0); return; }
+    if (k != 1) { g_barOn = 0; InvalidateRect(h, NULL, FALSE); return; }   // 돌아간다
+
+    ok = Mkt_BargainRoll();
+    if (ok) g_barPct = g_barPct * MKT_BARGAIN_PCT / 100;
+    Say(Mkt_BargainLine(ok, g_barTries, CartCostNow()), !ok);
+    g_barTries++;
+
+    if (ok && g_barTries >= MKT_BARGAIN_WIN) {      // 더는 못 깎는다 — 그대로 산다
+        g_barOn = 0;
+        CartApply(h, 1);
+        return;
+    }
+    if (!ok && g_barTries >= MKT_BARGAIN_LOSE) {    // 거래가 깨졌다
+        // 상인은 말만 하고 마는 것이 아니라 물건을 거둬 간다 — 게임 0x481190 그대로,
+        // 판매목록의 공급량이 그만큼 줄어든다(세 번 넘게 걸었으면 씨가 마른다).
+        cut = (g_barTries >= 3) ? MKT_CUT_HARD : MKT_CUT_BREAK;
+        lstrcpynW(buf, g_msg, 100);
+        Mkt_SupplyCut(g_city, cut);
+        CartClear();
+        BarReset();
+        Reload(h);
+        {   wchar_t line[160];
+            wsprintfW(line, L"%s (공급이 %d%% 줄었습니다)", buf, cut);
+            Say(line, 1);
+        }
+        InvalidateRect(h, NULL, FALSE);
+        return;
+    }
+    InvalidateRect(h, NULL, FALSE);                 // 말만 바뀌고 판은 그대로 선다
+}
+
+// 흥정만 걸어 놓고 안 사고 나가면 상인이 10% 를 거둬 간다(게임 0x481874).
+// 그 말을 읽을 수 있게 첫 닫기는 삼키고 창을 남긴다 — 한 번 더 닫으면 그대로 닫힌다.
+static int BargainQuit(HWND h)
+{
+    if (g_barTries <= 0) return 0;
+    Mkt_SupplyCut(g_city, MKT_CUT_QUIT);
+    CartClear();
+    BarReset();
+    Reload(h);
+    {   wchar_t line[160];
+        wsprintfW(line, L"%s (공급이 %d%% 줄었습니다)", Mkt_BargainQuitLine(), MKT_CUT_QUIT);
+        Say(line, 1);
+    }
+    InvalidateRect(h, NULL, FALSE);
+    return 1;
 }
 
 // 줄의 [모두] — 그 품목만 통째로 담는다(왼쪽은 공급 전량, 오른쪽은 짐 전량).
@@ -783,6 +938,7 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
         ItemPic_Load();
         g_msg[0] = 0;
         CartClear();
+        BarReset();
         Reload(NULL);
         return 0;
     case WM_ERASEBKGND: return 1;
@@ -790,6 +946,7 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_LBUTTONDBLCLK:
     {
         POINT pt; int v;
+        if (g_barOn) return 0;                // 판이 떠 있는 동안은 목록을 못 건드린다
         if (Locked()) return 0;               // 게임 교역소가 열려 있거나 여기가 교역소가 아니면 잠근다
         pt.x = GET_X_LPARAM(l); pt.y = GET_Y_LPARAM(l);
         if (RowAllHit(h, pt)) return 0;
@@ -818,10 +975,18 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
     {
         POINT pt; RECT rc, cb;
         pt.x = GET_X_LPARAM(l); pt.y = GET_Y_LPARAM(l);
+        if (g_barOn) {   // 판이 떠 있으면 그것이 먼저 먹는다 — 그동안은 모달처럼 군다
+            int k;
+            for (k = 0; k < 3; k++) {
+                RECT b = RcBarBtn(k);
+                if (PtInRect(&b, pt)) { BargainPick(h, k); return 0; }
+            }
+            return 0;                     // 판 밖을 눌러도 아무 일 없다
+        }
         GetClientRect(h, &rc);
         cb.right = rc.right - FRAME - 4; cb.left = cb.right - 22;
         cb.top = FRAME + 4; cb.bottom = cb.top + 18;
-        if (PtInRect(&cb, pt)) { ShowWindow(h, SW_HIDE); return 0; }
+        if (PtInRect(&cb, pt)) { if (!BargainQuit(h)) ShowWindow(h, SW_HIDE); return 0; }
         // 닫기 말고는 다 잠근다 — 게임 교역소가 열려 있는 동안 짐 칸을 건드리면
         // 게임이 [결정] 때 물건을 되돌려 넣을 자리를 잃는다.
         if (Locked()) return 0;
@@ -850,7 +1015,7 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
                 }
             }
         }
-        { RECT a = RcApply(); if (PtInRect(&a, pt)) { CartApply(h); return 0; } }
+        { RECT a = RcApply(); if (PtInRect(&a, pt)) { CartDecide(h); return 0; } }
         // [비우기] — 알림은 안 띄운다. 담은 것이 화면에서 사라지는 것이 곧 답이다.
         { RECT c = RcClear(); if (PtInRect(&c, pt)) { CartClear(); Say(L"", 0);
                                                      InvalidateRect(h, NULL, FALSE); return 0; } }
@@ -858,11 +1023,17 @@ static LRESULT CALLBACK MarketProc(HWND h, UINT m, WPARAM w, LPARAM l)
         return 0;
     }
     case WM_KEYDOWN:
-        if (w == VK_RETURN) { CartApply(h); return 0; }
-        if (w == VK_F5)     { Say(L"", 0); CartClear(); Reload(h); return 0; }
-        if (w == VK_ESCAPE) { ShowWindow(h, SW_HIDE); return 0; }
+        if (g_barOn) {                    // 판이 떠 있는 동안은 판이 키를 먹는다
+            if (w >= '1' && w <= '3')  { BargainPick(h, (int)(w - '1')); return 0; }
+            if (w == VK_RETURN)        { BargainPick(h, 0); return 0; }
+            if (w == VK_ESCAPE)        { BargainPick(h, 2); return 0; }
+            return 0;
+        }
+        if (w == VK_RETURN) { CartDecide(h); return 0; }
+        if (w == VK_F5)     { Say(L"", 0); CartClear(); BarReset(); Reload(h); return 0; }
+        if (w == VK_ESCAPE) { if (!BargainQuit(h)) ShowWindow(h, SW_HIDE); return 0; }
         return 0;
-    case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
+    case WM_CLOSE: if (!BargainQuit(h)) ShowWindow(h, SW_HIDE); return 0;
     case WM_DESTROY:
         UI_DestroyFonts();
         if (g_priceFont) { DeleteObject(g_priceFont); g_priceFont = NULL; }
@@ -902,6 +1073,7 @@ static void ShowMarketWindow(void)
     } else {
         g_msg[0] = 0;         // 지난번 [결정] 자국은 지우고 연다
         CartClear();
+        BarReset();           // 흥정은 거래 한 판마다 처음부터다
         Reload(g_wnd);
     }
     if (g_wnd) {

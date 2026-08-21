@@ -214,3 +214,42 @@ int  Mkt_GoodsPic(int kind);           // ITEM.CDS 그림 번호
 int  Mkt_GoodsMass(int kind);          // 한 개 무게(레코드 +0x70). 못 읽으면 -1
 #define MKT_GOODS_REC   136            // 교역품 레코드 크기(int 34칸)
 #define MKT_GOODS_MASS  0x70           // 그 안의 중량 자리
+
+// ── 흥정(값 깎기) ────────────────────────────────────────────────────────────
+// 게임 구입창에서 [결정] 을 누르면 "결정 / 값을 깎는다 / 돌아간다" 가 뜬다.
+// 그 메뉴 함수가 0x4811E0 이다(note/TradeBargain-0x4811E0.md 에 통째로 적어 뒀다).
+// 그 함수는 교역 대화 컨텍스트를 this 로 받아 우리 창에서는 못 부르므로,
+// 컨텍스트가 필요 없는 조각만 그대로 부르고 규칙은 옮겨 왔다.
+#define MKT_BARGAIN_PCT   90   // 한 번 깎을 때마다 90%. 게임 0x481287 이 x90/100 한다
+#define MKT_BARGAIN_WIN   3    // 성공 세 번째면 더 못 깎고 그대로 산다(0x4812D1)
+#define MKT_BARGAIN_LOSE  2    // 실패 두 번째면 거래가 깨진다(0x4812F6)
+
+// 지금 흥정을 걸 수 있나. 게임 게이트 0x481400 그대로 — 값이 0 보다 크고,
+// 그 도시가 보는 재주(0x4A17F0 이 도시 문화권으로 골라 준다)가 함대 통틀어 2 이상이어야
+// 한다. 못 부르면 0(메뉴 없이 그냥 산다).
+int Mkt_BargainAllowed(int city, int price);
+
+// 한 번 깎아 본다. 1 = 깎아 준다, 0 = 거절. 게임 판정 0x481330 을 그대로 부른다
+// (주인공과 동승자 중 높은 쪽 능력으로 확률표 {40,70,85,95}% 를 골라 게임 rand 로 던진다).
+// 그 함수를 못 잡으면 같은 규칙을 우리 rand 로 흉내낸다.
+int Mkt_BargainRoll(void);
+
+// 상인 대사. ok = 방금 깎아 줬나, tries = 이번 거래에서 몇 번째 시도인가(0 부터),
+// price = 깎인 뒤의 값. 게임 .data 문자열을 그대로 읽어 쓴다(0x481380 의 표).
+const wchar_t* Mkt_BargainLine(int ok, int tries, int price);
+
+// 단가를 지정해 산다(흥정으로 깎인 값). unit <= 0 이면 그 줄의 제 값으로 산다.
+int  Mkt_BuyAt(int city, int row, int qty, int unit);
+
+// 흥정을 걸고 안 사면 상인이 물건을 거둬들인다 — 게임 0x481190 이 판매목록을 훑어
+// 각 줄 공급량의 pct% 를 그 도시 재고에서 뺀다(0x481100 이 특산 +0x18 · 공통 칸에 쓴다).
+//   · 거래가 깨졌을 때(실패 두 번째) 50%. 그 전에 세 번 넘게 걸었으면 100% — 씨가 마른다
+//   · 흥정만 걸고 그냥 나가면 10%
+// 깎은 줄 수를 돌려준다. 목록은 부른 쪽에서 다시 만들어야 한다.
+#define MKT_CUT_BREAK  50
+#define MKT_CUT_HARD   100
+#define MKT_CUT_QUIT   10
+int  Mkt_SupplyCut(int city, int pct);
+
+// 흥정만 걸고 나갈 때 상인이 하는 말(게임 0x5328C0).
+const wchar_t* Mkt_BargainQuitLine(void);
