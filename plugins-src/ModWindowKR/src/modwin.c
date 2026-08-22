@@ -16,27 +16,107 @@
 #define BTN_W       164
 #define BTN_H       GAMESKIN_H       // 게임 띠의 제 높이(24)
 #define BTN_GAP     3
+#define COL_GAP     14               // 두 무리 사이
 #define PAD         12
 #define TITLE_BAR   28
-#define ROWS_MAX    12               // 이보다 길어지면 열을 늘린다
+#define HEAD_H      20               // 무리 이름이 앉는 자리
+#define FOOT_GAP    14               // 열과 아래 가로줄 사이
+
+// 바탕은 게임 것과 같은 짙은 자주갈색(#311818)이다 — MarketUtilKR 의 흥정 판이 오리지널
+// 화면에서 집어낸 그 색과 같다. 어두운 바탕이라 글자는 크림색으로 얹는다.
+#define COL_WIN_BG    RGB(0x31, 0x18, 0x18)
+#define COL_HEAD_TX   RGB(226, 214, 189)
+
+// 항목을 네 무리로 갈라 왼쪽부터 세운다.
+//   일반 — 배를 몰면서 여는 것(정보·지도·매매·저장 …)
+//   편집 — 게임 속을 고치는 것(패치·대사·퀘스트 …)
+//   도구 — 만들고 들여다보는 것(버튼 만들기·도시그림·단축키 …)
+//   개발 — 판을 대놓고 주무르는 것(플레이어 수정 …)
+//   기능 — 창을 여는 것이 아니라 그 자리에서 일이 끝나는 것(저장·중단). 열로 세우지 않고
+//          아래에 가로줄 하나로 따로 앉힌다 — 성격이 달라 섞이면 눈에 안 들어온다.
+//
+// 편집과 도구를 가른 잣대는 "판이 바뀌는가" 다. 편집 쪽은 눌러 고치면 게임이 달라지고,
+// 도구 쪽은 만들거나 보기만 한다. 개발은 그중에서도 놀이의 앞뒤를 건너뛰는 것들이라
+// 따로 세워 둔다 — 손이 미끄러져 눌리는 자리에 있으면 곤란하다.
+#define GRP_PLAY    0
+#define GRP_EDIT    1
+#define GRP_TOOL    2
+#define GRP_DEV     3
+#define GRP_FUNC    4
+#define GRP_N       5
+#define GRP_COLS    4              // 세로 열로 세우는 무리 수. 나머지(기능)는 아래 가로줄이다
+
+static const wchar_t* kGroupName[GRP_N] = { L"일반", L"편집", L"도구", L"개발", L"기능" };
+
+// 값은 common/modmenu.h 의 ID 표를 본다.
+static const UINT kPlayIds[] = {
+    0xB101u,   // 교역시세
+    0xB102u,   // 교역품
+    0xB103u,   // 워프
+    0xB301u,   // 정보
+    0xB600u,   // 지도
+    0xBA00u,   // 피로도
+    0xBC00u,   // 힌트
+    0xBD00u,   // 매매
+    0xC200u,   // 기능수련
+    0xC300u,   // 서적
+    0xC400u,   // 선체
+    0xC700u,   // 풍향 화살표
+};
+
+static const UINT kToolIds[] = {
+    0xB700u,   // 플러그인 관리
+    0xBB00u,   // 단축키
+    0xBF00u,   // 도시그림
+    0xC500u,   // 버튼 만들기
+};
+
+static const UINT kDevIds[] = {
+    0xB701u,   // 플레이어 수정
+};
+
+static const UINT kFuncIds[] = {
+    0xBE00u,   // 저장
+    0xBE01u,   // 중단
+};
+
+// 두 표 어디에도 없으면 편집으로 본다 — 새로 붙는 것은 대개 게임 속을 손보는 쪽이다.
 
 typedef struct {
     UINT    id;       // WM_COMMAND 로 보낼 값. 하위 메뉴가 딸린 항목이면 0
     HMENU   sub;      // 하위 메뉴가 딸린 항목이면 그 메뉴(워프 같은 것)
     BOOL    checked;  // 켜고 끄는 항목(풍향 화살표)은 눌린 모양으로 보인다
     BOOL    gray;
+    int     group;
     wchar_t label[64];
 } ModItem;
 
 static HWND      g_wnd;
 static HWND      g_owner;
 static ModItem   g_items[MAX_ITEMS];
-static int       g_count, g_cols, g_rows;
+static int       g_count, g_rows;
+static int       g_start[GRP_N], g_num[GRP_N];   // g_items 안에서 무리별 구간
 static int       g_hot = -1;      // 마우스가 얹힌 단추
 static int       g_down = -1;     // 누르고 있는 단추
 static DWORD     g_shownTick;     // 뜬 시각 — 뜨자마자 닫히는 것을 막는다
 
 int ModWin_IsOpen(void) { return g_wnd != NULL; }
+
+// 이 항목이 어느 무리인가. 하위가 딸린 것은 그 첫 항목의 ID 로 가린다(워프가 그렇다).
+static int GroupOf(UINT id, HMENU sub)
+{
+    int i;
+    if (sub && !id) id = GetMenuItemID(sub, 0);
+    for (i = 0; i < (int)(sizeof(kPlayIds) / sizeof(kPlayIds[0])); i++)
+        if (kPlayIds[i] == id) return GRP_PLAY;
+    for (i = 0; i < (int)(sizeof(kToolIds) / sizeof(kToolIds[0])); i++)
+        if (kToolIds[i] == id) return GRP_TOOL;
+    for (i = 0; i < (int)(sizeof(kDevIds) / sizeof(kDevIds[0])); i++)
+        if (kDevIds[i] == id) return GRP_DEV;
+    for (i = 0; i < (int)(sizeof(kFuncIds) / sizeof(kFuncIds[0])); i++)
+        if (kFuncIds[i] == id) return GRP_FUNC;
+    return GRP_EDIT;
+}
 
 // 니모닉(&)과 단축키 꼬리(탭 뒤)를 떼어 낸다. 단추에는 글자만 세운다.
 static void CleanLabel(const wchar_t* src, wchar_t* dst, int cap)
@@ -70,25 +150,71 @@ static void Collect(HMENU m)
         it->id = it->sub ? 0 : GetMenuItemID(m, (UINT)i);
         it->checked = (state & MF_CHECKED) ? TRUE : FALSE;
         it->gray = (state & (MF_GRAYED | MF_DISABLED)) ? TRUE : FALSE;
+        it->group = GroupOf(it->id, it->sub);
         CleanLabel(raw, it->label, 64);
     }
 
-    // 세로로 너무 길어지지 않게 열을 늘린다.
-    g_cols = 1;
-    while ((g_count + g_cols - 1) / g_cols > ROWS_MAX) g_cols++;
-    g_rows = (g_count + g_cols - 1) / g_cols;
+    // 무리끼리 모아 둔다. 같은 무리 안에서는 들어온 차례를 지킨다(제자리 정렬).
+    {
+        ModItem sorted[MAX_ITEMS];
+        int n = 0, g, i;
+        for (g = 0; g < GRP_N; g++) {
+            g_num[g] = 0;
+            g_start[g] = n;
+            for (i = 0; i < g_count; i++)
+                if (g_items[i].group == g) { sorted[n++] = g_items[i]; g_num[g]++; }
+        }
+        for (i = 0; i < n; i++) g_items[i] = sorted[i];
+        g_count = n;
+    }
+
+    {
+        int g;
+        g_rows = 0;
+        for (g = 0; g < GRP_COLS; g++) if (g_num[g] > g_rows) g_rows = g_num[g];
+    }
     if (g_rows < 1) g_rows = 1;
 }
 
-static int WinW(void) { return PAD * 2 + g_cols * BTN_W + (g_cols - 1) * BTN_GAP; }
-static int WinH(void) { return TITLE_BAR + PAD * 2 + g_rows * BTN_H + (g_rows - 1) * BTN_GAP; }
+static int WinW(void) { return PAD * 2 + GRP_COLS * BTN_W + (GRP_COLS - 1) * COL_GAP; }
+
+// 열 아래 가로줄이 시작하는 자리(그 줄의 이름이 앉는 높이).
+static int FootY(void)
+{
+    return TITLE_BAR + PAD + HEAD_H + g_rows * BTN_H + (g_rows - 1) * BTN_GAP + FOOT_GAP;
+}
+
+static int WinH(void)
+{
+    if (g_num[GRP_FUNC] <= 0) return FootY() - FOOT_GAP + PAD;
+    return FootY() + HEAD_H + BTN_H + PAD;
+}
+
+// 무리 g 의 왼쪽 끝.
+static int ColX(int g) { return PAD + g * (BTN_W + COL_GAP); }
+
+static int GroupAt(int k)
+{
+    int i;
+    for (i = 0; i < GRP_N; i++)
+        if (k >= g_start[i] && k < g_start[i] + g_num[i]) return i;
+    return GRP_N - 1;
+}
 
 static RECT BtnRect(int k)
 {
     RECT r;
-    int col = k / g_rows, row = k % g_rows;   // 세로로 채우고 다음 열로 넘어간다
-    r.left = PAD + col * (BTN_W + BTN_GAP);
-    r.top  = TITLE_BAR + PAD + row * (BTN_H + BTN_GAP);
+    int g = GroupAt(k);
+    int idx = k - g_start[g];
+
+    if (g == GRP_FUNC) {
+        // 아래 가로줄 — 왼쪽부터 나란히 눕는다.
+        r.left = PAD + idx * (BTN_W + BTN_GAP);
+        r.top  = FootY() + HEAD_H;
+    } else {
+        r.left = ColX(g);
+        r.top  = TITLE_BAR + PAD + HEAD_H + idx * (BTN_H + BTN_GAP);
+    }
     r.right = r.left + BTN_W;
     r.bottom = r.top + BTN_H;
     return r;
@@ -116,9 +242,22 @@ static void Paint(HWND h)
     GetClientRect(h, &rc);
     dc = UI_BufBegin(&b, hdc, rc.right, rc.bottom);
 
-    { HBRUSH br = CreateSolidBrush(COL_BG); FillRect(dc, &rc, br); DeleteObject(br); }
+    { HBRUSH br = CreateSolidBrush(COL_WIN_BG); FillRect(dc, &rc, br); DeleteObject(br); }
     r = rc; r.bottom = TITLE_BAR;
     GameSkin_Title(dc, r, L"모드");
+
+    for (k = 0; k < GRP_COLS; k++) {
+        RECT h2;
+        h2.left = ColX(k); h2.right = h2.left + BTN_W;
+        h2.top = TITLE_BAR + PAD; h2.bottom = h2.top + HEAD_H;
+        UI_Text(dc, h2, kGroupName[k], g_font, COL_HEAD_TX, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    if (g_num[GRP_FUNC] > 0) {
+        RECT h2;
+        h2.left = PAD; h2.right = h2.left + BTN_W;
+        h2.top = FootY(); h2.bottom = h2.top + HEAD_H;
+        UI_Text(dc, h2, kGroupName[GRP_FUNC], g_font, COL_HEAD_TX, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
 
     for (k = 0; k < g_count; k++) {
         RECT br = BtnRect(k);

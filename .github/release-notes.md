@@ -270,5 +270,20 @@
   `ANKFONT.DAT` 8x16 ASCII)라 화면에 찍히는 것과 한 점도 다르지 않습니다.
   폭은 글자에 맞춰 자동으로 잡거나 칸 수로 직접 줄 수 있고, 글자색과 그림자도 고릅니다.
 
-> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin` 만 포함됩니다.
+- **LandWarKR** — "파일 > 모드 > 육상전 부대". 육상전에 나오는 부대 43종과 배경 4장을
+  `LANDDATA.CDS` 에서 뽑아 봅니다. 게임에 육상전이 있다는 것 자체가 오래 오해받아 온
+  것이라(낱말 하나로 "없다" 고 단정했던 적이 있습니다) 자료부터 펼쳐 보게 만든 창입니다.
+- **WindArrowKR** — 항해 화면 왼쪽 위에 **풍향·해류를 화살표로** 얹습니다(바람은 흰색,
+  해류는 연두). 원본 항해 화면에는 화살표가 없고 물결과 구름으로만 흐름을 보이는데,
+  게임이 배를 찍을 때 쓰는 그리기 함수를 그대로 빌려 화살표를 올렸습니다. 값은 게임이
+  "풍향: 서 /풍속: 4" 로 쓰는 그 자리에서 읽으므로 글자와 정확히 같습니다 — 다만 그
+  글자는 [화면효과를 사용한다] 를 꺼야 나오고, 이 화살표는 늘 나옵니다. 세기는 화살표
+  자루 길이로 보입니다. 켜고 끄기는 "파일 > 모드 > 풍향 화살표".
+- **ModWindowKR** — 플러그인이 스무 개를 넘으면서 "파일" 메뉴가 게임 원래 항목보다
+  우리 것으로 더 길어졌습니다. 이제 파일에는 **"모드" 하나만** 서고, 누르면 창이 떠
+  항목을 게임 띠 단추로 늘어놓습니다. 성격대로 **일반 · 편집 · 도구 · 개발** 네 줄로
+  갈라 세우고, 그 자리에서 일이 끝나는 저장·중단은 아래 "기능" 줄에 따로 앉힙니다.
+  무엇이 새로 붙어도 저절로 단추가 하나 늡니다.
+
+> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.

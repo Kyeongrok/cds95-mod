@@ -29,6 +29,20 @@
                                    // Map=0xB600, Mod=0xB700, WindArrow=0xB800, CityPic=0xBF00 과 비충돌
 #define MOD_LABEL      L"모드"
 
+// 걷지 않고 파일 메뉴에 그대로 두는 항목. 창을 거치지 않고 바로 누르는 편이 나은 것들이다.
+// 값은 common/modmenu.h 의 ID 표를 보고 적는다.
+static const UINT kKeepInFile[] = {
+    0xB900u,        // 업데이트
+};
+
+static BOOL KeepInFile(UINT id)
+{
+    int i;
+    for (i = 0; i < (int)(sizeof(kKeepInFile) / sizeof(kKeepInFile[0])); i++)
+        if (kKeepInFile[i] == id) return TRUE;
+    return FALSE;
+}
+
 static HINSTANCE g_hinst;
 static HWND      g_hwnd, g_subHwnd;
 static WNDPROC   g_origProc;
@@ -79,6 +93,7 @@ static BOOL ShouldTake(HMENU fileMenu, int pos)
     if (sub) return HasKrId(sub);                  // 속에 우리 ID 가 있으면 우리 팝업이다
     id = GetMenuItemID(fileMenu, (UINT)pos);
     if (id == ID_MOD_WINDOW) return FALSE;         // "모드" 단추 자신은 그대로 둔다
+    if (KeepInFile(id)) return FALSE;
     return id != (UINT)-1 && id >= KR_ID_LO && id <= KR_ID_HI;
 }
 
@@ -175,6 +190,22 @@ static BOOL HasModButton(HMENU fileMenu)
     return FALSE;
 }
 
+// "모드" 를 맨 끝으로 되돌린다. 파일에 남겨 둔 항목(업데이트)은 그 플러그인이 저마다
+// 제 때에 붙이므로, 가만두면 "모드" 뒤에 가서 붙는다. 옮겨야 할 때만 손댄다.
+static BOOL EnsureModLast(HMENU fileMenu)
+{
+    int n = GetMenuItemCount(fileMenu), i;
+    for (i = 0; i < n; i++) {
+        if (GetSubMenu(fileMenu, (UINT)i)) continue;
+        if (GetMenuItemID(fileMenu, (UINT)i) != ID_MOD_WINDOW) continue;
+        if (i == n - 1) return FALSE;              // 이미 맨 끝이다
+        RemoveMenu(fileMenu, (UINT)i, MF_BYPOSITION);
+        AppendMenuW(fileMenu, MF_STRING, ID_MOD_WINDOW, MOD_LABEL);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 // 한 바퀴 정리. 걷고, 단추가 없으면 달고, 구분선을 다듬는다.
 static BOOL Sweep(HWND h)
 {
@@ -192,6 +223,7 @@ static BOOL Sweep(HWND h)
         added = TRUE;
         OutputDebugStringW(L"[ModWindowKR] \"모드\" 단추 설치.");
     }
+    if (EnsureModLast(fileMenu)) added = TRUE;
     TidySeparators(fileMenu);
     if (moved) {
         WCHAR msg[80];

@@ -20,7 +20,7 @@ jobs:
           # 나머지는 만든이별 폴더에 담는다. ModUtilKR 이 뜰 때 그것들을 대신 불러온다.
           mkdir -p "dist/CDS95Util/plugins/록히드매튜"
           cp CDS95Util/ModUtilKR.plugin dist/CDS95Util/
-          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR HintUtilKR MarketUtilKR SaveUtilKR CityPicKR DialogUtilKR SkillUtilKR BookUtilKR ShipInfoKR ButtonMakerKR; do
+          for f in HotelUtilKR TradeUtilKR CharacterUtilKR WorldMapKR ShipSkinKR PatchUtilKR QuestModKR UpdateUtilKR FatigueUtilKR HotkeyUtilKR HintUtilKR MarketUtilKR SaveUtilKR CityPicKR DialogUtilKR SkillUtilKR BookUtilKR ShipInfoKR ButtonMakerKR LandWarKR WindArrowKR ModWindowKR; do
             cp "CDS95Util/$f.plugin" "dist/CDS95Util/plugins/록히드매튜/"
           done
           # 데이터는 루트 한 자리에 모은다 — 플러그인이 어느 폴더에 있든 여기서 찾는다.
