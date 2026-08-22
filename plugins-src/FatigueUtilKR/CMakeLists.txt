@@ -4,6 +4,10 @@ add_library(FatigueUtilKR SHARED
 )
 
 # 후킹이 없어 minhook 은 안 쓴다 — 값 하나를 읽고 쓰는 창이 전부다.
+target_include_directories(FatigueUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
+)
+
 target_link_libraries(FatigueUtilKR PRIVATE user32 gdi32)
 
 target_compile_definitions(FatigueUtilKR PRIVATE UNICODE _UNICODE)

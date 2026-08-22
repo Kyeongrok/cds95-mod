@@ -6,6 +6,10 @@ add_library(ShipSkinKR SHARED
     src/ship_stats.c
 )
 
+target_include_directories(ShipSkinKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
+)
+
 target_link_libraries(ShipSkinKR PRIVATE minhook user32 shell32 gdi32 comdlg32)
 
 # 한글 주석(UTF-8) — MSVC cp949 오독으로 주석이 다음 줄 삼키는 것 방지

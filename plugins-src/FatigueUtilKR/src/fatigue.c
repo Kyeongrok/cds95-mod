@@ -1,5 +1,6 @@
 #include <windows.h>
 #include "fatigue.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // FatigueUtilKR — 피로도 덜어내기. 창 하나에 입력칸과 버튼 하나뿐이다.
 //
@@ -311,7 +312,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_FATIGUE_OPEN)) {
+            if (!MenuHasId(target, ID_FATIGUE_OPEN) && !ModMenu_HasId(g_gameHwnd, ID_FATIGUE_OPEN)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenuW(target, MF_STRING, ID_FATIGUE_OPEN, L"피로도");

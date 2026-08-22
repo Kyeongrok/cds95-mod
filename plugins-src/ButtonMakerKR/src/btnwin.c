@@ -9,6 +9,7 @@
 #include "gamefont.h"
 #include "imgio.h"      // CharacterUtilKR/src — PNG 쓰기(GDI+ 를 실행 중에 부른다)
 #include "gameskin.h"   // 창을 게임 껍데기로 입힌다(단추 = 베이지 띠, 제목 = 진홍 띠)
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // ButtonMakerKR — 게임과 똑같은 메뉴 띠(타이틀·버튼)를 글자만 바꿔 만들어 준다.
 //
@@ -533,7 +534,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_BTN_OPEN)) {
+            if (!(MenuHasId(target, ID_BTN_OPEN) || ModMenu_HasId(g_gameHwnd, ID_BTN_OPEN))) {
                 HMENU modMenu;
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);

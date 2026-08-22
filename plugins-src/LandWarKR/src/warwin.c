@@ -3,6 +3,7 @@
 #include "warwin.h"
 #include "landwar.h"
 #include "gameskin.h"   // 창을 게임 껍데기로 입힌다
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // LandWarKR — 육상전 부대의 병종을 갈아 끼운다.
 //
@@ -432,7 +433,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_LAND_OPEN)) {
+            if (!(MenuHasId(target, ID_LAND_OPEN) || ModMenu_HasId(g_gameHwnd, ID_LAND_OPEN))) {
                 HMENU modMenu;
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);

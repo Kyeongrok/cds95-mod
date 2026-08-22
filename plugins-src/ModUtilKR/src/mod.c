@@ -3,6 +3,7 @@
 #include <shellapi.h>
 #include "mod.h"
 #include "playermod.h"     // 모드 > 플레이어 수정 — 소지금 · 명성
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 #define MAX_MODS 64
 // "파일 > 플러그인 관리" 커맨드. 게임 창 하나를 여러 플러그인이 같이 서브클래싱하므로 ID 가 겹치면
@@ -449,14 +450,14 @@ static DWORD WINAPI MenuThread(LPVOID p)
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
                 // 항목마다 따로 본다 — 하나가 이미 붙어 있다고 나머지를 안 달면 안 된다.
-                if (!MenuHasId(target, ID_MOD_OPEN) || !MenuHasId(target, ID_PLAYER_OPEN)) {
+                if (!(MenuHasId(target, ID_MOD_OPEN) || ModMenu_HasId(g_gameHwnd, ID_MOD_OPEN)) || !(MenuHasId(target, ID_PLAYER_OPEN) || ModMenu_HasId(g_gameHwnd, ID_PLAYER_OPEN))) {
                     HMENU modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, TRUE);
                     HMENU into = modMenu ? modMenu : target;
-                    if (!MenuHasId(target, ID_MOD_OPEN)) {
+                    if (!(MenuHasId(target, ID_MOD_OPEN) || ModMenu_HasId(g_gameHwnd, ID_MOD_OPEN))) {
                         AppendMenuW(into, MF_STRING, ID_MOD_OPEN, L"플러그인 관리");
                         LogW(L"[ModUtilKR] \"플러그인 관리\" 메뉴 설치.");
                     }
-                    if (!MenuHasId(target, ID_PLAYER_OPEN)) {
+                    if (!(MenuHasId(target, ID_PLAYER_OPEN) || ModMenu_HasId(g_gameHwnd, ID_PLAYER_OPEN))) {
                         AppendMenuW(into, MF_STRING, ID_PLAYER_OPEN, L"플레이어 수정");
                         LogW(L"[ModUtilKR] \"플레이어 수정\" 메뉴 설치.");
                     }

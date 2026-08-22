@@ -2,6 +2,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include "questmod.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // QuestModKR — 퀘스트 파일 갈아 끼우기. 자세한 배치는 questmod.h 참고.
 //
@@ -867,7 +868,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
             if (bar) {
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
-                if (!MenuHasId(target, ID_QMOD_OPEN)) {
+                if (!(MenuHasId(target, ID_QMOD_OPEN) || ModMenu_HasId(g_gameHwnd, ID_QMOD_OPEN))) {
                     {   // 파일 메뉴가 아니라 "모드" 아래에 붙인다
                     HMENU modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, g_pass > 1);
                     if (!modMenu) continue;      // 아직 "모드" 가 없다 — 다음 바퀴에 다시 본다

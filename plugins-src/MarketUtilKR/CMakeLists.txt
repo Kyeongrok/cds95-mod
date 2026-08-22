@@ -14,6 +14,7 @@ add_library(MarketUtilKR SHARED
 )
 
 target_include_directories(MarketUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src   # goods_names.h · cities_data.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../ButtonMakerKR/src # gameskin.h · band.h …

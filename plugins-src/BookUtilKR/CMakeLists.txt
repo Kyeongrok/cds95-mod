@@ -9,6 +9,7 @@ add_library(BookUtilKR SHARED
 )
 
 target_include_directories(BookUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../HintUtilKR/src    # hintdb.h · hint_rows.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../SkillUtilKR/src   # skilldb.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src   # cities_data.h

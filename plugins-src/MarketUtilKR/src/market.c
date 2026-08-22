@@ -6,6 +6,7 @@
 #include "uikit.h"     // CharacterUtilKR/src — 세피아 색표와 위젯
 #include "gameskin.h"  // ButtonMakerKR/src — 단추를 게임 껍데기(MISC.CDS 파트 4)로 그린다
 #include "band.h"      // ButtonMakerKR/src — 띠 폭 규칙(16 + 8n + 16)
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // MarketUtilKR — 교역소 매매.
 //   왼쪽: 지금 도시가 파는 것 (그림 + 이름 + 단가 + 공급량 + 담은 수량)
@@ -1170,7 +1171,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_MARKET_OPEN)) {
+            if (!MenuHasId(target, ID_MARKET_OPEN) && !ModMenu_HasId(g_gameHwnd, ID_MARKET_OPEN)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenuW(target, MF_STRING, ID_MARKET_OPEN, L"매매");

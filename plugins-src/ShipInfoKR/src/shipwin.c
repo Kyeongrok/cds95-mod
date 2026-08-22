@@ -4,6 +4,7 @@
 #include "hulldb.h"
 #include "shipstil.h"
 #include "cities_data.h"   // TradeUtilKR/src — kCities[226]
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // ShipInfoKR — 선체 도감. 조선소 구입 창에 배 그림이 없어서 만들었다. 읽기 전용이다.
 //
@@ -371,7 +372,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_SHIP_OPEN)) {
+            if (!(MenuHasId(target, ID_SHIP_OPEN) || ModMenu_HasId(g_gameHwnd, ID_SHIP_OPEN))) {
                 HMENU modMenu;
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);

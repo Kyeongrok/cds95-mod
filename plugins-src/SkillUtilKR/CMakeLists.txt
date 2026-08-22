@@ -8,6 +8,7 @@ add_library(SkillUtilKR SHARED
 # 같은 표를 두 벌 두면 한쪽만 고쳐지는 사고가 나므로 복사하지 않고 참조한다.
 # (그 파일의 lib/ship/guild 열은 EXE 건물표와 어긋나므로 이름만 쓴다.)
 target_include_directories(SkillUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src
 )
 

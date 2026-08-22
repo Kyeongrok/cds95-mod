@@ -10,6 +10,7 @@
 #include "itempic.h"        // 교역품 그림 — CharacterUtilKR/src 의 ITEM.CDS 디코더를 같이 빌드한다
 #include "citycg.h"         // 도시 그림 — CityPicKR/src 의 CITYCG.CDS 디코더를 같이 빌드한다
 #include "cityfrm.h"        // 그 둘레의 액자(CITYFRM.CDS) — 게임 화면과 같은 모양으로 낸다
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // TradeUtilKR — 한국어판 전용 "교역" 메뉴 + 시세 일람 창.
 // 게임 메뉴바에 항목을 추가하고(서브클래싱으로 클릭 가로챔), 클릭 시 전 도시 목록을 표시한다.
@@ -2032,13 +2033,16 @@ static BOOL CALLBACK EnumProc(HWND h, LPARAM l)
     return TRUE;
 }
 
-static BOOL HasOurMenu(HMENU bar)
+static BOOL HasOurMenu(HMENU m)
 {
-    int n = GetMenuItemCount(bar), i;
-    WCHAR s[64];
-    for (i = 0; i < n; i++)
-        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"워프") == 0)
-            return TRUE;
+    // 하위 메뉴까지 내려가며 본다. MenuTidyKR 이 우리 항목을 "모드" 아래로 옮기므로,
+    // 파일 메뉴만 훑으면 늘 "없다" 가 나와 1초마다 또 달게 된다.
+    int n = GetMenuItemCount(m), i;
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (HasOurMenu(sub)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == ID_TRADE_WARP) return TRUE;
+    }
     return FALSE;
 }
 // 최상위 메뉴바에서 "파일" 팝업 서브메뉴를 찾는다. 없으면 NULL.
@@ -2094,7 +2098,7 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                 // "파일" 드롭다운이 있으면 그 안에, 없으면 예전처럼 최상위에 붙인다.
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
-                if (!HasOurMenu(target))
+                if (!HasOurMenu(target) && !ModMenu_HasId(g_hwnd, ID_TRADE_WARP))
                 {
                     HMENU warp; int i;
                     // 같은 지역이 떨어져 있어도 서브메뉴는 하나로 모은다.

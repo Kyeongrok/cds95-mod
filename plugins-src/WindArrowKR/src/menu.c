@@ -1,11 +1,12 @@
 #include <windows.h>
 #include "hook.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // 게임 창 "파일" 메뉴에 "풍향 화살표" 항목을 달고 체크로 켜고 끈다.
 // 다른 KR 플러그인(WorldMapKR/ShipSkinKR)과 같은 방식이다 — 1초 폴링으로 게임 창을 찾아
 // AppendMenu 하고, 서브클래싱해서 WM_COMMAND 를 ID 로 가로챈다.
 
-#define ID_ARROW_TOGGLE 0xB800u   // Trade=0xB10x/0xC0xx, Char=0xB301, Ship=0xB410,
+#define ID_ARROW_TOGGLE 0xC700u   // 쓰이는 ID 표는 common/modmenu.h 에 있다
                                   // Patch=0xB500, Map=0xB600, Mod=0xB700 과 비충돌
 #define MENU_LABEL L"풍향 화살표"
 
@@ -46,10 +47,14 @@ static BOOL CALLBACK EnumProc(HWND h, LPARAM l)
 
 static BOOL HasOurMenu(HMENU m)
 {
-    int n = GetMenuItemCount(m), i; WCHAR s[64];
-    for (i = 0; i < n; i++)
-        if (GetMenuStringW(m, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, MENU_LABEL) == 0)
-            return TRUE;
+    // 하위 메뉴까지 내려가며 본다. MenuTidyKR 이 우리 항목을 "모드" 아래로 옮기므로,
+    // 파일 메뉴만 훑으면 늘 "없다" 가 나와 1초마다 또 달게 된다.
+    int n = GetMenuItemCount(m), i;
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (HasOurMenu(sub)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == ID_ARROW_TOGGLE) return TRUE;
+    }
     return FALSE;
 }
 
@@ -97,7 +102,7 @@ static DWORD WINAPI MenuThread(LPVOID param)
         if (g_hwnd && (bar = GetMenu(g_hwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!HasOurMenu(target)) {
+            if (!HasOurMenu(target) && !ModMenu_HasId(g_hwnd, ID_ARROW_TOGGLE)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenuW(target, MF_STRING, ID_ARROW_TOGGLE, MENU_LABEL);

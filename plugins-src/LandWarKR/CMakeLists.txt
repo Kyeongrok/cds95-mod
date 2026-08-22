@@ -12,6 +12,7 @@ add_library(LandWarKR SHARED
 )
 
 target_include_directories(LandWarKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../ButtonMakerKR/src      # gameskin.h · band.h …
     ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src    # ls12.h · game_palette.h
 )

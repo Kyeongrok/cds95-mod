@@ -3,6 +3,7 @@
 #include <shellapi.h>
 #include "skillwin.h"
 #include "skilldb.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // SkillUtilKR — 도시마다 배울 수 있는 기능·언어를 조합/교회/학자 저택으로 갈라 고친다.
 //
@@ -534,7 +535,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_SKILL_OPEN)) {
+            if (!(MenuHasId(target, ID_SKILL_OPEN) || ModMenu_HasId(g_gameHwnd, ID_SKILL_OPEN))) {
                 HMENU modMenu;
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);

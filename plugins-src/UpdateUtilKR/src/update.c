@@ -3,6 +3,7 @@
 #include <shellapi.h>
 #include <wininet.h>
 #include "update.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // UpdateUtilKR — 자세한 배치는 update.h 참고.
 //
@@ -664,8 +665,14 @@ static HMENU FindFileMenu(HMENU bar)
 
 static BOOL HasOurItem(HMENU m)
 {
+    // 하위 메뉴까지 내려가며 본다. MenuTidyKR 이 우리 항목을 "모드" 아래로 옮기므로,
+    // 파일 메뉴만 훑으면 늘 "없다" 가 나와 1초마다 또 달게 된다.
     int n = GetMenuItemCount(m), i;
-    for (i = 0; i < n; i++) if (GetMenuItemID(m, (UINT)i) == ID_UPD_OPEN) return TRUE;
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (HasOurItem(sub)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == ID_UPD_OPEN) return TRUE;
+    }
     return FALSE;
 }
 
@@ -680,7 +687,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
             if (bar) {
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
-                if (!HasOurItem(target)) {
+                if (!HasOurItem(target) && !ModMenu_HasId(g_gameHwnd, ID_UPD_OPEN)) {
                     AppendMenuW(target, MF_STRING, ID_UPD_OPEN, L"업데이트");
                     DrawMenuBar(g_gameHwnd);
                     LogW(L"[UpdateUtilKR] \"업데이트\" 메뉴 설치.");

@@ -1,5 +1,6 @@
 #include <windows.h>
 #include "save.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // SaveUtilKR — 어디서든 저장 · 중단.
 //
@@ -166,7 +167,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_SAVE_NOW)) {
+            if (!MenuHasId(target, ID_SAVE_NOW) && !ModMenu_HasId(g_gameHwnd, ID_SAVE_NOW)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenuW(target, MF_STRING, ID_SAVE_NOW,  L"저장");

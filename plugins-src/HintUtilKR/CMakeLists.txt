@@ -18,6 +18,7 @@ add_library(HintUtilKR SHARED
 )
 
 target_include_directories(HintUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src   # warp_data.h — 도시별 워프 값
 )

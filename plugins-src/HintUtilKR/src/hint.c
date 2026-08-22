@@ -9,6 +9,7 @@
 #include "patrons.h"  // CharacterUtilKR/src — 실행 중 친밀도
 #include "faces.h"    // CharacterUtilKR/src — 초상화(MALE/FEMALE.CDS)
 #include "uikit.h"     // CharacterUtilKR/src — 세피아 색표와 위젯을 그대로 나눠 쓴다
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // HintUtilKR — 게임의 "취득 힌트 일람"은 이름만 여덟 줄 늘어놓고 만다. 여기서는
 // [힌트] 186개와 [발견물] 274개를 분류 · 가치 · 상태와 함께 보여 주고 분류로 추린다.
@@ -661,7 +662,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_HINT_OPEN)) {
+            if (!MenuHasId(target, ID_HINT_OPEN) && !ModMenu_HasId(g_gameHwnd, ID_HINT_OPEN)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenuW(target, MF_STRING, ID_HINT_OPEN, L"힌트");

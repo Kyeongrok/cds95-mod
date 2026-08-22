@@ -5,6 +5,7 @@
 #include "hintdb.h"        // HintUtilKR/src
 #include "skilldb.h"       // SkillUtilKR/src — 언어 이름 · 건물표
 #include "cities_data.h"   // TradeUtilKR/src — kCities[226]
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // BookUtilKR — 도서관 서적 257권 일람. 읽기 전용이다.
 //
@@ -553,7 +554,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_BOOK_OPEN)) {
+            if (!(MenuHasId(target, ID_BOOK_OPEN) || ModMenu_HasId(g_gameHwnd, ID_BOOK_OPEN))) {
                 HMENU modMenu;
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);

@@ -2,6 +2,7 @@
 #include <commctrl.h>
 #include <shellapi.h>   // ShellExecuteW — dialogs 폴더를 탐색기로 열기
 #include "dialog.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // DialogUtilKR — 게임 문구를 파일로 갈아 끼운다.
 //
@@ -853,7 +854,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_DLG_OPEN)) {
+            if (!(MenuHasId(target, ID_DLG_OPEN) || ModMenu_HasId(g_gameHwnd, ID_DLG_OPEN))) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 {

@@ -17,6 +17,7 @@ target_link_libraries(CityPicKR PRIVATE user32 gdi32 comdlg32)
 # LS12 디코더·공용 색표·위젯(uikit)은 CharacterUtilKR, 도시 이름표(kCities)는 TradeUtilKR 쪽 것을
 # 그대로 쓴다. 복사해 두면 한쪽만 고쳐지는 사고가 나므로 소스를 참조한다(WorldMapKR 과 같다).
 target_include_directories(CityPicKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src
 )

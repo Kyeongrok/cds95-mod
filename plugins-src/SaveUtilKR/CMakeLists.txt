@@ -4,6 +4,10 @@ add_library(SaveUtilKR SHARED
 )
 
 # 후킹이 없다 — 메뉴를 붙이고 게임 함수를 그대로 부르는 것이 전부다.
+target_include_directories(SaveUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
+)
+
 target_link_libraries(SaveUtilKR PRIVATE user32)
 
 target_compile_definitions(SaveUtilKR PRIVATE UNICODE _UNICODE)

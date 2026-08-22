@@ -6,6 +6,10 @@ add_library(WindArrowKR SHARED
     src/wind.c
 )
 
+target_include_directories(WindArrowKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
+)
+
 target_link_libraries(WindArrowKR PRIVATE minhook user32)
 
 # 소스에 한국어(UTF-8) 주석과 와이드 문자열이 있으므로 MSVC 에 UTF-8 소스로 알려준다.

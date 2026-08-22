@@ -4,6 +4,7 @@
 #include "hkjson.h"   // hotkeys.json 읽기 — 인물 창도 같은 것을 쓴다
 #include "uikit.h"    // CharacterUtilKR/src — 세피아 색표와 위젯을 그대로 나눠 쓴다
 #include <windowsx.h>
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // HotkeyUtilKR — 글자 한 개로 KR 플러그인 창을 연다. (hotkey.h 의 설명 참고)
 //
@@ -462,7 +463,7 @@ static DWORD WINAPI MenuThread(LPVOID p)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_HOTKEY_OPEN)) {
+            if (!MenuHasId(target, ID_HOTKEY_OPEN) && !ModMenu_HasId(g_gameHwnd, ID_HOTKEY_OPEN)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 AppendMenuW(target, MF_STRING, ID_HOTKEY_OPEN, L"단축키");

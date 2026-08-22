@@ -1,4 +1,5 @@
 #include "mapwin.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // WorldMapKR — 게임 창 "파일" 메뉴에 "지도" 항목 추가 → 클릭 시 세계지도 창 오픈.
 // 다른 KR 플러그인(CharacterUtilKR/ShipSkinKR)과 같은 방식이다:
@@ -33,11 +34,16 @@ static BOOL CALLBACK EnumProc(HWND h, LPARAM l)
     return TRUE;
 }
 
-static BOOL HasOurMenu(HMENU bar)
+static BOOL HasOurMenu(HMENU m)
 {
-    int n = GetMenuItemCount(bar), i; WCHAR s[64];
-    for (i = 0; i < n; i++)
-        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"지도") == 0) return TRUE;
+    // 하위 메뉴까지 내려가며 본다. MenuTidyKR 이 우리 항목을 "모드" 아래로 옮기므로,
+    // 파일 메뉴만 훑으면 늘 "없다" 가 나와 1초마다 또 달게 된다.
+    int n = GetMenuItemCount(m), i;
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (HasOurMenu(sub)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == ID_MAP_OPEN) return TRUE;
+    }
     return FALSE;
 }
 // 최상위 메뉴바에서 "파일" 팝업 서브메뉴를 찾는다. 없으면 NULL.
@@ -87,7 +93,7 @@ static DWORD WINAPI MapMenuThread(LPVOID param)
         if (g_hwnd && (bar = GetMenu(g_hwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!HasOurMenu(target)) {
+            if (!HasOurMenu(target) && !ModMenu_HasId(g_hwnd, ID_MAP_OPEN)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);   // 게임 원래 항목과 구분(최초 1회)
                 AppendMenuW(target, MF_STRING, ID_MAP_OPEN, L"지도");

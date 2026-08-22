@@ -39,6 +39,7 @@ target_link_libraries(CharacterUtilKR PRIVATE user32 gdi32 comdlg32)
 # 도시 이름표(kCities)는 TradeUtilKR 쪽 cities_data.h 를 그대로 쓴다.
 # 같은 표를 두 벌 두면 한쪽만 고쳐지는 사고가 나므로 복사하지 않고 참조한다.
 target_include_directories(CharacterUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../ButtonMakerKR/src   # gameskin.h · band.h …
     ${CMAKE_CURRENT_SOURCE_DIR}/src                    # 위 조각들이 찾는 ls12.h · game_palette.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src

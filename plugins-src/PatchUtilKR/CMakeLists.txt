@@ -3,6 +3,10 @@ add_library(PatchUtilKR SHARED
     src/patch.c
 )
 
+target_include_directories(PatchUtilKR PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
+)
+
 target_link_libraries(PatchUtilKR PRIVATE user32 gdi32 comctl32 shell32)
 
 # ListView 등 공용컨트롤 매크로(WC_LISTVIEW, LVM_*, LVITEM/LVCOLUMN)를 와이드로 고정.

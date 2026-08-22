@@ -2,6 +2,7 @@
 #include <commctrl.h>
 #include <shellapi.h>   // ShellExecuteW — patches.json 을 기본 편집기로 열기
 #include "patch.h"
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // PatchUtilKR — cds-helper ExePatch(정적 파일 헥스 패치)의 런타임 메모리판.
 //  patches.json(= cds-helper 커스텀 패치 스키마) → 파일오프셋을 로드된 cds_95 모듈의
@@ -1285,7 +1286,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
         if (g_gameHwnd && (bar = GetMenu(g_gameHwnd)) != NULL) {
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!MenuHasId(target, ID_PATCH_OPEN)) {
+            if (!MenuHasId(target, ID_PATCH_OPEN) && !ModMenu_HasId(g_gameHwnd, ID_PATCH_OPEN)) {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL);
                 {   // 파일 메뉴가 아니라 "모드" 아래에 붙인다

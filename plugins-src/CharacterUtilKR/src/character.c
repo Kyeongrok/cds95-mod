@@ -13,6 +13,7 @@
 #include "hkjson.h"      // HotkeyUtilKR/src — 탭에 적을 단축키를 hotkeys.json 에서 읽는다
 #include "gameskin.h"    // ButtonMakerKR/src — 단추를 게임 껍데기(MISC.CDS 파트 4)로 그린다
 #include <windowsx.h>
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // fb15/fb16: 인물(얼굴) 코드 브라우저 — 갤러리(2열, 스크롤) + 남/여/카테고리 필터.
 //   얼굴 = 80x96 8bpp(LS12 디코드), kGamePalette 로 컬러화(아이템 그림에서 되짚은 공용 색표).
@@ -942,11 +943,16 @@ static BOOL CALLBACK EnumProc(HWND h, LPARAM l)
     if (pid == GetCurrentProcessId() && IsWindowVisible(h) && GetMenu(h)) { g_gameHwnd = h; return FALSE; }
     return TRUE;
 }
-static BOOL HasOurMenu(HMENU bar)
+static BOOL HasOurMenu(HMENU m)
 {
-    int n = GetMenuItemCount(bar), i; WCHAR s[64];
-    for (i = 0; i < n; i++)
-        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"정보") == 0) return TRUE;
+    // 하위 메뉴까지 내려가며 본다. MenuTidyKR 이 우리 항목을 "모드" 아래로 옮기므로,
+    // 파일 메뉴만 훑으면 늘 "없다" 가 나와 1초마다 또 달게 된다.
+    int n = GetMenuItemCount(m), i;
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (HasOurMenu(sub)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == ID_CHAR) return TRUE;
+    }
     return FALSE;
 }
 // 최상위 메뉴바에서 "파일" 팝업을 찾아 그 서브메뉴 핸들을 돌려준다. 없으면 NULL.
@@ -1010,7 +1016,7 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                 // "파일" 드롭다운이 있으면 그 안에, 없으면(라벨 불일치 대비) 예전처럼 최상위에 붙인다.
                 HMENU fileMenu = FindFileMenu(bar);
                 HMENU target = fileMenu ? fileMenu : bar;
-                if (!HasOurMenu(target)) {
+                if (!HasOurMenu(target) && !ModMenu_HasId(g_gameHwnd, ID_CHAR)) {
                     if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                         AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL); // 게임 원래 항목과 구분(최초 1회)
                     AppendMenuW(target, MF_STRING, ID_CHAR, L"정보");

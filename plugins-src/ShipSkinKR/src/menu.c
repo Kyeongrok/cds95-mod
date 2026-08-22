@@ -1,4 +1,5 @@
 #include <windows.h>
+#include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // ShipSkinKR — 게임 창 메뉴바에 "함선" 항목 추가 → 클릭 시 함선 스프라이트 창(ship_window.c) 오픈.
 // 기존 플러그인(TradeUtilKR/CharacterUtilKR) 패턴: MonitorThread 1초폴링 → EnumWindows 게임창 →
@@ -38,11 +39,16 @@ static BOOL CALLBACK EnumProc(HWND h, LPARAM l)
     return TRUE;
 }
 
-static BOOL HasOurMenu(HMENU bar)
+static BOOL HasOurMenu(HMENU m)
 {
-    int n = GetMenuItemCount(bar), i; WCHAR s[64];
-    for (i = 0; i < n; i++)
-        if (GetMenuStringW(bar, (UINT)i, s, 64, MF_BYPOSITION) > 0 && lstrcmpW(s, L"함선") == 0) return TRUE;
+    // 하위 메뉴까지 내려가며 본다. MenuTidyKR 이 우리 항목을 "모드" 아래로 옮기므로,
+    // 파일 메뉴만 훑으면 늘 "없다" 가 나와 1초마다 또 달게 된다.
+    int n = GetMenuItemCount(m), i;
+    for (i = 0; i < n; i++) {
+        HMENU sub = GetSubMenu(m, (UINT)i);
+        if (sub) { if (HasOurMenu(sub)) return TRUE; continue; }
+        if (GetMenuItemID(m, (UINT)i) == ID_SHIP_OPEN) return TRUE;
+    }
     return FALSE;
 }
 // 최상위 메뉴바에서 "파일" 팝업 서브메뉴를 찾는다. 없으면 NULL.
@@ -95,7 +101,7 @@ static DWORD WINAPI ShipMenuThread(LPVOID param)
             // "파일" 드롭다운이 있으면 그 안에, 없으면 예전처럼 최상위에 붙인다.
             HMENU fileMenu = FindFileMenu(bar);
             HMENU target = fileMenu ? fileMenu : bar;
-            if (!HasOurMenu(target))
+            if (!HasOurMenu(target) && !ModMenu_HasId(g_hwnd, ID_SHIP_OPEN))
             {
                 if (fileMenu && !FileMenuHasPluginItem(fileMenu))
                     AppendMenuW(fileMenu, MF_SEPARATOR, 0, NULL); // 게임 원래 항목과 구분(최초 1회)
