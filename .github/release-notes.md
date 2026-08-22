@@ -283,7 +283,13 @@
   우리 것으로 더 길어졌습니다. 이제 파일에는 **"모드" 하나만** 서고, 누르면 창이 떠
   항목을 게임 띠 단추로 늘어놓습니다. 성격대로 **일반 · 편집 · 도구 · 개발** 네 줄로
   갈라 세우고, 그 자리에서 일이 끝나는 저장·중단은 아래 "기능" 줄에 따로 앉힙니다.
-  무엇이 새로 붙어도 저절로 단추가 하나 늡니다.
+  무엇이 새로 붙어도 저절로 단추가 하나 늡니다. 제목 띠를 끌어 옮길 수 있고(놓은 자리를
+  기억합니다), 오른쪽 끝 가위표로 닫습니다. "업데이트" 는 자주 쓰는 것이라 파일 메뉴에
+  그대로 둡니다.
+  이 판에서 **[정보] 창도 같은 차림**이 되었습니다 — 게임 제목 띠에 짙은 자주갈색 바탕입니다.
+  그 창에 얹혀 있던 **"교역" · "교역품" 은 제자리(TradeUtilKR)로 돌아가** 모드 창의 "일반"
+  에서 엽니다. 정보 창은 주인공을 보는 곳이고 그 둘은 도시를 보는 것이라 애초에 거기 있을
+  까닭이 없었습니다.
 
 > 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.

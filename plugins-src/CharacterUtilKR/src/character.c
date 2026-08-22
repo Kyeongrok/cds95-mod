@@ -41,7 +41,9 @@
 #define TAB_INV     5
 #define TAB_PLAYER  8
 // 아래 둘은 이 창의 탭이 아니라 TradeUtilKR 의 창을 여는 단추다. 메뉴에 항목이 너무 많아져
-// "교역" · "교역품" 을 여기로 옮겼다. 누르면 게임 창에 그쪽 커맨드를 보내 창을 띄운다.
+// "교역" · "교역품" 은 한동안 여기 탭으로 들어와 있었다(그때는 메뉴가 너무 길어서다).
+// 모드 창이 생기면서 TradeUtilKR 의 제자리로 돌려보냈다 - 이 창은 주인공을 보는 곳이고
+// 그 둘은 도시를 보는 것이라 애초에 여기 있을 까닭이 없었다.
 #define TAB_SISE    6
 #define TAB_GOODS   7
 #define ID_TRADE_SISE  0xB101u
@@ -183,8 +185,6 @@ static const struct { int id; const wchar_t* label; int w; } kTabs[] = {
     { TAB_MAID,    L"여급",         60 },
     { TAB_PATRON,  L"스폰서",       70 },
     { TAB_GALLERY, L"도감",         70 },
-    { TAB_SISE,    L"교역",         60 },
-    { TAB_GOODS,   L"교역품",       70 },
 };
 #define TAB_N ((int)(sizeof(kTabs)/sizeof(kTabs[0])))
 
@@ -622,14 +622,19 @@ static void OnPaint(HWND h)
     GetClientRect(h, &rc);
     // 메모리에 다 그린 뒤 한 번에 옮긴다. 화면에 바로 그리면 스크롤할 때마다 깜빡인다.
     dc = UI_BufBegin(&buf, hdc, rc.right, rc.bottom);
-    br = CreateSolidBrush(COL_BG); FillRect(dc, &rc, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_GAME_BG); FillRect(dc, &rc, br); DeleteObject(br);
     br = CreateSolidBrush(COL_DARK); FrameRect(dc, &rc, br); DeleteObject(br);
 
     // 타이틀바
     tb.left=FRAME; tb.top=FRAME; tb.right=rc.right-FRAME; tb.bottom=FRAME+TITLE_H;
-    UI_VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); UI_Bevel(dc, tb, FALSE);
-    tr = tb; tr.left += 8;
-    UI_Text(dc, tr, L"정보", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    if (GameSkin_Ready()) {
+        // 모드 창과 같은 게임 제목 띠(MISC.CDS 진홍 장식). 못 읽으면 예전 모양으로 둔다.
+        GameSkin_Title(dc, tb, L"정보");
+    } else {
+        UI_VGradient(dc, tb, COL_FACE_TOP, COL_FACE_BOT); UI_Bevel(dc, tb, FALSE);
+        tr = tb; tr.left += 8;
+        UI_Text(dc, tr, L"정보", g_font, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
     UI_Button(dc, CloseRect(rc), L"×", FALSE);
 
     { int i; for (i = 0; i < TAB_N; i++)
@@ -683,10 +688,6 @@ static BOOL PostToGame(UINT id)
 
 static void SetTab(HWND h, int t)
 {
-    if (t == TAB_SISE || t == TAB_GOODS) {          // 탭이 아니라 딴 창을 여는 단추다
-        PostToGame(t == TAB_SISE ? ID_TRADE_SISE : ID_TRADE_GOODS);
-        return;
-    }
     if (t == g_tab) return;
     g_tab = t;
     CloseDrops();

@@ -2134,7 +2134,16 @@ static DWORD WINAPI MonitorThread(LPVOID param)
                         }
                         AppendMenuW(rmenu[r], MF_STRING, ID_WARP_BASE + i, kWarps[i].city);
                     }
-                    AppendMenuW(target, MF_POPUP, (UINT_PTR)warp, L"워프");
+                    {   // 모드 창의 등록부에 바로 단다. 파일 메뉴에 붙여 두면 걷힐 때까지
+                        // 한 박자 동안 거기 보인다. 등록부가 아직 없으면 예전처럼 파일 메뉴다.
+                        HMENU into = ModMenu_Target(g_hwnd, target);
+                        AppendMenuW(into, MF_POPUP, (UINT_PTR)warp, L"워프");
+                        // 시세 일람과 교역품 창. 한동안 [정보] 창의 탭으로 들어가 있었는데,
+                        // 모드 창이 생기면서 다시 제자리로 돌아왔다. 셋이 늘 함께 붙고
+                        // 함께 걷히므로 중복 검사는 워프 하나로 갈음한다.
+                        AppendMenuW(into, MF_STRING, ID_TRADE_SISE, L"교역");
+                        AppendMenuW(into, MF_STRING, ID_TRADE_GOODS, L"교역품");
+                    }
                     DrawMenuBar(g_hwnd);
                     OutputDebugStringW(L"[TradeUtilKR] 교역/워프 menu (re)installed.");
                 }

@@ -68,6 +68,16 @@ static BOOL ModMenu_MenuHasId(HMENU m, UINT id)
     return FALSE;
 }
 
+// 항목을 붙일 자리. 등록부가 서 있으면 거기, 아직 없으면 예전처럼 파일 메뉴다.
+//
+// 파일 메뉴에 붙여 두고 ModWindowKR 이 걷어 가게 두어도 되기는 한다. 다만 걷기까지
+// 한 박자가 있어 그 사이 파일 메뉴를 열면 잠깐 보인다. 바로 등록부에 붙이면 그 틈이 없다.
+static HMENU ModMenu_Target(HWND gameHwnd, HMENU fallback)
+{
+    HMENU reg = ModMenu_Handle(gameHwnd);
+    return reg ? reg : fallback;
+}
+
 // 이 창의 등록부에 그 ID 가 이미 올라 있나. 플러그인은 이것만 부르면 된다.
 static BOOL ModMenu_HasId(HWND gameHwnd, UINT id)
 {

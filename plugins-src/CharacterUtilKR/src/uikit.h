@@ -11,6 +11,10 @@
 #define TITLE_H   26
 
 #define COL_BG        RGB(150,130,105)
+// 게임 것과 같은 짙은 자주갈색. MarketUtilKR 의 흥정 판이 오리지널 화면에서 집어낸
+// 그 값이다. 창 바탕을 게임 쪽에 맞출 때 쓴다 — 그 위 글자는 크림색으로 올린다.
+#define COL_GAME_BG   RGB(0x31, 0x18, 0x18)
+#define COL_GAME_TX   RGB(226, 214, 189)
 #define COL_FACE_TOP  RGB(216,201,176)
 #define COL_FACE_BOT  RGB(158,138,113)
 #define COL_LIGHT     RGB(238,228,208)

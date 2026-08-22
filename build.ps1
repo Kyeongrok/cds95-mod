@@ -236,6 +236,29 @@ if ($dups.Count -gt 0) {
     $dups | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
+# ── 갓 배포한 것을 미리 데운다 ────────────────────────────────────────────────
+# 새로 만든 DLL 은 서명이 없어 Defender 실시간 검사가 한 번은 훑는다. 23개면 십수 초다
+# (실측 13.4초, 두 번째 읽기는 2ms). 그 값은 누군가 치러야 하는데, 게임을 켤 때 치르면
+# "실행 버튼을 눌러도 한참 안 뜬다" 가 된다 — 여기서 미리 읽어 검사를 유발해 둔다.
+# 게임 폴더를 Defender 제외 경로에 넣으면 이 비용 자체가 사라진다(관리자 권한 필요).
+$warmTargets = @()
+foreach ($plugin in $BuiltPlugins) {
+    $one = Join-Path $TargetDir (Split-Path $plugin -Leaf)
+    if (Test-Path $one) { $warmTargets += $one }
+}
+if ($warmTargets.Count -gt 0) {
+    Write-Host "`n==> 배포한 것을 미리 훑습니다 (Defender 검사를 게임 실행 전에 끝내 둡니다)" -ForegroundColor DarkGray
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        # 여럿을 한꺼번에 읽으면 검사도 나란히 돌아 훨씬 빨리 끝난다.
+        $warmTargets | ForEach-Object -Parallel { [void][IO.File]::ReadAllBytes($_) } -ThrottleLimit 8
+    } else {
+        foreach ($one in $warmTargets) { [void][IO.File]::ReadAllBytes($one) }
+    }
+    $sw.Stop()
+    Write-Host ("    {0}개 훑음 — {1:N1}초" -f $warmTargets.Count, ($sw.ElapsedMilliseconds / 1000)) -ForegroundColor DarkGray
+}
+
 if ($staged.Count -gt 0) {
     Write-Host "`n게임이 실행 중이라 다음 실행부터 반영됩니다: $($staged -join ', ')" -ForegroundColor Cyan
 }

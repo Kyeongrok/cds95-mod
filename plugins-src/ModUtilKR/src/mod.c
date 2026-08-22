@@ -197,6 +197,7 @@ static void LoadSubPlugins(void)
     WIN32_FIND_DATAW fd;
     HANDLE h;
     int n = 0;
+    DWORD started = GetTickCount(), slow = 0;
 
     PluginDir(dir, MAX_PATH);
     JoinPath(sub, dir, L"plugins");
@@ -229,13 +230,22 @@ static void LoadSubPlugins(void)
             JoinPath(file, one, f2.cFileName);
             // 경로 구분자는 역슬래시 두 개다 — `\%` 는 escape 로 접혀 `%` 가 되면서
             // 폴더와 파일명이 구분 없이 붙어 나왔다(C4129).
-            if (LoadLibraryW(file)) { n++; LogW(L"[ModUtilKR] %s\\%s 불러옴", fd.cFileName, f2.cFileName); }
-            else LogW(L"[ModUtilKR] %s\\%s 못 불러옴 (오류 %lu)", fd.cFileName, f2.cFileName, GetLastError());
+            // 걸린 시간을 함께 적는다. LoadLibrary 는 그 DLL 의 DllMain 까지 돌리므로
+            // 이 값이 곧 "그 플러그인이 게임 뜨는 길을 얼마나 붙들었나" 다.
+            {
+                DWORD t0 = GetTickCount(), ms;
+                HMODULE mod = LoadLibraryW(file);
+                ms = GetTickCount() - t0;
+                if (ms > 100) slow += ms;
+                if (mod) { n++; LogW(L"[ModUtilKR] %s\\%s 불러옴 (%lu ms)", fd.cFileName, f2.cFileName, ms); }
+                else LogW(L"[ModUtilKR] %s\\%s 못 불러옴 (오류 %lu)", fd.cFileName, f2.cFileName, GetLastError());
+            }
         } while (FindNextFileW(h2, &f2));
         FindClose(h2);
     } while (FindNextFileW(h, &fd));
     FindClose(h);
-    if (n) LogW(L"[ModUtilKR] 하위 폴더 플러그인 %d개 불러옴", n);
+    if (n) LogW(L"[ModUtilKR] 하위 폴더 플러그인 %d개 불러옴 — 모두 %lu ms (그중 오래 걸린 것 %lu ms)",
+                n, GetTickCount() - started, slow);
 }
 
 // ------------------------------------------------------------------ 창

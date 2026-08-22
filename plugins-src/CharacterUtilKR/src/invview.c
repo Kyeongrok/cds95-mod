@@ -475,24 +475,25 @@ void Inv_Paint(HDC dc)
         default:          why = L"소지품 자리를 읽지 못했습니다."; break;
         }
         e.left = Q_X; e.right = Q_X + Q_W; e.top = Q_Y + 40; e.bottom = e.top + 40;
-        UI_Text(dc, e, why, g_font, COL_TEXT, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        UI_Text(dc, e, why, g_font, COL_GAME_TX, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
         return;
     }
 
     wsprintfW(buf, L"소지 %d/%d칸 · 보관 %d/%d칸 · 값은 게임 메모리에 바로 들어갑니다",
               Inv_Used(INV_HELD), INV_HELD_N, Inv_Used(INV_STORE), INV_STORE_N);
-    UI_Text(dc, RcInfo(), buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    UI_Text(dc, RcInfo(), buf, g_smallFont, COL_GAME_TX, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
     // 소지금 — 보여 주기만 한다. 더하고 빼던 [◀◀][◀][▶][▶▶] 는 뺐다.
     { RECT l; l.left = Q_X; l.right = Q_X + 62; l.top = Q_Y + 2; l.bottom = l.top + 22;
-      UI_Text(dc, l, L"소지금", g_font, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX); }
+      UI_Text(dc, l, L"소지금", g_font, COL_GAME_TX, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX); }
     v = Inv_Money();
     { RECT m = RcMoney();
+      HBRUSH mb = CreateSolidBrush(COL_DISP_BG); FillRect(dc, &m, mb); DeleteObject(mb);
       UI_Bevel(dc, m, TRUE);
       UI_Text(dc, m, Comma(v), g_font, COL_TEXT, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX); }
     if (g_msg[0]) {
         RECT m; m.left = Q_X + 350; m.right = Q_X + Q_W; m.top = Q_Y + 2; m.bottom = m.top + 22;
-        UI_Text(dc, m, g_msg, g_smallFont, g_msgWarn ? COL_WARN_TX : COL_TEXT,
+        UI_Text(dc, m, g_msg, g_smallFont, g_msgWarn ? COL_WARN_TX : COL_GAME_TX,
                 DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
 
@@ -507,7 +508,8 @@ void Inv_Paint(HDC dc)
         if (local >= SlotCount()) break;
 
         cell = RcCell(v);
-        if ((v / IV_COLS) & 1) { br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &cell, br); DeleteObject(br); }
+        br = CreateSolidBrush(((v / IV_COLS) & 1) ? COL_ROW_ALT : COL_DISP_BG);
+        FillRect(dc, &cell, br); DeleteObject(br);
 
         item = Inv_Get(KindOf(i), IndexOf(i));
         rec  = item >= 0 ? ItemDb_At(item) : NULL;

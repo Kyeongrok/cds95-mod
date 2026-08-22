@@ -22,10 +22,7 @@
 #define HEAD_H      20               // 무리 이름이 앉는 자리
 #define FOOT_GAP    14               // 열과 아래 가로줄 사이
 
-// 바탕은 게임 것과 같은 짙은 자주갈색(#311818)이다 — MarketUtilKR 의 흥정 판이 오리지널
-// 화면에서 집어낸 그 색과 같다. 어두운 바탕이라 글자는 크림색으로 얹는다.
-#define COL_WIN_BG    RGB(0x31, 0x18, 0x18)
-#define COL_HEAD_TX   RGB(226, 214, 189)
+// 바탕과 글자색은 uikit.h 의 COL_GAME_BG / COL_GAME_TX 를 쓴다(정보 창과 같은 값).
 
 // 항목을 네 무리로 갈라 왼쪽부터 세운다.
 //   일반 — 배를 몰면서 여는 것(정보·지도·매매·저장 …)
@@ -59,7 +56,6 @@ static const UINT kPlayIds[] = {
     0xBC00u,   // 힌트
     0xBD00u,   // 매매
     0xC200u,   // 기능수련
-    0xC300u,   // 서적
     0xC400u,   // 선체
     0xC700u,   // 풍향 화살표
 };
@@ -67,12 +63,13 @@ static const UINT kPlayIds[] = {
 static const UINT kToolIds[] = {
     0xB700u,   // 플러그인 관리
     0xBB00u,   // 단축키
-    0xBF00u,   // 도시그림
     0xC500u,   // 버튼 만들기
 };
 
 static const UINT kDevIds[] = {
     0xB701u,   // 플레이어 수정
+    0xBF00u,   // 도시그림
+    0xC300u,   // 서적
 };
 
 static const UINT kFuncIds[] = {
@@ -96,9 +93,14 @@ static HWND      g_owner;
 static ModItem   g_items[MAX_ITEMS];
 static int       g_count, g_rows;
 static int       g_start[GRP_N], g_num[GRP_N];   // g_items 안에서 무리별 구간
+#define CLOSE_W     22               // 제목 띠 오른쪽 끝의 닫기 단추
+#define CLOSE_H     18
+
 static int       g_hot = -1;      // 마우스가 얹힌 단추
 static int       g_down = -1;     // 누르고 있는 단추
 static DWORD     g_shownTick;     // 뜬 시각 — 뜨자마자 닫히는 것을 막는다
+static int       g_closeHot;      // 닫기 단추에 마우스가 얹혔나
+static POINT     g_lastPos = { -1, -1 };   // 끌어다 놓은 자리. 다시 열 때 거기 뜬다
 
 int ModWin_IsOpen(void) { return g_wnd != NULL; }
 
@@ -190,6 +192,17 @@ static int WinH(void)
     return FootY() + HEAD_H + BTN_H + PAD;
 }
 
+// 제목 띠 오른쪽 끝의 닫기 단추 자리. 게임 창들과 같은 자리다.
+static RECT CloseRect(void)
+{
+    RECT r;
+    r.right = WinW() - 6;
+    r.left = r.right - CLOSE_W;
+    r.top = (TITLE_BAR - CLOSE_H) / 2;
+    r.bottom = r.top + CLOSE_H;
+    return r;
+}
+
 // 무리 g 의 왼쪽 끝.
 static int ColX(int g) { return PAD + g * (BTN_W + COL_GAP); }
 
@@ -230,6 +243,23 @@ static int HitTest(int x, int y)
     return -1;
 }
 
+// 닫기 단추. UI_Button 에 맡기면 게임 띠 규칙(16 + 8n + 16)에 못 미치는 폭이라
+// 강조가 제대로 안 산다. 게임 창들이 쓰는 모양 그대로 — 얇은 테두리 안에 가위표 —
+// 직접 그리고, 마우스가 얹히면 바탕을 붉게 깐다.
+#define COL_CLOSE_HOT  RGB(150, 46, 40)
+
+static void DrawClose(HDC dc)
+{
+    RECT r = CloseRect();
+    HBRUSH br;
+
+    br = CreateSolidBrush(g_closeHot ? COL_CLOSE_HOT : COL_GAME_BG);
+    FillRect(dc, &r, br); DeleteObject(br);
+    br = CreateSolidBrush(COL_GAME_TX);
+    FrameRect(dc, &r, br); DeleteObject(br);
+    UI_Text(dc, r, L"×", g_font, COL_GAME_TX, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
 static void Paint(HWND h)
 {
     PAINTSTRUCT ps;
@@ -242,21 +272,22 @@ static void Paint(HWND h)
     GetClientRect(h, &rc);
     dc = UI_BufBegin(&b, hdc, rc.right, rc.bottom);
 
-    { HBRUSH br = CreateSolidBrush(COL_WIN_BG); FillRect(dc, &rc, br); DeleteObject(br); }
+    { HBRUSH br = CreateSolidBrush(COL_GAME_BG); FillRect(dc, &rc, br); DeleteObject(br); }
     r = rc; r.bottom = TITLE_BAR;
     GameSkin_Title(dc, r, L"모드");
+    DrawClose(dc);
 
     for (k = 0; k < GRP_COLS; k++) {
         RECT h2;
         h2.left = ColX(k); h2.right = h2.left + BTN_W;
         h2.top = TITLE_BAR + PAD; h2.bottom = h2.top + HEAD_H;
-        UI_Text(dc, h2, kGroupName[k], g_font, COL_HEAD_TX, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        UI_Text(dc, h2, kGroupName[k], g_font, COL_GAME_TX, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
     if (g_num[GRP_FUNC] > 0) {
         RECT h2;
         h2.left = PAD; h2.right = h2.left + BTN_W;
         h2.top = FootY(); h2.bottom = h2.top + HEAD_H;
-        UI_Text(dc, h2, kGroupName[GRP_FUNC], g_font, COL_HEAD_TX, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        UI_Text(dc, h2, kGroupName[GRP_FUNC], g_font, COL_GAME_TX, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
     for (k = 0; k < g_count; k++) {
@@ -301,16 +332,31 @@ static LRESULT CALLBACK ModProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_ERASEBKGND: return 1;
     case WM_MOUSEMOVE: {
         TRACKMOUSEEVENT t;
+        POINT p; RECT cb = CloseRect();
         int k = HitTest((short)LOWORD(lp), (short)HIWORD(lp));
-        if (k != g_hot) { g_hot = k; InvalidateRect(h, NULL, FALSE); }
+        int ch;
+        p.x = (short)LOWORD(lp); p.y = (short)HIWORD(lp);
+        ch = PtInRect(&cb, p) ? 1 : 0;
+        if (k != g_hot || ch != g_closeHot) { g_hot = k; g_closeHot = ch; InvalidateRect(h, NULL, FALSE); }
         t.cbSize = sizeof(t); t.dwFlags = TME_LEAVE; t.hwndTrack = h; t.dwHoverTime = 0;
         TrackMouseEvent(&t);
         return 0;
     }
     case WM_MOUSELEAVE:
-        if (g_hot != -1) { g_hot = -1; InvalidateRect(h, NULL, FALSE); }
+        if (g_hot != -1 || g_closeHot) { g_hot = -1; g_closeHot = 0; InvalidateRect(h, NULL, FALSE); }
         return 0;
-    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDOWN: {
+        POINT p; RECT cb = CloseRect();
+        p.x = (short)LOWORD(lp); p.y = (short)HIWORD(lp);
+        if (PtInRect(&cb, p)) { DestroyWindow(h); return 0; }
+    }
+        if ((short)HIWORD(lp) < TITLE_BAR) {
+            // 제목 띠를 잡았다 — 창틀이 없는 창이라 옮기는 일을 시스템에 맡긴다.
+            // 캡처를 놓고 나서 보내야 한다(쥐고 있으면 이동 루프가 마우스를 못 받는다).
+            ReleaseCapture();
+            SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            return 0;
+        }
         g_down = HitTest((short)LOWORD(lp), (short)HIWORD(lp));
         SetCapture(h);
         InvalidateRect(h, NULL, FALSE);
@@ -335,8 +381,13 @@ static LRESULT CALLBACK ModProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         // 돌아가는데, 그것까지 "바깥을 눌렀다" 로 받으면 창이 뜨자마자 닫힌다.
         if (LOWORD(wp) == WA_INACTIVE && GetTickCount() - g_shownTick > 400) DestroyWindow(h);
         return 0;
+    case WM_EXITSIZEMOVE: {
+        RECT wr;
+        if (GetWindowRect(h, &wr)) { g_lastPos.x = wr.left; g_lastPos.y = wr.top; }
+        return 0;
+    }
     case WM_DESTROY:
-        g_wnd = NULL; g_hot = -1; g_down = -1;
+        g_wnd = NULL; g_hot = -1; g_down = -1; g_closeHot = 0;
         return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
@@ -372,7 +423,16 @@ void ModWin_Show(HWND owner, HMENU modMenu, HINSTANCE hinst)
     w = want.right - want.left;
     hh = want.bottom - want.top;
 
-    if (owner && GetWindowRect(owner, &orc)) {
+    if (g_lastPos.x >= 0) {
+        // 지난번에 끌어다 놓은 자리. 게임 창을 옮겼거나 화면이 바뀌었으면 그 자리가
+        // 화면 밖일 수 있으니, 그때는 가운데로 되돌린다.
+        RECT vr;
+        vr.left = g_lastPos.x; vr.top = g_lastPos.y;
+        vr.right = vr.left + w; vr.bottom = vr.top + hh;
+        if (MonitorFromRect(&vr, MONITOR_DEFAULTTONULL)) { x = g_lastPos.x; y = g_lastPos.y; }
+        else { g_lastPos.x = -1; g_lastPos.y = -1; }
+    }
+    if (x == CW_USEDEFAULT && owner && GetWindowRect(owner, &orc)) {
         x = orc.left + ((orc.right - orc.left) - w) / 2;
         y = orc.top + ((orc.bottom - orc.top) - hh) / 2;
         if (x < 0) x = 0;

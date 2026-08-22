@@ -204,8 +204,10 @@ static void PaintRow(HDC dc, int y, int idx, const QuestInfo* q)
     HBRUSH br;
 
     r.left = Q_X; r.right = Q_X + Q_W; r.top = y; r.bottom = y + Q_ROW_H - 4;
-    if (idx == g_sel)   { br = CreateSolidBrush(COL_SEL_BG); FillRect(dc, &r, br); DeleteObject(br); }
-    else if (idx & 1)   { br = CreateSolidBrush(COL_ROW_ALT); FillRect(dc, &r, br); DeleteObject(br); }
+    // 줄은 빠짐없이 칠한다. 예전에는 홀수 줄만 깔고 짝수 줄은 창 바탕이 비쳤는데,
+    // 바탕이 어두워지면서 그 줄의 글자가 안 읽힌다(소지품에서 겪은 것과 같다).
+    { COLORREF c = (idx == g_sel) ? COL_SEL_BG : ((idx & 1) ? COL_ROW_ALT : COL_DISP_BG);
+      br = CreateSolidBrush(c); FillRect(dc, &r, br); DeleteObject(br); }
     UI_Bevel(dc, r, TRUE);
 
     b.left = r.left + 6; b.right = b.left + 64; b.top = r.top + 8; b.bottom = b.top + 20;
