@@ -85,6 +85,17 @@
   **등장연도는 select box 로 1480~1540 중 골라 바꿀 수 있습니다** —
   다만 이미 진행 중인 게임에는 반영되지 않으니(세이브를 불러올 때 후원자 배치가 굳습니다)
   **새 게임을 시작하기 전에** 고쳐야 합니다. 메모리에만 쓰므로 게임을 끄면 원래대로.
+- **TavernInfoKR** — "파일 > 모드 > 술집 정보". 스폰서와 계약을 맺으면 술집 메뉴에
+  "정보를 듣는다"가 생기는데, 그때 나오는 **대사 191줄이 어느 도시에서 들리는지**를 고칩니다.
+  줄을 고르고 도시 칸(최대 4곳)에 도시 번호를 넣으면 그 자리에서 바로 먹습니다. 번호 옆에
+  도시 이름이 함께 나오고, **[지금 도시 넣기]** 는 지금 정박한 항구를 빈 칸에 넣어 줍니다.
+  **[지금 도시에서 들림]** 으로 추리면 여기서 무슨 이야기를 들을 수 있는지 한눈에 보입니다.
+  유적 코드를 고치면 "어느 발견물에 딸린 이야기인지"가 바뀝니다 — 목록에 그 코드가 가리키는
+  힌트 이름을 함께 보여 줍니다.
+  ※ 지금 도시에 맞는 줄이 하나도 없으면 게임이 도시 조건을 풀고 표 전체에서 고르므로,
+  도시를 다 비워도 이야기가 아주 없어지지는 않습니다.
+  고친 값은 메모리에만 들어가므로 **[파일에 저장]** 으로 `CDS95Util\tavern_info.json` 에
+  적어 두면 다음에 켤 때 알아서 다시 들어갑니다. 대사 글월 자체를 바꾸려면 DialogUtilKR 을 쓰세요.
 - **DiscoveryEditKR** — "파일 > 모드 > 발견물 좌표". 발견물 274개가 **어느 칸에서 발견되는지**를
   실행 중에 고칩니다. 목록에서 하나를 고르고 시작·끝 좌표를 넣은 뒤 [적용] 하면 그 자리에서
   바로 먹습니다(게임이 좌표표를 매번 직접 읽기 때문입니다).
@@ -314,5 +325,5 @@
   에서 엽니다. 정보 창은 주인공을 보는 곳이고 그 둘은 도시를 보는 것이라 애초에 거기 있을
   까닭이 없었습니다.
 
-> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin`, `DiscoveryEditKR.plugin` 만 포함됩니다.
+> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin`, `DiscoveryEditKR.plugin`, `TavernInfoKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
