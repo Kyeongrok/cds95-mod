@@ -2,6 +2,13 @@
 
 대항해시대3 한국어판 전용 플러그인 모음입니다.
 
+### 이번 판에 새로 들어온 것 — 발견물 좌표 수정 (DiscoveryEditKR)
+
+발견물이 **어느 자리에서 발견되는지**를 게임 안에서 고칩니다. 게임이 좌표로 찾는 발견물은
+107개인데 그 중 **53개는 원래 좌표가 비어 있어 이 방법으로는 찾을 수 없었습니다**
+(콜로세움 · 파르테논 신전 · 스핑크스 … 죄다 유적입니다). 거기에 좌표를 넣어 주면 그 자리에서
+실제로 발견됩니다. 좌표를 옮기고 나서 지도를 열면 **마커도 새 자리로 따라와 있습니다.**
+
 - **HotelUtilKR** — 여관 "숙박"을 누르면 숙박 일수를 직접 입력받아 입력한 만큼만
   숙박합니다(숙박비도 일수에 비례). 취소하면 원래대로 30일.
 - **TradeUtilKR** — 상단 메뉴에 "교역 > 시세 일람"을 추가. 전 도시(226개)의
@@ -78,6 +85,18 @@
   **등장연도는 select box 로 1480~1540 중 골라 바꿀 수 있습니다** —
   다만 이미 진행 중인 게임에는 반영되지 않으니(세이브를 불러올 때 후원자 배치가 굳습니다)
   **새 게임을 시작하기 전에** 고쳐야 합니다. 메모리에만 쓰므로 게임을 끄면 원래대로.
+- **DiscoveryEditKR** — "파일 > 모드 > 발견물 좌표". 발견물 274개가 **어느 칸에서 발견되는지**를
+  실행 중에 고칩니다. 목록에서 하나를 고르고 시작·끝 좌표를 넣은 뒤 [적용] 하면 그 자리에서
+  바로 먹습니다(게임이 좌표표를 매번 직접 읽기 때문입니다).
+  좌표를 어떻게 알아내느냐 — 게임에서 그 자리로 **배를 몰고 가 [지금 함대 자리]** 를 누르면
+  눈으로 본 자리가 그대로 들어갑니다. 지도 창에서 칸 번호를 읽어 와도 됩니다.
+  **[판정] 칸을 꼭 보세요.** 게임이 좌표로 훑는 것은 앞 107개뿐이라, "—" 로 나오는 줄은
+  좌표를 넣어도 안 걸립니다(그런 줄을 고르면 창이 그렇다고 일러 줍니다). 좌표 판정을 받는
+  107개 중 **53개는 원래 좌표가 비어 있습니다** — 유적류가 대부분이고, 여기에 좌표를 넣어
+  주는 것이 이 플러그인의 주된 쓸모입니다.
+  고친 값은 메모리에만 들어가 게임을 끄면 사라지므로 **[파일에 저장]** 으로
+  `CDS95Util\disc_coords.json` 에 적어 두면 다음에 켤 때 알아서 다시 들어갑니다.
+  [이 줄 원본으로] · [모두 원본으로] 로 언제든 게임 원본 좌표로 되돌릴 수 있습니다.
 - **WorldMapKR** — "파일" 메뉴에 "지도"를 추가. **게임이 해상 화면에 쓰는 그림 그대로**
   세계지도를 그립니다 — `OCEAN.CDS` 의 16x16 타일 16,384장을 `WORLD.CDS` 의 칸 값으로
   골라 찍습니다(타일 번호 = 칸 & 0x3FFF, 게임 렌더러가 하는 것과 같은 식입니다).
@@ -93,6 +112,10 @@
   지도를 뒤덮지 않도록 **긴 변이 300칸을 넘으면 가운데 300칸만** 그립니다
   (실제로 걸리는 건 남극대륙·신대륙 둘뿐). 나머지 127개(항로·인물·도시 비보 등)는
   좌표로 찾는 발견물이 아니라 표시하지 않습니다.
+  **DiscoveryEditKR 로 좌표를 옮겼으면 마커도 따라옵니다** — 지도를 열 때(또는 R 로 다시
+  읽을 때) 실행 중인 게임 표에서 원본과 달라진 줄만 걷어옵니다. 손으로 고쳐 둔
+  `discoveries.json` 의 마커 보정은 그대로 남습니다. 상태줄에 `발견물 147+게임3` 처럼
+  몇 줄을 따라왔는지 적습니다.
   **휠로 확대·축소(1~8배, 처음에는 4배), 끌어서 이동, 우클릭으로 전체보기**, C 로 도시,
   D 로 발견물 표시 토글, R 로 두 목록 다시 읽기. **도서관이 있는 도시는 초록색 마커**입니다.
   하단에 현재 위경도를 도 단위로 표시합니다.
@@ -291,5 +314,5 @@
   에서 엽니다. 정보 창은 주인공을 보는 곳이고 그 둘은 도시를 보는 것이라 애초에 거기 있을
   까닭이 없었습니다.
 
-> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin` 만 포함됩니다.
+> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin`, `DiscoveryEditKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.
