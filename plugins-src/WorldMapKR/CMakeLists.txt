@@ -19,6 +19,7 @@ target_include_directories(WorldMapKR PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../DiscoveryEditKR/src   # dccoord.h — 발견물 좌표표 자리(상수만)
 )
 
 # 소스에 한국어(UTF-8) 와이드 문자열 리터럴이 있으므로 MSVC 에 UTF-8 소스로 알려준다.

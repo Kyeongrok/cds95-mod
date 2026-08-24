@@ -1,13 +1,16 @@
 #include "discdb.h"
 #include "discovery_coords.h"   // kDiscCoords — discoveries.json 이 없을 때 쓰는 기본값
+#include "dccoord.h"            // DiscoveryEditKR/src — 표 자리와 좌표 칸 오프셋(상수만 빌려 쓴다)
 
 // citydb.c 의 JSON 스캐너와 같은 방식이다. 그쪽은 도 단위 소수를 읽어야 해서 ReadFixed3 이
 // 필요했지만 여기 좌표는 칸 번호(정수)라 더 단순하다.
 
 static DiscPt g_disc[DISCDB_MAX];
 static int    g_fromFile = 0;
+static int    g_fromGame = 0;   // 실행 중인 게임 표에서 걷어온 줄 수
 
 int DiscDb_FromFile(void) { return g_fromFile; }
+int DiscDb_FromGame(void) { return g_fromGame; }
 
 const DiscPt* DiscDb_At(int i)
 {
@@ -44,6 +47,59 @@ static void UpToDataDir(wchar_t* dir)
     if (lstrcmpiW(tmp + cut1 + 1, L"plugins") != 0) return;
     tmp[cut1 + 1] = 0;
     lstrcpyW(dir, tmp);
+}
+
+// ---- 실행 중인 게임 표에서 고쳐진 줄을 걷어온다 ----
+//
+// DiscoveryEditKR 이 발견물 좌표를 고치면 그것은 게임 메모리(.rdata 0x11C540 의 +0x44~0x50)에
+// 들어간다. 지도가 내장 표만 보면 게임은 옮겨 갔는데 마커는 옛 자리에 남는다. 그래서 지도를
+// 열 때(그리고 R 을 누를 때)마다 실행 중인 표를 한 번 훑어 따라간다.
+//
+// ★ 다른 줄만 가져온다. 내장 표 kDiscCoords 가 바로 그 게임 원본값이라, 메모리 값이 그것과
+//   다르면 "누가 실행 중에 고친 줄"이라는 뜻이다. 원본 그대로인 줄까지 덮어쓰면 사람이
+//   discoveries.json 에 손으로 적어 둔 마커 보정이 매번 지워진다 — 그것은 남겨야 한다.
+//   그래서 우선순위가 이렇게 된다:  고쳐진 게임 표 > discoveries.json > 내장 표.
+static int Commit(const void* p, SIZE_T n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p) return 0;
+    if (!VirtualQuery(p, &mbi, sizeof(mbi))) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return 0;
+    return (const unsigned char*)p + n <= (const unsigned char*)mbi.BaseAddress + mbi.RegionSize;
+}
+
+static int LoadLive(void)
+{
+    const unsigned char* tbl;
+    int i, n = 0;
+
+    tbl = (const unsigned char*)GetModuleHandleW(NULL);
+    if (!tbl) return 0;
+    tbl += DC_RVA;
+    if (!Commit(tbl, (SIZE_T)DC_N * DC_SZ)) return 0;
+
+    for (i = 0; i < DISCDB_MAX && i < DC_N; i++) {
+        const unsigned char* r = tbl + (unsigned)i * DC_SZ + DC_X1_OFF;
+        int x1 = *(const int*)(r + 0), y1 = *(const int*)(r + 4);
+        int x2 = *(const int*)(r + 8), y2 = *(const int*)(r + 12);
+
+        if (x1 == kDiscCoords[i].x1 && y1 == kDiscCoords[i].y1 &&
+            x2 == kDiscCoords[i].x2 && y2 == kDiscCoords[i].y2) continue;   // 원본 그대로다
+
+        if (x1 == DC_NONE) {                          // 좌표를 지운 줄
+            g_disc[i].x1 = g_disc[i].y1 = g_disc[i].x2 = g_disc[i].y2 = DISCDB_NONE;
+            n++;
+            continue;
+        }
+        // 지도 밖 값은 안 가져온다 — 표 자리가 어긋났을 때 마커가 사방으로 튀는 것을 막는다.
+        if (x1 < 0 || x1 > DC_X_MAX || x2 < x1 || x2 > DC_X_MAX) continue;
+        if (y1 < 0 || y1 > DC_Y_MAX || y2 < y1 || y2 > DC_Y_MAX) continue;
+        g_disc[i].x1 = x1; g_disc[i].y1 = y1;
+        g_disc[i].x2 = x2; g_disc[i].y2 = y2;
+        n++;
+    }
+    return n;
 }
 
 static void ClampSpan(int* a, int* b)
@@ -205,34 +261,23 @@ static char* ReadWholeFile(const wchar_t* path)
     return buf;
 }
 
-void DiscDb_Load(HINSTANCE hinst)
+// discoveries.json 을 읽어 덮어쓴다. 실제로 읽었으면 1.
+static int LoadFile(HINSTANCE hinst)
 {
     wchar_t path[MAX_PATH];
     char* buf;
     const char* p;
-    int i, n = 0;
+    int n = 0;
 
-    // 1) 구운 표를 깔아 둔다. discoveries.json 이 없거나 깨져 있어도 마커는 나온다.
-    for (i = 0; i < DISCDB_MAX; i++) {
-        g_disc[i].x1 = kDiscCoords[i].x1;
-        g_disc[i].y1 = kDiscCoords[i].y1;
-        g_disc[i].x2 = kDiscCoords[i].x2;
-        g_disc[i].y2 = kDiscCoords[i].y2;
-        lstrcpynW(g_disc[i].name, kDiscCoords[i].name,
-                  (int)(sizeof(g_disc[i].name) / sizeof(wchar_t)));
-    }
-    g_fromFile = 0;
-
-    // 2) 파일이 있으면 그 값으로 덮어쓴다.
     JsonPath(hinst, path, MAX_PATH);
     buf = ReadWholeFile(path);
-    if (!buf) return;
+    if (!buf) return 0;
 
     p = buf;
     if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF)
         p += 3;                                   // UTF-8 BOM
     SkipWS(&p);
-    if (*p != '[') { HeapFree(GetProcessHeap(), 0, buf); return; }
+    if (*p != '[') { HeapFree(GetProcessHeap(), 0, buf); return 0; }
     p++;
     for (;;) {
         SkipWS(&p);
@@ -243,7 +288,33 @@ void DiscDb_Load(HINSTANCE hinst)
         if (*p == ',') { p++; continue; }
     }
     HeapFree(GetProcessHeap(), 0, buf);
-    if (n > 0) g_fromFile = 1;
-    OutputDebugStringW(g_fromFile ? L"[WorldMapKR] discoveries.json 로드."
-                                  : L"[WorldMapKR] discoveries.json 비어 있음.");
+    OutputDebugStringW(n > 0 ? L"[WorldMapKR] discoveries.json 로드."
+                             : L"[WorldMapKR] discoveries.json 비어 있음.");
+    return n > 0;
+}
+
+// 셋을 이 차례로 깐다 — 뒤에 깔리는 것이 이긴다.
+//   구운 표(게임 원본)  ->  discoveries.json(사람이 손본 마커)  ->  고쳐진 게임 표
+// 지도를 열 때와 R 을 누를 때마다 불린다. 그래서 DiscoveryEditKR 로 좌표를 옮기고
+// 지도를 다시 열면 마커가 알아서 따라와 있다.
+void DiscDb_Load(HINSTANCE hinst)
+{
+    int i;
+
+    for (i = 0; i < DISCDB_MAX; i++) {
+        g_disc[i].x1 = kDiscCoords[i].x1;
+        g_disc[i].y1 = kDiscCoords[i].y1;
+        g_disc[i].x2 = kDiscCoords[i].x2;
+        g_disc[i].y2 = kDiscCoords[i].y2;
+        lstrcpynW(g_disc[i].name, kDiscCoords[i].name,
+                  (int)(sizeof(g_disc[i].name) / sizeof(wchar_t)));
+    }
+
+    g_fromFile = LoadFile(hinst);
+    g_fromGame = LoadLive();
+    if (g_fromGame > 0) {
+        wchar_t s[96];
+        wsprintfW(s, L"[WorldMapKR] 실행 중인 게임 표에서 고쳐진 발견물 %d줄을 따라감.", g_fromGame);
+        OutputDebugStringW(s);
+    }
 }

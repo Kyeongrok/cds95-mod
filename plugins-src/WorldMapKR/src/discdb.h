@@ -12,6 +12,11 @@
 // id 는 게임 발견물 번호(0~273), x/y 는 WORLD.CDS 를 펼친 배열의 칸 번호다
 // (x 0~2499, y 0~1249 — 함대·도시가 쓰는 원본값의 1/16).
 // x1 이 없거나 음수면 그 발견물은 마커를 찍지 않는다.
+//
+// 그 위에 한 겹이 더 있다 — 실행 중인 게임 표(.rdata 0x11C540)에서 **원본과 다른 줄**만
+// 걷어와 맨 나중에 덮는다. DiscoveryEditKR 이 좌표를 옮겨 놓았으면 지도를 열 때(또는 R)
+// 마커가 알아서 따라온다. 원본 그대로인 줄은 안 건드리므로 discoveries.json 에 손으로
+// 적어 둔 마커 보정은 그대로 남는다.  깔리는 차례: 구운 표 -> json -> 고쳐진 게임 표.
 // x2/y2 를 안 적으면 x1/y1 과 같은 것으로 본다(점 하나).
 
 #define DISCDB_MAX  274
@@ -30,6 +35,7 @@ typedef struct {
 void DiscDb_Load(HINSTANCE hinst);
 
 int  DiscDb_FromFile(void);   // discoveries.json 을 실제로 읽었으면 1
+int  DiscDb_FromGame(void);   // 실행 중인 게임 표에서 걷어온(=누가 고쳐 둔) 줄 수
 int  DiscDb_Marked(void);     // 좌표가 있어 마커를 찍을 발견물 수
 const DiscPt* DiscDb_At(int i);
 

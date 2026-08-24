@@ -437,10 +437,17 @@ static void OnPaint(HWND h)
 
     // 오른쪽 끝에 타일 상태를 늘 적는다 — 지금 게임 그림으로 그리는지 옛 어림 색으로
     // 그리는지가 한눈에 보여야 한다(좌표와 자리를 다투지 않게 여기 둔다).
-    wsprintfW(buf, L"x%d · 도시 %d%s (초록=도서관) · 발견물 %d%s (노랑) · 타일 %s · 휠 확대 / 끌기 / 우클릭 전체 / C 도시 / D 발견물 / R 다시읽기",
-              kZoom[g_zi], CityDb_Marked(), CityDb_FromFile() ? L"" : L"(내장)",
-              DiscDb_Marked(), DiscDb_FromFile() ? L"" : L"(내장)",
-              Ocean_Ready() ? L"O" : (Ocean_Why()[0] ? Ocean_Why() : L"X(아직 안 읽음)"));
+    {
+        // 고쳐 둔 줄이 있으면 몇 줄을 게임 표에서 따라왔는지 적는다 — 마커가 옛 자리에
+        // 남았는지 새 자리로 갔는지가 한눈에 보여야 한다.
+        wchar_t live[32];
+        live[0] = 0;
+        if (DiscDb_FromGame() > 0) wsprintfW(live, L"+게임%d", DiscDb_FromGame());
+        wsprintfW(buf, L"x%d · 도시 %d%s (초록=도서관) · 발견물 %d%s%s (노랑) · 타일 %s · 휠 확대 / 끌기 / 우클릭 전체 / C 도시 / D 발견물 / R 다시읽기",
+                  kZoom[g_zi], CityDb_Marked(), CityDb_FromFile() ? L"" : L"(내장)",
+                  DiscDb_Marked(), DiscDb_FromFile() ? L"" : L"(내장)", live,
+                  Ocean_Ready() ? L"O" : (Ocean_Why()[0] ? Ocean_Why() : L"X(아직 안 읽음)"));
+    }
     UI_Text(dc, ir, buf, g_smallFont, COL_TEXT, DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
 
     UI_BufEnd(&ub);
