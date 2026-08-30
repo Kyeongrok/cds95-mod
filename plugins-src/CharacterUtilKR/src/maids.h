@@ -73,3 +73,35 @@ const wchar_t* Maid_BloodName(int blood);      // 0 -> "A" … 3 -> "AB"
 // 도시는 CHARKR_EDIT_CITY 가 꺼져 있을 때만 여기 같이 적는다(켜져 있으면 셀의 select box 몫).
 // 생년은 늘 셀의 select box 가, 혈액형은 셀의 머리글이 맡는다. out 은 256 wchar 이상.
 void Maid_FormatInfo(const MaidInfo* m, wchar_t* out, int cap);
+
+// ---- 실행 중에만 있는 여급 상태(친밀도 · 지금 도시) ----
+// 위 표(.rdata)와 달리 이쪽은 게임이 돌 때만 있는 "살아 있는" 여급 객체 배열이다.
+// EXE 안 생성자(0x479510)가 60바이트 x 127칸을 만들어 놓고 vtable(0x518ED0)을 꽂는다.
+//   +0x00 vtable   +0x04 종류(2 = 여급)
+//   +0x20 친밀도(0~100)   +0x24 지금 있는 도시(처음엔 표 +0x24 와 같다)
+//   +0x28/+0x2C/+0x30/+0x34 미상   +0x38 남은 일수(-1 = 없음)
+// 친밀도는 0x478530 이 0~100 으로 잘라 넣고(clamp), 여급을 만나 이야기를 나눌수록 오른다.
+//
+// **이 값들은 세이브에 그대로 들어간다** — 여급 127칸을 훑는 직렬화 루프가 넷 있고
+// (쓰기 0x4796B0 · 읽기 0x479630, 친밀도는 부모 클래스 0x478500 / 0x4784D0),
+// 세이브를 불러오면 그대로 되살아난다. 그래서 여기 보이는 목록은 "이 세이브에서
+// 만난 여급"이 맞다. 새 게임을 시작하면 0x461E6C 가 친밀도를 전원 0 으로 되돌린다.
+//
+// 자리 확인: ce/CDS_95.CT 의 "여급 정보" 그룹이 0x5B3C80(=+0x20)을 친밀도,
+// 0x5B3C84(=+0x24)를 현재도시로 짚어 두었고, 생성자가 +0x24 에 표 +0x24(도시)를
+// 그대로 옮겨 담는 것이 코드에서 그대로 보인다.
+#define MAID_LIVE_RVA     0x1B3C60u
+#define MAID_LIVE_SZ      0x3C
+#define MAID_LIVE_VT_RVA  0x118ED0u   // 그 배열이 쓰는 vtable. 칸 검사용
+#define MAID_LIVE_OFF_INTIMACY 0x20
+#define MAID_LIVE_OFF_CITY     0x24
+#define MAID_INTIMACY_MAX 100
+
+// 배열을 찾아 검사한다. 성공 1. 여러 번 불러도 된다(실패하면 다음에 다시 본다).
+int Maid_LiveReady(void);
+
+int Maid_Intimacy(int row);   // 0~100. 못 읽으면 -1
+int Maid_LiveCity(int row);   // 지금 있는 도시. 못 읽으면 -1
+// 만난 적이 있는가. 친밀도가 0 보다 크면 말을 섞은 것이다(그냥 앉아만 있는 여급은 0).
+// 못 읽으면 -1.
+int Maid_Met(int row);

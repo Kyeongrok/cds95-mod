@@ -258,3 +258,63 @@ void Maid_FormatInfo(const MaidInfo* m, wchar_t* out, int cap)
     wsprintfW(out, L"도시 %s\n언어 %s", Save_CityName((unsigned char)m->city), langs);
 #endif
 }
+
+// ---- 실행 중에만 있는 여급 상태 ----
+// 표(.rdata)가 아니라 .data 뒷부분이라 주소만 믿고 읽지 않는다. 127칸 전부
+// vtable 이 제자리고 친밀도·도시가 말이 되는지 보고 나서야 쓴다.
+static const unsigned char* g_live = NULL;
+
+static int LiveSlotOk(const unsigned char* p, unsigned vt)
+{
+    int inti = *(const int*)(p + MAID_LIVE_OFF_INTIMACY);
+    int city = *(const int*)(p + MAID_LIVE_OFF_CITY);
+    if (*(const unsigned*)p != vt) return 0;
+    if (inti < 0 || inti > MAID_INTIMACY_MAX) return 0;
+    if (city < 0 || city >= CITY_MAX) return 0;
+    return 1;
+}
+
+int Maid_LiveReady(void)
+{
+    const unsigned char* arr;
+    unsigned vt;
+    int i;
+
+    if (g_live) return 1;
+    if (!g_base && !ModuleRange()) return 0;
+
+    arr = g_base + MAID_LIVE_RVA;
+    vt  = (unsigned)(UINT_PTR)(g_base + MAID_LIVE_VT_RVA);
+    if (!Readable(arr, (SIZE_T)MAID_COUNT * MAID_LIVE_SZ)) return 0;
+    for (i = 0; i < MAID_COUNT; i++)
+        if (!LiveSlotOk(arr + i * MAID_LIVE_SZ, vt)) return 0;
+
+    g_live = arr;
+    OutputDebugStringW(L"[CharacterUtilKR] 여급 실행 중 배열 127칸 로드.");
+    return 1;
+}
+
+static const int* LiveField(int row, int off)
+{
+    if (!Maid_LiveReady()) return NULL;
+    if (row < 0 || row >= MAID_COUNT) return NULL;
+    return (const int*)(g_live + (unsigned)row * MAID_LIVE_SZ + off);
+}
+
+int Maid_Intimacy(int row)
+{
+    const int* p = LiveField(row, MAID_LIVE_OFF_INTIMACY);
+    return p ? *p : -1;
+}
+
+int Maid_LiveCity(int row)
+{
+    const int* p = LiveField(row, MAID_LIVE_OFF_CITY);
+    return p ? *p : -1;
+}
+
+int Maid_Met(int row)
+{
+    int v = Maid_Intimacy(row);
+    return v < 0 ? -1 : (v > 0);
+}
