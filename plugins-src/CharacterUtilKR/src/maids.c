@@ -1,12 +1,15 @@
 #include "maids.h"
 #include "faces.h"
 #include "savedata.h"   // Save_CityName / Save_SkillName / Save_SkillShort / SAVE_SKILL_LANG0
+#include "livechar.h"   // 주인공의 성좌·혈액형·얼굴 — 궁합을 재려면 이 셋이 필요하다
 
 #define REC_SZ      40
 #define OFF_NAME    0x00
 #define OFF_FACE    0x04
 #define OFF_AGE     0x08
 #define OFF_BLOOD   0x10
+#define OFF_FATE    0x14
+#define OFF_PERSON  0x18
 #define OFF_BLDG    0x1C
 #define OFF_LANG    0x20
 #define OFF_CITY    0x24
@@ -84,6 +87,10 @@ static int RowOk(const unsigned char* r, int faceMax)
     if (blood < 0 || blood > 3) return 0;
     if (city < 0 || city >= CITY_MAX) return 0;
     if (lang == 0 || lang >= (1u << LANG_BITS)) return 0;
+    { int p = *(const int*)(r + OFF_PERSON);
+      int f = *(const int*)(r + OFF_FATE);
+      if (p < 0 || p >= MAID_PERSONALITY_N) return 0;
+      if (f < 0 || f >= MATCH_FACE_N) return 0; }
     return 1;
 }
 
@@ -135,6 +142,8 @@ int Maid_Load(void)
         m->blood     = *(const int*)(r + OFF_BLOOD);
         m->lang      = *(const unsigned*)(r + OFF_LANG);
         m->city      = *(const int*)(r + OFF_CITY);
+        m->personality = *(const int*)(r + OFF_PERSON);
+        m->fateFace    = *(const int*)(r + OFF_FATE);
     }
     g_tbl   = (unsigned char*)tbl;
     g_count = MAID_COUNT;
@@ -246,16 +255,39 @@ const wchar_t* Maid_BloodName(int blood)
     return kBlood[blood & 3];
 }
 
-void Maid_FormatInfo(const MaidInfo* m, wchar_t* out, int cap)
+// 궁합 표시. 게임은 선호가 2 일 때만 대사와 친밀도 증가가 달라진다 — 그 갈림을 그대로 적는다.
+static const wchar_t* MatchMark(int m)
 {
+    return m == 2 ? L"◎ 잘 맞음" : m == 1 ? L"○ 보통" : m == 0 ? L"△ 안 맞음" : L"";
+}
+
+void Maid_FormatInfo(int row, wchar_t* out, int cap)
+{
+    const MaidInfo* m = Maid_At(row);
     wchar_t langs[LANG_BUF];
+    wchar_t head[96];
+    wchar_t city[96];
+    int match = Maid_Match(row);
+    int live  = Maid_LiveCity(row);
 
     if (cap < INFO_MIN_CAP) { if (cap > 0) out[0] = 0; return; }
     FormatLangs(m->lang, langs, LANG_BUF);
+
+    if (match >= 0)
+        wsprintfW(head, L"성격 %s · 궁합 %s", Maid_PersonalityName(m->personality), MatchMark(match));
+    else
+        wsprintfW(head, L"성격 %s", Maid_PersonalityName(m->personality));
+
+    // 여급은 도시를 옮겨 다닌다. 표의 도시는 판이 시작될 때 자리라, 지금이 다르면 함께 적는다.
+    if (live >= 0 && live != m->city)
+        wsprintfW(city, L"도시 %s (지금 %s)", Maid_CityName(m->city), Maid_CityName(live));
+    else
+        wsprintfW(city, L"도시 %s", Maid_CityName(m->city));
+
 #if CHARKR_EDIT_CITY
-    wsprintfW(out, L"언어 %s", langs);
+    wsprintfW(out, L"%s\n언어 %s", head, langs);
 #else
-    wsprintfW(out, L"도시 %s\n언어 %s", Save_CityName((unsigned char)m->city), langs);
+    wsprintfW(out, L"%s\n%s\n언어 %s", head, city, langs);
 #endif
 }
 
@@ -317,4 +349,92 @@ int Maid_Met(int row)
 {
     int v = Maid_Intimacy(row);
     return v < 0 ? -1 : (v > 0);
+}
+
+// ---- 성격과 궁합 ----
+// 규칙은 maids.h 주석에 적어 두었다. 게임이 쓰는 표 셋을 그대로 읽어 같은 셈을 한다.
+
+const wchar_t* Maid_PersonalityName(int p)
+{
+    // 게임이 0x4A3130 에서 성격으로 갈래를 나눌 때 쓰는 이름 그대로다(.data 0x54C818~).
+    static const wchar_t* kName[MAID_PERSONALITY_N] = {
+        L"당당한", L"강인한", L"의지가 강한", L"용감한",
+        L"친절한", L"로맨틱한", L"섬세한",   L"견실한"
+    };
+    if (p < 0 || p >= MAID_PERSONALITY_N) return L"";
+    return kName[p];
+}
+
+// 생월·생일 -> 성좌(0=양자리 … 11=물고기자리). 게임 0x42E620 과 같은 셈이다.
+// 경계는 3/21 부터 열두 칸이고, 3/21 이전은 한 해를 감아 뒤로 보낸다.
+static int ZodiacOf(int month, int day)
+{
+    static const short kFrom[12] = { 321, 421, 522, 622, 723, 823, 924,1024,1123,1222,1321,1419 };
+    static const short kTo  [12] = { 420, 521, 621, 722, 822, 923,1023,1122,1221,1320,1418,1520 };
+    int v, i;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return -1;
+    v = month * 100 + day;
+    if (v < 321) v += 1200;
+    for (i = 0; i < 12; i++)
+        if (kFrom[i] <= v && v <= kTo[i]) return i;
+    return -1;
+}
+
+static int Clamp02(int v) { return v < 0 ? 0 : (v > 2 ? 2 : v); }
+
+int Maid_PlayerPrefs(int out[MAID_PERSONALITY_N])
+{
+    const int* zod;
+    const int* blood;
+    const int* face;
+    int z, b, f, age, i;
+
+    for (i = 0; i < MAID_PERSONALITY_N; i++) out[i] = 0;
+    if (!Player_Ready() && !Player_Load()) return 0;   // 세이브를 아직 안 불러왔다
+
+    z = ZodiacOf(Player_BirthMonth(), Player_BirthDay());
+    b = Player_Blood();
+    f = Player_Face();
+    if (z < 0 || b < 0 || f < 0) return 0;
+
+    // 화면에 나오는 얼굴로 따진다 — 36세부터 +16 이다(게임 0x47CAF0).
+    age = Player_Age();
+    if (age != -9999 && age >= MATCH_ELDER_AGE) f += MATCH_ELDER_STEP;
+    if (f < 0 || f >= MATCH_FACE_N) return 0;
+
+    if (!g_base && !ModuleRange()) return 0;
+    zod   = (const int*)(g_base + MATCH_ZODIAC_RVA + (unsigned)z * 32u);
+    blood = (const int*)(g_base + MATCH_BLOOD_RVA  + (unsigned)b * 32u);
+    face  = (const int*)(g_base + MATCH_FACE_RVA   + (unsigned)f * 32u);
+    if (!Readable(zod, 32) || !Readable(blood, 32) || !Readable(face, 32)) return 0;
+
+    for (i = 0; i < MAID_PERSONALITY_N; i++) out[i] = zod[i] + blood[i];
+    // 얼굴표는 줄마다 (성격번호, 보정) 한 쌍을 +0x18/+0x1C 에 들고 있다.
+    { int k = face[6], adj = face[7];
+      if (k >= 0 && k < MAID_PERSONALITY_N) out[k] += adj; }
+    for (i = 0; i < MAID_PERSONALITY_N; i++) out[i] = Clamp02(out[i]);
+    return 1;
+}
+
+int Maid_Match(int row)
+{
+    int pref[MAID_PERSONALITY_N];
+    int p;
+    if (row < 0 || row >= g_count) return -1;
+    p = g_maids[row].personality;
+    if (p < 0 || p >= MAID_PERSONALITY_N) return -1;
+    if (!Maid_PlayerPrefs(pref)) return -1;
+    return pref[p];
+}
+
+int Maid_IsFate(int row)
+{
+    int f, age;
+    if (row < 0 || row >= g_count) return -1;
+    if (!Player_Ready() && !Player_Load()) return -1;
+    f = Player_Face();
+    if (f < 0) return -1;
+    age = Player_Age();
+    if (age != -9999 && age >= MATCH_ELDER_AGE) f += MATCH_ELDER_STEP;
+    return g_maids[row].fateFace == f;
 }

@@ -393,6 +393,8 @@ int LiveChar_SetCrew(int which, int slot)
 #define LC_FAME   0xA4
 #define LC_INFAMY 0xA8
 #define LC_BORNY  0xE0        /* 인물 배열에는 없다 — 이름/성 뒤에 붙는 주인공 전용 자리 */
+#define LC_BORNM  0xE4        /* 생월(1~12) — 성좌를 여기서 뽑는다 */
+#define LC_BORND  0xE8        /* 생일(1~31) */
 
 static unsigned char* g_pl      = NULL;
 static int            g_plState = LIVECHAR_E_READ;
@@ -449,6 +451,8 @@ int Player_Blood(void)     { return PlField(LC_BLOOD,   0, 3,        -1); }
 int Player_Job(void)       { return PlField(LC_JOB,     0, 63,       -1); }
 int Player_Age(void)       { return PlField(LC_AGE, AGE_MIN, AGE_MAX, -9999); }
 int Player_BirthYear(void) { return PlField(LC_BORNY, YEAR_MIN, YEAR_MAX, 0); }
+int Player_BirthMonth(void){ return PlField(LC_BORNM,  1, 12,       0); }
+int Player_BirthDay(void)  { return PlField(LC_BORND,  1, 31,       0); }
 int Player_Fame(void)      { return PlField(LC_FAME,   0, FAME_MAX,  -1); }
 int Player_Infamy(void)    { return PlField(LC_INFAMY, 0, FAME_MAX,  -1); }
 

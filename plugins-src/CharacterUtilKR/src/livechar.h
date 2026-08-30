@@ -101,6 +101,9 @@ int  Player_Gender(void);      // 0=남 1=여. 못 읽으면 -1
 int  Player_SetGender(int g);  // 성공 1
 int  Player_Age(void);         // 못 읽으면 -9999
 int  Player_BirthYear(void);   // 못 읽으면 0
+// 생월·생일. 주인공의 성좌는 이 둘에서 나온다(게임 함수 0x42E620 과 같은 규칙 — maids.c).
+int  Player_BirthMonth(void);  // 1~12. 못 읽으면 0
+int  Player_BirthDay(void);    // 1~31. 못 읽으면 0
 int  Player_Blood(void);       // 0=A 1=B 2=O 3=AB. 못 읽으면 -1
 int  Player_Job(void);         // 못 읽으면 -1
 int  Player_Fame(void);        // 못 읽으면 -1

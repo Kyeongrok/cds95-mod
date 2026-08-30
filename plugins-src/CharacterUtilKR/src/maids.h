@@ -10,10 +10,14 @@
 //   +0x08 1495년 기준 나이(부호 있음) → 생년 = 1495 - 값
 //         (등장연도가 아니다. 인물은 18세가 되어야 술집에 나온다 — navview 쪽 주석 참고)
 //   +0x0C 성좌(0~11)   +0x10 혈액형(0=A 1=B 2=O 3=AB)
-//   +0x14 미상(0~30)   +0x18 미상(0~7)
+//   +0x14 **운명의 반려자 얼굴코드**(0~30)   +0x18 **성격**(0~7)
+//     +0x14 는 "이 여급과 맺어질 주인공 얼굴"이다. 점술이 그 여급이 있는 도시를 일러 주는
+//     자리(0x40A680)에서 주인공의 표시 얼굴코드와 견준다. 표시 얼굴은 36세부터 +16 이다.
+//     +0x18 은 성격 8종(0=당당한 … 7=견실한). 여급이 하는 말이 이 값으로 갈리고
+//     (0x4A3130 의 점프 테이블), 주인공과의 궁합도 이 값으로 따진다 — Maid_Match 참고.
 //   +0x1C 건물(127행 전원 4=주점)     +0x20 언어 비트마스크(bit0~13)
 //   +0x24 도시번호(kCities 색인)
-// 성좌와 미상 2필드는 게임이 화면에 쓰지 않아 표시하지 않는다.
+// 성좌는 게임이 화면에 쓰지 않아 표시하지 않는다.
 //
 // 언어 비트 b 는 세이브 특기 ID (SAVE_SKILL_LANG0 + b) 와 순서가 같아서
 // savedata.c 의 이름표(kSkillName/kSkillShort)를 그대로 재사용한다.
@@ -47,6 +51,8 @@ typedef struct {
     int      blood;       // 0=A 1=B 2=O 3=AB
     unsigned lang;        // bit0~13
     int      city;
+    int      personality; // 0~7. Maid_PersonalityName 으로 이름을 얻는다
+    int      fateFace;    // 운명의 반려자 얼굴코드(0~30)
 } MaidInfo;
 
 // 표를 읽어 검사한다. 성공 1 / 다른 빌드로 보이면 0(호출한 쪽이 예전 동작으로 폴백).
@@ -69,10 +75,16 @@ const wchar_t* Maid_CityName(int city);
 int            Maid_CityCount(void);           // 226
 const wchar_t* Maid_BloodName(int blood);      // 0 -> "A" … 3 -> "AB"
 
-// 정보 패널 본문. 언어 목록 줄("언어 스페인어, 포르투갈어, …")이 들어가고,
-// 도시는 CHARKR_EDIT_CITY 가 꺼져 있을 때만 여기 같이 적는다(켜져 있으면 셀의 select box 몫).
-// 생년은 늘 셀의 select box 가, 혈액형은 셀의 머리글이 맡는다. out 은 256 wchar 이상.
-void Maid_FormatInfo(const MaidInfo* m, wchar_t* out, int cap);
+// 정보 패널 본문 세 줄. out 은 256 wchar 이상.
+//
+//   성격 친절한 · 궁합 ◎
+//   도시 오포르토 (지금 세비야)          <- 옮겨 갔을 때만 괄호가 붙는다
+//   언어 스페인어, 포르투갈어
+//
+// 궁합과 "지금" 은 실행 중에만 아는 값이라 세이브를 불러오기 전에는 그 자리가 빠진다.
+// 도시는 CHARKR_EDIT_CITY 가 꺼져 있을 때만 여기 적는다(켜져 있으면 셀의 select box 몫).
+// 생년은 늘 셀의 select box 가, 혈액형은 셀의 머리글이 맡는다.
+void Maid_FormatInfo(int row, wchar_t* out, int cap);
 
 // ---- 실행 중에만 있는 여급 상태(친밀도 · 지금 도시) ----
 // 위 표(.rdata)와 달리 이쪽은 게임이 돌 때만 있는 "살아 있는" 여급 객체 배열이다.
@@ -105,3 +117,38 @@ int Maid_LiveCity(int row);   // 지금 있는 도시. 못 읽으면 -1
 // 만난 적이 있는가. 친밀도가 0 보다 크면 말을 섞은 것이다(그냥 앉아만 있는 여급은 0).
 // 못 읽으면 -1.
 int Maid_Met(int row);
+
+// ---- 성격과 궁합 ----
+// 여급 성격은 8종이고, 주인공에게는 그 8종에 대한 **선호(0~2)** 가 있다.
+// 게임이 여급과 이야기할 때(0x465C61) 그 여급 성격에 대한 선호가 **2 면 친밀도를
+// 5 + rand(15) 만큼**, 아니면 **2 + rand(10) 만큼** 올린다(둘 다 60 이 상한).
+// 그러니 선호 2 = "궁합이 좋다" 이고, 이 창은 그것을 ◎ 로 적는다.
+//
+// 선호는 주인공의 **성좌 + 혈액형 + 얼굴**에서 나온다(게임 함수 0x477FE0 → 0x47CB70):
+//
+//   pref[i] = 성좌표[성좌][i] + 혈액형표[혈액형][i]        (i = 성격 0~7)
+//   pref[ 얼굴표[표시얼굴].성격 ] += 얼굴표[표시얼굴].보정
+//   pref[i] = clamp(pref[i], 0, 2)
+//
+// 세 표 모두 EXE 안에 구워져 있다(아래 RVA). 성좌는 생월·생일에서 나오고(0x42E620,
+// 경계표 0x547260 — 0=양자리 … 11=물고기자리), 표시 얼굴은 36세부터 +16 이다.
+#define MAID_PERSONALITY_N 8
+
+#define MATCH_ZODIAC_RVA 0x168578u   // 12성좌 x 8칸(int)
+#define MATCH_BLOOD_RVA  0x1686F8u   // 4혈액형 x 8칸 — 성좌표 바로 뒤에 이어 붙어 있다
+#define MATCH_FACE_RVA   0x11ACA0u   // 얼굴 32줄 x 32바이트, +0x18 성격번호 · +0x1C 보정
+#define MATCH_ZODIAC_RVA_END (MATCH_ZODIAC_RVA + 12u * 32u)
+#define MATCH_FACE_N     32
+#define MATCH_ELDER_AGE  36          // 이 나이부터 얼굴코드에 16 을 더해 그린다
+#define MATCH_ELDER_STEP 16
+
+const wchar_t* Maid_PersonalityName(int p);   // 0 -> "당당한" … 7 -> "견실한"
+
+// 주인공의 성격 선호를 계산한다. out 은 8칸. 성공 1 / 세이브를 아직 안 불러왔으면 0.
+int Maid_PlayerPrefs(int out[MAID_PERSONALITY_N]);
+
+// 그 여급과의 궁합. 2 = 좋음(◎) · 1 = 보통(○) · 0 = 나쁨(△). 못 재면 -1.
+int Maid_Match(int row);
+
+// 그 여급이 주인공의 "운명의 반려자" 인가. 1/0, 못 재면 -1.
+int Maid_IsFate(int row);

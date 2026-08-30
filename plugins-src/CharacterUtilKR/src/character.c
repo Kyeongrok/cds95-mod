@@ -9,6 +9,7 @@
 #include "questview.h"
 #include "invview.h"
 #include "playerview.h"
+#include "livechar.h"   // Player_Load — [여급] 궁합은 주인공 레코드에서 나온다
 #include "questdb.h"     // Quest_Init — 창을 열기 전에 quests.json 을 반영해야 한다
 #include "hkjson.h"      // HotkeyUtilKR/src — 탭에 적을 단축키를 hotkeys.json 에서 읽는다
 #include "gameskin.h"    // ButtonMakerKR/src — 단추를 게임 껍데기(MISC.CDS 파트 4)로 그린다
@@ -62,7 +63,11 @@ static int     g_tab = TAB_MAID;      // 항해사 찾기를 뺀 빌드에서는
 static int     g_gender = FACE_MALE;  // [도감] 탭에서만 쓴다. [여급] 은 전원 여성이라 고정
 static int     g_scroll = 0;   // 맨 위에 보이는 행
 static int     g_catFilter = 0;// 0=전체 1=인물 4=기타 (여급·스폰서는 독립 탭으로 뺐다)
-static int     g_maidMet = 0;  // [여급] 추리기. 0=전체, 1=만난 여급만(친밀도 > 0)
+// [여급] 추리기. 0=전체, 1=만난 여급(친밀도 > 0), 2=궁합이 좋은 여급(선호 2)
+#define MAID_F_ALL   0
+#define MAID_F_MET   1
+#define MAID_F_MATCH 2
+static int     g_maidMet = MAID_F_ALL;
 static int     g_prefFilter = 0; // 스폰서 취향 추리기. 0=전체, 그 밖은 (취향비트 + 1)
 static int     g_pcityFilter = 0; // 스폰서 도시 추리기. 0=전체, 그 밖은 (도시목록 색인 + 1)
 // 스폰서 정렬. 0=자금 많은 순(기본) 1=자금 적은 순 2=얼굴코드 순
@@ -127,13 +132,14 @@ static void RebuildFilter(void)
     g_filtCount = 0;
     if (g_tab == TAB_MAID) {
         for (i = 0; i < Maid_Count(); i++) {
-            // "만난 여급"은 친밀도가 붙은 사람이다. 세이브를 아직 안 불러왔으면
-            // (Maid_Met 이 -1) 추릴 근거가 없으므로 전원을 그대로 둔다.
-            if (g_maidMet && Maid_Met(i) == 0) continue;
+            // 세이브를 아직 안 불러왔으면(둘 다 -1) 추릴 근거가 없으므로 전원을 그대로 둔다.
+            if (g_maidMet == MAID_F_MET   && Maid_Met(i) == 0)   continue;
+            if (g_maidMet == MAID_F_MATCH && Maid_Match(i) == 0) continue;
+            if (g_maidMet == MAID_F_MATCH && Maid_Match(i) == 1) continue;
             Emit(Maid_At(i)->face, i, -1);
         }
-        // 만난 사람만 볼 때는 친한 순으로 세운다 — 목록을 여는 목적이 그것이다.
-        if (g_maidMet) {
+        // 추려 볼 때는 친한 순으로 세운다 — 목록을 여는 목적이 그것이다.
+        if (g_maidMet != MAID_F_ALL) {
             int a, b;
             for (a = 1; a < g_filtCount; a++) {
                 GalEntry v = g_filt[a];
@@ -246,9 +252,10 @@ static RECT MaleRect(void)   { RECT r; r.left=FRAME+8;  r.top=FILTER_Y; r.right=
 static RECT FemaleRect(void) { RECT r; r.left=FRAME+50; r.top=FILTER_Y; r.right=r.left+40; r.bottom=r.top+22; return r; }
 static RECT CatRect(int i)   { RECT r; r.left=FRAME+100 + i*54; r.right=r.left+50; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
 static RECT SbTrack(void)    { RECT r; r.right=WIN_W-FRAME-2; r.left=r.right-SB_W; r.top=GY; r.bottom=GY+GAL_H; return r; }
-// [여급] 필터바의 두 단추. 만난 여급만 추려 보는 자리다.
-static RECT MaidAllRect(void) { RECT r; r.left=FRAME+8;  r.right=r.left+50; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
-static RECT MaidMetRect(void) { RECT r; r.left=FRAME+62; r.right=r.left+90; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+// [여급] 필터바의 세 단추. 만난 여급 · 궁합 좋은 여급을 추려 보는 자리다.
+static RECT MaidAllRect(void)   { RECT r; r.left=FRAME+8;   r.right=r.left+50; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+static RECT MaidMetRect(void)   { RECT r; r.left=FRAME+62;  r.right=r.left+90; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
+static RECT MaidMatchRect(void) { RECT r; r.left=FRAME+156; r.right=r.left+90; r.top=FILTER_Y; r.bottom=r.top+22; return r; }
 
 // ---- 여급 값 편집 (직접 그린 select box + 펼침 목록) ----
 // 자식 COMBOBOX 는 게임 DirectDraw 화면 위에서 불안정해서 navview 와 같은 방식으로 직접 그린다.
@@ -524,12 +531,13 @@ static void PaintGallery(HDC dc)
 
     // 탭마다 필터바가 다르다. [여급] 은 고를 게 없어 안내만, [스폰서] 는 취향/정렬만 둔다.
     if (g_tab == TAB_MAID) {
-        UI_Button(dc, MaidAllRect(), L"전체",      g_maidMet == 0);
-        UI_Button(dc, MaidMetRect(), L"만난 여급", g_maidMet == 1);
-        ir.left=FRAME+160; ir.right=FRAME+430; ir.top=FILTER_Y; ir.bottom=FILTER_Y+22;
+        UI_Button(dc, MaidAllRect(),   L"전체",      g_maidMet == MAID_F_ALL);
+        UI_Button(dc, MaidMetRect(),   L"만난 여급", g_maidMet == MAID_F_MET);
+        UI_Button(dc, MaidMatchRect(), L"궁합 ◎",   g_maidMet == MAID_F_MATCH);
+        ir.left=FRAME+254; ir.right=WIN_W-FRAME-80; ir.top=FILTER_Y; ir.bottom=FILTER_Y+22;
         UI_Text(dc, ir,
-                Maid_LiveReady() ? L"만난 여급 = 친밀도가 붙은 사람 (세이브에 남습니다)"
-                                 : L"친밀도는 게임을 불러온 뒤에 보입니다",
+                Maid_LiveReady() ? L"만난 여급 = 친밀도가 붙은 사람 · 궁합은 내 성좌·혈액형·얼굴에서 나옵니다"
+                                 : L"친밀도와 궁합은 게임을 불러온 뒤에 보입니다",
                 g_smallFont, COL_TEXT, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     } else if (g_tab == TAB_PATRON) {
         ir.left=FRAME+8; ir.right=FRAME+52; ir.top=FILTER_Y; ir.bottom=FILTER_Y+22;
@@ -573,17 +581,8 @@ static void PaintGallery(HDC dc)
               const wchar_t* nm; const wchar_t* nf;
               if (m) {
                   nm = m->name;
-                  Maid_FormatInfo(m, mb, (int)(sizeof(mb)/sizeof(mb[0])));
-                  // 여급은 도시를 옮겨 다닌다(표의 도시는 게임을 시작할 때 자리일 뿐이다).
-                  // 지금 있는 곳이 그와 다르면 한 줄 더 적는다.
-                  { int lc = Maid_LiveCity(maid);
-                    if (lc >= 0 && lc != m->city) {
-                        wchar_t ln[64];
-                        int cap = (int)(sizeof(mb)/sizeof(mb[0]));
-                        wsprintfW(ln, L"\n지금 %s", Maid_CityName(lc));
-                        // 언어를 여럿 아는 여급은 본문이 길다 — 자리가 남을 때만 붙인다.
-                        if (lstrlenW(mb) + lstrlenW(ln) < cap) lstrcatW(mb, ln);
-                    } }
+                  // 본문 세 줄(성격·궁합 / 도시 / 언어)은 maids.c 가 짠다.
+                  Maid_FormatInfo(maid, mb, (int)(sizeof(mb)/sizeof(mb[0])));
                   nf = mb;
               } else if (prow >= 0) {
                   // 후계자가 선대 초상화를 물려받아 얼굴이 겹치므로 이름은 표에서 가져온다.
@@ -600,11 +599,13 @@ static void PaintGallery(HDC dc)
               // 혈액형은 못 고치는 값이라 머리글에 붙여 아래 두 줄을 편집용으로 비운다.
               if (m) {
                   // 친밀도는 실행 중에만 있는 값이라 세이브를 불러오기 전에는 빠진다.
+                  // 운명의 반려자(여급 표 +0x14 == 주인공의 표시 얼굴코드)에는 ★ 을 단다.
                   int mi = Maid_Intimacy(maid);
-                  if (mi >= 0) wsprintfW(hd, L"%s  #%d · %s형 · 친밀 %d",
-                                         nm[0]?nm:L"(무명)", face, Maid_BloodName(m->blood), mi);
-                  else         wsprintfW(hd, L"%s  #%d · %s형",
-                                         nm[0]?nm:L"(무명)", face, Maid_BloodName(m->blood));
+                  const wchar_t* star = Maid_IsFate(maid) == 1 ? L"★ " : L"";
+                  if (mi >= 0) wsprintfW(hd, L"%s%s  #%d · %s형 · 친밀 %d",
+                                         star, nm[0]?nm:L"(무명)", face, Maid_BloodName(m->blood), mi);
+                  else         wsprintfW(hd, L"%s%s  #%d · %s형",
+                                         star, nm[0]?nm:L"(무명)", face, Maid_BloodName(m->blood));
               }
               else if (prow >= 0 && Patron_Intimacy(prow) >= 0)
                      // 친밀도는 실행 중에만 있는 값이라 세이브를 불러오기 전에는 빠진다.
@@ -738,7 +739,7 @@ static void SetTab(HWND h, int t)
     Quest_Activate(h, t == TAB_QUEST);   // 켤 때마다 세이브를 다시 읽는다
     Inv_Activate(h, t == TAB_INV);       // 켤 때마다 소지품 자리를 다시 잡는다
     Pl_Activate(h, t == TAB_PLAYER);     // 켤 때마다 주인공 레코드를 다시 읽는다
-    if (t == TAB_MAID) Maid_LiveReady();  // 그 사이에 세이브를 불러왔을 수 있다
+    if (t == TAB_MAID) { Maid_LiveReady(); Player_Load(); }  // 그 사이에 세이브를 불러왔을 수 있다
     if (t != TAB_NAV && t != TAB_QUEST && t != TAB_INV && t != TAB_PLAYER)
         RebuildFilter();                 // [여급] <-> [도감] 은 목록 내용이 아예 다르다
     InvalidateRect(h, NULL, FALSE);
@@ -830,10 +831,13 @@ static LRESULT CALLBACK CharProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             }
             if (g_tab == TAB_MAID) {
                 { RECT r=MaidAllRect();
-                  if (PtInRect(&r,pt)) { g_maidMet = 0; RebuildFilter(); g_scroll = 0;
+                  if (PtInRect(&r,pt)) { g_maidMet = MAID_F_ALL; RebuildFilter(); g_scroll = 0;
                                          InvalidateRect(h,NULL,FALSE); return 0; } }
                 { RECT r=MaidMetRect();
-                  if (PtInRect(&r,pt)) { g_maidMet = 1; RebuildFilter(); g_scroll = 0;
+                  if (PtInRect(&r,pt)) { g_maidMet = MAID_F_MET; RebuildFilter(); g_scroll = 0;
+                                         InvalidateRect(h,NULL,FALSE); return 0; } }
+                { RECT r=MaidMatchRect();
+                  if (PtInRect(&r,pt)) { g_maidMet = MAID_F_MATCH; RebuildFilter(); g_scroll = 0;
                                          InvalidateRect(h,NULL,FALSE); return 0; } }
             }
             if (g_tab == TAB_PATRON) {
