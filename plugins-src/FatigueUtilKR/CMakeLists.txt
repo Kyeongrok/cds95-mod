@@ -1,11 +1,12 @@
 add_library(FatigueUtilKR SHARED
     src/dllmain.c
     src/fatigue.c
+    src/discipline.c    # 파일 > 규율 — 같은 함대 정보 묶음의 옆 칸을 본다
 )
 
 # 후킹이 없어 minhook 은 안 쓴다 — 값 하나를 읽고 쓰는 창이 전부다.
 target_include_directories(FatigueUtilKR PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h 등록부 · ovlflag.h 오버레이 약속
 )
 
 target_link_libraries(FatigueUtilKR PRIVATE user32 gdi32)

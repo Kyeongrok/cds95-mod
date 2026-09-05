@@ -4,13 +4,14 @@ add_library(WindArrowKR SHARED
     src/menu.c
     src/arrow.c
     src/wind.c
+    src/discovl.c      # 규율 숫자 오버레이 — 켬/끔은 FatigueUtilKR 의 규율 창이 쥔다
 )
 
 target_include_directories(WindArrowKR PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
 )
 
-target_link_libraries(WindArrowKR PRIVATE minhook user32)
+target_link_libraries(WindArrowKR PRIVATE minhook user32 gdi32)   # gdi32 — 규율 숫자를 글꼴로 굽는다
 
 # 소스에 한국어(UTF-8) 주석과 와이드 문자열이 있으므로 MSVC 에 UTF-8 소스로 알려준다.
 if(MSVC)

@@ -36,7 +36,7 @@
 //   0xB301 정보        0xB310+ 정보 탭
 //   0xB410 함선(스킨)  0xB500 패치       0xB600 지도
 //   0xB700 플러그인 관리   0xB701 플레이어 수정
-//   0xB800 퀘스트 모드 0xB900 업데이트   0xBA00 피로도
+//   0xB800 퀘스트 모드 0xB900 업데이트   0xBA00 피로도     0xBA01 규율
 //   0xBB00 단축키      0xBC00 힌트       0xBD00 매매
 //   0xBE00 저장        0xBE01 중단       0xBF00 도시그림
 //   0xC000+ 워프 목적지(도시 번호를 더해 쓴다 — 226칸을 먹는다)
@@ -48,6 +48,8 @@
 // 다음 빈 자리: 0xCB00.
 
 #define MODMENU_PROP L"CDS95_ModMenu"
+
+// 게임 창에 걸리는 프로퍼티는 이것 말고 하나 더 있다 — 화면 오버레이 켬/끔(ovlflag.h).
 
 // 등록부 메뉴. 아직(또는 영영) 없으면 NULL.
 static HMENU ModMenu_Handle(HWND gameHwnd)

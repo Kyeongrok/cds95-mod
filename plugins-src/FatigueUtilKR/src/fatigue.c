@@ -1,5 +1,7 @@
 #include <windows.h>
 #include "fatigue.h"
+#include "discipline.h" // 같은 DLL 의 규율 창 — 메뉴 감시 스레드를 나눠 쓴다
+#include "fleetmem.h"   // 함대 정보 칸 읽고 쓰기(규율 창과 같은 자리를 본다)
 #include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // FatigueUtilKR — 피로도 덜어내기. 창 하나에 입력칸과 버튼 하나뿐이다.
@@ -15,6 +17,8 @@
 #define ID_FATIGUE_OPEN 0xBA00u   // Trade=0xB101/0xB102/0xC0xx, Char=0xB301, Ship=0xB410,
                                   // Patch=0xB500, Map=0xB600, Mod=0xB700, QMod=0xB800,
                                   // Upd=0xB900 과 안 겹치게.
+#define ID_DISC_OPEN    0xBA01u   // 규율 창. 피로도 옆자리 값이라 번호도 옆에 붙였다
+                                  // (저장 0xBE00 · 중단 0xBE01 과 같은 식).
 
 #define ID_CUR     1001
 #define ID_LBL     1002
@@ -22,7 +26,7 @@
 #define ID_APPLY   1004
 #define ID_STATUS  1005
 
-#define FATIGUE_RVA  0x1B3950u    // ce/CDS_95.CT "함대 정보 > 피로도" (CDS_95.EXE+1B3950)
+#define FATIGUE_RVA  FLEET_FATIGUE_RVA   // fleetmem.h — ce/CDS_95.CT "함대 정보 > 피로도"
 #define FATIGUE_MAX  100          // 0x474038 의 "최대 피로도"
 #define AMOUNT_DEF   20           // 기본값
 
@@ -40,43 +44,10 @@ static WNDPROC   g_editProc = NULL;
 static void LogW(const wchar_t* s) { OutputDebugStringW(s); }
 
 // ------------------------------------------------------------------ 피로도 읽고 쓰기
+// 자리를 읽고 쓰는 일 자체는 fleetmem.h 가 한다(규율 창도 같은 것을 쓴다).
 
-// 세이브를 아직 안 불러왔거나 주소가 이 빌드와 안 맞으면 NULL. 읽기 전에 반드시 확인한다
-// (.data 뒷부분이라 실행 중에만 커밋돼 있다).
-static int* FatiguePtr(void)
-{
-    MEMORY_BASIC_INFORMATION mbi;
-    unsigned char* base = (unsigned char*)GetModuleHandleW(NULL);
-    void* p;
-    if (!base) return NULL;
-    p = base + FATIGUE_RVA;
-    if (!VirtualQuery(p, &mbi, sizeof(mbi))) return NULL;
-    if (mbi.State != MEM_COMMIT) return NULL;
-    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return NULL;
-    if (!(mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
-                         PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) return NULL;
-    return (int*)p;
-}
-
-// 지금 피로도. 못 읽거나 말이 안 되는 값이면 -1.
-static int FatigueGet(void)
-{
-    int* p = FatiguePtr();
-    int v;
-    if (!p) return -1;
-    v = *p;
-    // 게임이 쓰는 범위를 크게 벗어나면 아직 함대 정보가 안 찬 것으로 본다.
-    if (v < 0 || v > 1000) return -1;
-    return v;
-}
-
-static int FatigueSet(int v)
-{
-    int* p = FatiguePtr();
-    if (!p) return 0;
-    *p = v;
-    return 1;
-}
+static int FatigueGet(void) { return FleetGet(FATIGUE_RVA); }
+static int FatigueSet(int v) { return FleetSet(FATIGUE_RVA, v); }
 
 // ------------------------------------------------------------------ 창
 
@@ -250,6 +221,10 @@ static LRESULT CALLBACK SubProc(HWND h, UINT m, WPARAM w, LPARAM l)
         ShowFatigueWindow();
         return 0;
     }
+    if (m == WM_COMMAND && HIWORD(w) == 0 && LOWORD(w) == ID_DISC_OPEN) {
+        Discipline_Show(g_hinst, g_gameHwnd);
+        return 0;
+    }
     if (m == WM_NCDESTROY && h == g_subHwnd) {
         if (op) SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)op);
         g_origProc = NULL; g_subHwnd = NULL; g_gameHwnd = NULL;
@@ -319,6 +294,13 @@ static DWORD WINAPI MenuThread(LPVOID p)
                 DrawMenuBar(g_gameHwnd);
                 LogW(L"[FatigueUtilKR] \"피로도\" 메뉴 설치.");
             }
+            // 규율도 따로 단다 — 항목이 하나씩 걷혀 가므로 있고 없고를 따로 본다.
+            if (!MenuHasId(target, ID_DISC_OPEN) && !ModMenu_HasId(g_gameHwnd, ID_DISC_OPEN)) {
+                AppendMenuW(target, MF_STRING, ID_DISC_OPEN, L"규율");
+                DrawMenuBar(g_gameHwnd);
+                LogW(L"[FatigueUtilKR] \"규율\" 메뉴 설치.");
+            }
+            Discipline_RestoreOverlay(g_hinst, g_gameHwnd);   // 지난 판에 켜 둔 오버레이
             if (g_subHwnd != g_gameHwnd) {
                 g_origProc = (WNDPROC)SetWindowLongPtrW(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)SubProc);
                 g_subHwnd = g_gameHwnd;
@@ -333,6 +315,7 @@ void FatigueUtilKR_Init(HINSTANCE hinst)
     HANDLE t;
     g_hinst = hinst;
     LogW(L"[FatigueUtilKR] init.");
-    t = CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
+    Discipline_Init(hinst);                                // 규율이 바뀌는 자리를 적어 둔다
+    t = CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);   // "피로도" · "규율" 메뉴
     if (t) CloseHandle(t);
 }

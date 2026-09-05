@@ -31,6 +31,7 @@ static const HkAction kActions[] = {
     { L"함선",          0xB410, 'S' },
     { L"힌트",          0xBC00, 'D' },   // 발견물(discovery) — 힌트의 H 는 플레이어가 쓰고 있다
     { L"피로도",        0xBA00, 'F' },
+    { L"규율",          0xBA01, 'R' },   // 규율(게임 원문 "규칙") 보기 — FatigueUtilKR 의 두 번째 창
     { L"패치",          0xB500, 'C' },
     { L"퀘스트 모드",   0xB800, 'K' },
     { L"플러그인 관리", 0xB700, 'L' },

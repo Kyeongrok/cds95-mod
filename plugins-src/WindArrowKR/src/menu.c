@@ -14,6 +14,10 @@ static HINSTANCE g_hinst;
 static HWND      g_hwnd, g_subHwnd;
 static WNDPROC   g_origProc;
 
+// 그리는 쪽(hook.c)이 게임 창 프로퍼티를 보려면 창 핸들이 있어야 한다. 여기 폴링으로
+// 찾아 둔 것을 그대로 빌려 준다 — 매 프레임 EnumWindows 를 돌 수는 없다.
+HWND ArrowMenu_GameWnd(void) { return g_hwnd; }
+
 static void SyncCheck(HWND h)
 {
     HMENU bar = GetMenu(h);
