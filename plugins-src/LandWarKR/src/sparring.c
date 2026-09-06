@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------- 자리 (RVA = VA - 0x400000)
 // 한 자리만 밀려도 엉뚱한 코드를 부르게 되니 오른쪽 VA 와 꼭 맞대어 볼 것.
 #define SP_ENTRY_RVA    0x0004AA30u   // 0x0044AA30  육상전 한 판
+#define SP_OBJ_RVA      0x001A47E8u   // 0x005A47E8  CLandWar (+0x98 아군 · +0x9C 적)
 #define SP_SKIP_RVA     0x0004A830u   // 0x0044A830  갈래 1 「그냥 지나간다」 굴림
 #define SP_ALLIED_RVA   0x001AA2B8u   // 0x005AA2B8  아군 함대 자리
 #define SP_ENEMYVT      0x004C3620u   // 적 쪽 함대 자리의 함수표 (절대값 그대로 쓴다)
@@ -18,6 +19,8 @@
 #define SP_FAME_RVA     0x001B614Cu   // 명성
 #define SP_INFAM_RVA    0x001B6150u   // 악명
 #define SP_CURCITY_RVA  0x001B6154u   // 지금 도시. -1 이면 도시 밖
+#define SP_FLEET_RVA    0x001B3928u   // 0x005B3928  내 함대
+#define SP_CREW_RVA     0x000745F0u   // 0x004745F0  그 함대의 선원 수 __thiscall(함대)
 
 #define SP_CITY_SZ      92
 #define SP_CITY_SCALE   0x08
@@ -35,6 +38,10 @@
 typedef int  (__cdecl   *EntryFn)(int kind, void* allied, void* enemy, void* city, int terrain);
 typedef int  (__cdecl   *RandFn)(int n);
 typedef void*(__fastcall*MateFn)(void* self, void* edx, int a, int b);
+typedef int  (__fastcall*CrewFn)(void* self, void* edx);
+
+// 함대 자리 한 벌 — 아군(0x005AA2B8)도 적도 같은 꼴이다. 열여섯 바이트에 하나 더 붙여 둔다.
+typedef struct { void* vt; int id; int spare; int men; int extra; } RefObj;
 
 static BYTE* g_base = NULL;
 
@@ -234,6 +241,31 @@ int Spar_FieldCulture(int slot)
     return Spar_CityCulture(capital);
 }
 
+// ---------------------------------------------------------------- 내 병력
+
+// 배치 화면에 뜨는 수는 **선원 + 1**(제독 자신)이다 — 0x0044A7C8 이 아군 자리의
+// +0x0C 에 하나를 더해 CLandWar+0x38 에 적는다.
+int Spar_FleetMen(void)
+{
+    const RefObj* live;
+    int crew = -1;
+
+    if (!g_base && !Spar_Load()) return -1;
+    __try {
+        CrewFn fn = (CrewFn)(g_base + SP_CREW_RVA);
+        crew = fn(g_base + SP_FLEET_RVA, NULL);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { crew = -1; }
+
+    // 게임 함수가 안 서면 아군 자리에 남아 있는 사본을 본다(걸음마다 함대에서 떠 온 값이다).
+    if (crew < 0 || crew > 100000) {
+        live = (const RefObj*)(g_base + SP_ALLIED_RVA);
+        if (!Readable(live, sizeof(RefObj))) return -1;
+        crew = live->men;
+    }
+    if (crew < 0 || crew > 100000) return -1;
+    return crew + 1;
+}
+
 // ---------------------------------------------------------------- 판 벌이기
 
 int Spar_CanRun(wchar_t* why, int cap)
@@ -333,15 +365,27 @@ static void SkipOn(const unsigned char* saved)
 
 // 갈래 1·2 를 한 자리에서 부른다. 여기는 반드시 게임 스레드다 —
 // 이 안에서 게임이 제 화면과 제 메시지 고리를 돌린다.
-static int Run(int kind, void* enemy, void* city, int terrain, int restore)
+static int Run(int kind, void* enemy, void* city, int terrain, int restore, int myMen)
 {
     EntryFn entry  = (EntryFn)(g_base + SP_ENTRY_RVA);
     void*   allied = g_base + SP_ALLIED_RVA;
+    RefObj  mine;
     unsigned char saved[5];
     int patched = 0, r = -1;
     Snap snap;
 
     if (terrain < 0 || terrain >= SP_TERRAIN_N) terrain = 0;
+
+    // 병력을 내가 정했으면 아군 자리를 **베껴서** 넘긴다. 0x005AA2B8 을 직접 고치면
+    // 싸움이 끝난 뒤 되쓰기(0x004495D5 부상병 복귀)까지 거기에 남는다. 사본이면
+    // 그 되쓰기가 이 스택 위에서 끝난다.
+    if (myMen > 0 && Readable(allied, sizeof(RefObj))) {
+        if (myMen < SP_MEN_MIN) myMen = SP_MEN_MIN;
+        if (myMen > SP_MEN_MAX) myMen = SP_MEN_MAX;
+        mine = *(const RefObj*)allied;
+        mine.men = myMen - 1;            // 게임이 제독 하나를 더한다(0x0044A7CB)
+        allied = &mine;
+    }
     snap.ok = 0;
     if (restore) Take(&snap);
     if (kind == 1) patched = SkipOff(saved);
@@ -354,26 +398,36 @@ static int Run(int kind, void* enemy, void* city, int terrain, int restore)
     }
 
     if (patched) SkipOn(saved);
+
+    // 우리가 넘긴 아군·적 자리는 이 함수의 스택이다. CLandWar 에 그대로 남겨 두면
+    // 「육상전 부대」 창이 1초마다 +0x9C 를 따라가 사라진 자리를 읽는다(적장이 엉뚱하게
+    // 뜬다). 판이 끝났으니 비워 둔다 — 다음 판은 0x0044A5B0 이 어차피 새로 채운다.
+    if (Readable(g_base + SP_OBJ_RVA + 0xA0, 4)) {
+        *(void**)(g_base + SP_OBJ_RVA + 0x98) = NULL;
+        *(void**)(g_base + SP_OBJ_RVA + 0x9C) = NULL;
+    }
+
     if (restore) Put(&snap);
-    LogW(L"[LandWarKR] 모의전 갈래 %d · 싸움터 %s → %d%s",
-         kind, Spar_TerrainName(terrain), r, restore ? L" (되돌림)" : L"");
+    LogW(L"[LandWarKR] 모의전 갈래 %d · 싸움터 %s · 내 병력 %d → %d%s",
+         kind, Spar_TerrainName(terrain), (myMen > 0) ? myMen : Spar_FleetMen(), r,
+         restore ? L" (되돌림)" : L"");
     return r;
 }
 
-int Spar_RunCity(int city, int terrain, int restore)
+int Spar_RunCity(int city, int terrain, int restore, int myMen)
 {
     BYTE* rec;
     wchar_t why[160];
     if (!Spar_CanRun(why, 160)) return -1;
     rec = CityRec(city);
     if (!rec) return -1;
-    return Run(2, NULL, rec, terrain, restore);
+    return Run(2, NULL, rec, terrain, restore, myMen);
 }
 
-int Spar_RunField(int slot, int terrain, int restore)
+int Spar_RunField(int slot, int terrain, int restore, int myMen)
 {
     // 0x0048BF24 벌이 짓는 그 열여섯 바이트를 그대로 짓는다.
-    struct { void* vt; int id; int spare; int men; int extra; } foe;
+    RefObj foe;
     RandFn dice;
     wchar_t why[160];
 
@@ -391,5 +445,5 @@ int Spar_RunField(int slot, int terrain, int restore)
     } __except (EXCEPTION_EXECUTE_HANDLER) { }
     if (foe.men < 1) foe.men = 1;
 
-    return Run(1, &foe, NULL, terrain, restore);
+    return Run(1, &foe, NULL, terrain, restore, myMen);
 }

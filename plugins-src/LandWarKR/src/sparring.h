@@ -35,6 +35,11 @@
 #define SP_TERRAIN_N   4
 #define SP_CULTURE_N  11
 
+// 내 병력. 게임이 병사수를 넉 자리 숫자 조각으로 찍으므로 그 위를 넘지 않게 막는다.
+#define SP_MEN_MIN      1
+#define SP_MEN_MAX   9999
+#define SP_MEN_DEFAULT 300
+
 int  Spar_Load(void);          // 모듈을 잡고 표를 살펴본다. 성공 1
 int  Spar_Ready(void);
 
@@ -56,10 +61,14 @@ int  Spar_FieldMenHi(int slot);
 int  Spar_FieldCulture(int slot);             // 대장 국적의 수도 문화권. 못 읽으면 -1
 int  Spar_FieldLeaderName(int slot, wchar_t* out, int cap);   // 읽혔으면 1
 
+// 지금 함대로 싸우면 몇 명인가(선원 + 제독 하나). 못 읽으면 -1.
+int  Spar_FleetMen(void);
+
 // 지금 붙을 수 있나. 못 붙으면 까닭을 적고 0 을 낸다.
 int  Spar_CanRun(wchar_t* why, int cap);
 
 // 한 판. 0 이김 · 1 물러남 · 2 몰살 · -1 못 붙임.
 // restore 가 서 있으면 소지금·명성·악명·주인공과 부관의 능력을 싸움 앞으로 되돌린다.
-int  Spar_RunCity(int city, int terrain, int restore);
-int  Spar_RunField(int slot, int terrain, int restore);
+// myMen 은 내가 끌고 나갈 사람 수(배치 화면에 그대로 뜨는 그 수). 0 이하면 지금 함대 그대로다.
+int  Spar_RunCity(int city, int terrain, int restore, int myMen);
+int  Spar_RunField(int slot, int terrain, int restore, int myMen);

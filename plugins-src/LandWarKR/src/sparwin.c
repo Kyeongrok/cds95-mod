@@ -25,6 +25,8 @@
 #define ID_FILTER     1103
 #define ID_LIST       1104
 #define ID_TERR0      1110      // 도시 · 초지 · 숲 · 황무지
+#define ID_MYMEN      1118      // 내 병력 칸
+#define ID_MYREAL     1119      // [지금 함대 그대로]
 #define ID_RESTORE    1120
 #define ID_START      1121
 #define ID_INFO       1130
@@ -45,6 +47,7 @@
 static HINSTANCE g_hinst = NULL;
 static HWND  g_win = NULL, g_list = NULL, g_filter = NULL;
 static HWND  g_info = NULL, g_info2 = NULL, g_status = NULL;
+static HWND  g_myMen = NULL, g_fleetNote = NULL;
 static HFONT g_font = NULL;
 
 // 목록 줄 -> 도시 번호(또는 필드 벌 번호). 걸러 보면 어긋나므로 짝을 들고 다닌다.
@@ -52,7 +55,7 @@ static int g_map[SP_CITY_N];
 static int g_mapN = 0;
 
 // 「시작」이 게임 스레드에 부치는 부탁.
-static int g_reqField = 0, g_reqPick = -1, g_reqTerr = 0, g_reqRestore = 1;
+static int g_reqField = 0, g_reqPick = -1, g_reqTerr = 0, g_reqRestore = 1, g_reqMen = 0;
 
 static void SetStatus(const wchar_t* s) { if (g_status) SetWindowTextW(g_status, s); }
 
@@ -69,6 +72,49 @@ static int TerrainPick(void)
     for (i = 0; i < SP_TERRAIN_N; i++)
         if (SendMessageW(GetDlgItem(g_win, ID_TERR0 + i), BM_GETCHECK, 0, 0) == BST_CHECKED) return i;
     return 0;
+}
+
+// 숫자 칸을 읽는다. CRT 없이 손으로 센다(앞뒤 빈칸은 넘긴다).
+static int TextToInt(const wchar_t* t)
+{
+    int n = 0, any = 0;
+    while (*t == L' ' || *t == L'	') t++;
+    while (*t >= L'0' && *t <= L'9') {
+        if (n > SP_MEN_MAX) return SP_MEN_MAX;      // 더 볼 것 없다
+        n = n * 10 + (*t - L'0');
+        t++; any = 1;
+    }
+    return any ? n : -1;
+}
+
+// 내가 끌고 나갈 사람 수. 0 이면 「지금 함대 그대로」다.
+static int MyMenPick(void)
+{
+    wchar_t t[16];
+    int n;
+    if (!g_win) return 0;
+    if (SendMessageW(GetDlgItem(g_win, ID_MYREAL), BM_GETCHECK, 0, 0) == BST_CHECKED) return 0;
+    if (!g_myMen) return 0;
+    GetWindowTextW(g_myMen, t, 16);
+    n = TextToInt(t);
+    if (n < 0) return SP_MEN_DEFAULT;               // 비었거나 숫자가 아니면 기본값
+    if (n < SP_MEN_MIN) n = SP_MEN_MIN;
+    if (n > SP_MEN_MAX) n = SP_MEN_MAX;
+    return n;
+}
+
+// 「지금 함대 그대로」를 켜면 숫자 칸은 잠근다.
+static void SyncMyMen(void)
+{
+    int real = SendMessageW(GetDlgItem(g_win, ID_MYREAL), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    wchar_t s[96];
+    int n = Spar_FleetMen();
+    if (g_myMen) EnableWindow(g_myMen, !real);
+    if (g_fleetNote) {
+        if (n > 0) wsprintfW(s, L"(지금 함대로 나가면 %d명)", n);
+        else lstrcpyW(s, L"(지금 함대의 사람 수는 아직 못 읽습니다)");
+        SetWindowTextW(g_fleetNote, s);
+    }
 }
 
 static int RestorePick(void)
@@ -181,6 +227,7 @@ static void Start(void)
     g_reqPick    = pick;
     g_reqTerr    = TerrainPick();
     g_reqRestore = RestorePick();
+    g_reqMen     = MyMenPick();
 
     SetStatus(L"판을 벌입니다…");
     ShowWindow(g_win, SW_HIDE);
@@ -236,13 +283,24 @@ static void MakeControls(HWND h)
     }
     SendMessageW(GetDlgItem(h, ID_TERR0), BM_SETCHECK, BST_CHECKED, 0);
 
-    y += 12;
+    y += 8;
+    Mk(L"STATIC", L"내 병력", 0, 0, RIGHT_X, y + 4, 56, 18, 0, h);
+    g_myMen = Mk(L"EDIT", L"300", ES_AUTOHSCROLL | ES_NUMBER, WS_EX_CLIENTEDGE,
+                 RIGHT_X + 58, y, 70, 22, ID_MYMEN, h);
+    Mk(L"STATIC", L"명 (제독 포함)", 0, 0, RIGHT_X + 134, y + 4, 120, 18, 0, h);
+
+    y += 26;
+    Mk(L"BUTTON", L"지금 함대 그대로", BS_AUTOCHECKBOX | WS_GROUP, 0,
+       RIGHT_X, y, 160, 20, ID_MYREAL, h);
+    g_fleetNote = Mk(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, RIGHT_X + 16, y + 22, 250, 18, 0, h);
+
+    y += 46;
     Mk(L"BUTTON", L"싸움 뒤 되돌린다", BS_AUTOCHECKBOX | WS_GROUP, 0,
        RIGHT_X, y, 150, 20, ID_RESTORE, h);
     SendMessageW(GetDlgItem(h, ID_RESTORE), BM_SETCHECK, BST_CHECKED, 0);
-    Mk(L"STATIC", L"소지금·명성·악명과", 0, 0, RIGHT_X + 16, y + 22, 200, 18, 0, h);
-    Mk(L"STATIC", L"주인공·부관 능력을 제자리로.", 0, 0, RIGHT_X + 16, y + 40, 240, 18, 0, h);
-    Mk(L"STATIC", L"선원은 육상전이 안 건드립니다.", 0, 0, RIGHT_X + 16, y + 58, 240, 18, 0, h);
+    Mk(L"STATIC", L"소지금·명성·악명과 주인공·부관", 0, 0, RIGHT_X + 16, y + 22, 260, 18, 0, h);
+    Mk(L"STATIC", L"능력을 제자리로. 선원은 육상전이", 0, 0, RIGHT_X + 16, y + 40, 260, 18, 0, h);
+    Mk(L"STATIC", L"원래 안 건드립니다.", 0, 0, RIGHT_X + 16, y + 58, 260, 18, 0, h);
 
     Mk(L"BUTTON", L"모의전 시작", WS_GROUP, 0, RIGHT_X, LIST_Y + LIST_H - 32, 130, 30, ID_START, h);
 
@@ -271,10 +329,14 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     switch (m) {
     case WM_CREATE: {
         wchar_t why[192];
+        // CreateWindowExW 가 아직 안 돌아왔으니 g_win 은 비어 있다. 여기서 채워 두어야
+        // 아래 도우미들(FieldSide·SyncMyMen …)이 GetDlgItem(NULL) 을 쥐지 않는다.
+        g_win = h;
         MakeControls(h);
         GameSkin_Apply(h);
         Guarded(FillList, L"FillList");
         Guarded(ShowInfo, L"ShowInfo");
+        Guarded(SyncMyMen, L"SyncMyMen");
         SetStatus(Spar_CanRun(why, 192) ? L"상대와 싸움터를 고르고 [모의전 시작]." : why);
         return 0;
     }
@@ -292,6 +354,7 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
                 InvalidateRect(h, NULL, FALSE);
                 return 0;
             }
+            if (id == ID_MYREAL) { Guarded(SyncMyMen, L"SyncMyMen"); return 0; }
             if (id == ID_START) { Guarded(Start, L"Start"); return 0; }
         }
         break;
@@ -303,11 +366,12 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
         wchar_t msg[256];
         int r;
         if (g_reqPick < 0) return 0;
-        r = g_reqField ? Spar_RunField(g_reqPick, g_reqTerr, g_reqRestore)
-                       : Spar_RunCity(g_reqPick, g_reqTerr, g_reqRestore);
+        r = g_reqField ? Spar_RunField(g_reqPick, g_reqTerr, g_reqRestore, g_reqMen)
+                       : Spar_RunCity(g_reqPick, g_reqTerr, g_reqRestore, g_reqMen);
         g_reqPick = -1;
         ShowWindow(h, SW_SHOW);
         SetForegroundWindow(h);
+        Guarded(SyncMyMen, L"SyncMyMen");
         if (r >= 0 && r <= 2)
             wsprintfW(msg, L"모의전 끝 — %s.%s", kEnd[r],
                       g_reqRestore ? L" 소지금·명성·능력은 제자리로 돌려놓았습니다." : L"");
@@ -339,6 +403,7 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_DESTROY:
         g_win = NULL; g_list = NULL; g_filter = NULL;
         g_info = NULL; g_info2 = NULL; g_status = NULL;
+        g_myMen = NULL; g_fleetNote = NULL;
         return 0;
     }
     return DefWindowProcW(h, m, w, l);
@@ -356,7 +421,7 @@ void SparWin_Show(HWND owner)
 {
     static BOOL registered = FALSE;
 
-    if (g_win) { ShowWindow(g_win, SW_SHOW); SetForegroundWindow(g_win); return; }
+    if (g_win) { ShowWindow(g_win, SW_SHOW); SetForegroundWindow(g_win); SyncMyMen(); return; }
     if (!Spar_Load()) {
         MessageBoxW(owner, L"육상전 표를 못 읽었습니다.\n한국어판 Ver.1.2.0.0 이 아닌 것 같습니다.",
                     L"육상전 모의전", MB_ICONWARNING);
