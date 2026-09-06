@@ -48,8 +48,11 @@
 #define LW_STAT_RVA    0x00046FF0u   // VA 0x00446FF0
 #define LW_ENEMY_OFF   0x9C          // CLandWar + 0x9C
 #define LW_CHAR_RVA    0x0018BF90u   // VA 0x0058BF90 인물 런타임 배열(갈래 1)
-#define LW_CHAR_SZ     284
-#define LW_CHAR_NAME   0xB4          // 이름 19바이트 CP949 (CharacterUtilKR 과 같은 자리)
+#define LW_CHAR_SZ     284           // 0x004319D0 이 0x0058BF90 + 번호*284 를 낸다
+#define LW_CHAR_NAME   0xBC          // 이름 19바이트 CP949.
+                                     // 게임의 이름 게터가 `lea eax,[ecx+0xBC]`(0x004319C0) 다 —
+                                     // 예전에 0xB4 로 적어 두어 적장 이름이 안 읽혔다.
+#define LW_CHAR_N      281           // 0x004319D0 이 0x119 로 막는다
 
 #define LW_ID_COMMON   (-1)          // "모든 적장 공통" 예약
 #define LW_PRESET_MAX  24            // 적장별 예약 벌 수

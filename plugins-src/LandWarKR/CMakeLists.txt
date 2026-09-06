@@ -2,6 +2,8 @@ add_library(LandWarKR SHARED
     src/dllmain.c
     src/warwin.c
     src/landwar.c
+    src/sparwin.c
+    src/sparring.c
     # 창을 게임 껍데기로 입히는 조각들은 ButtonMakerKR 것을 그대로 같이 빌드한다
     # (복사하면 한쪽만 고쳐진다).
     ../ButtonMakerKR/src/gameskin.c
@@ -15,6 +17,7 @@ target_include_directories(LandWarKR PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../common          # modmenu.h — 모드 창 등록부 약속
     ${CMAKE_CURRENT_SOURCE_DIR}/../ButtonMakerKR/src      # gameskin.h · band.h …
     ${CMAKE_CURRENT_SOURCE_DIR}/../CharacterUtilKR/src    # ls12.h · game_palette.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../TradeUtilKR/src        # cities_data.h — 도시 이름 226개
 )
 
 target_link_libraries(LandWarKR PRIVATE minhook user32 gdi32)

@@ -162,7 +162,7 @@ int LandWar_EnemyName(int id, wchar_t* out, int cap)
     if (!g_base || id < 0 || cap <= 0) return 0;
     cat = id >> 12;
     idx = id & 0xFFF;
-    if (cat != 1 || idx < 0 || idx > 400) return 0;
+    if (cat != 1 || idx < 0 || idx >= LW_CHAR_N) return 0;
 
     rec = g_base + LW_CHAR_RVA + (unsigned)idx * LW_CHAR_SZ;
     if (!Readable(rec, LW_CHAR_SZ)) return 0;

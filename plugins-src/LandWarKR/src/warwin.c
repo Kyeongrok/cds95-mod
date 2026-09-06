@@ -2,7 +2,9 @@
 #include <stdarg.h>
 #include "warwin.h"
 #include "landwar.h"
+#include "sparring.h"
 #include "gameskin.h"   // 창을 게임 껍데기로 입힌다
+#include "sparwin.h"   // 모의전 창 — 같은 메뉴 감시 스레드가 함께 단다
 #include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 // LandWarKR — 육상전 부대의 병종을 갈아 끼운다.
@@ -19,6 +21,7 @@
 
 #define ID_LAND_OPEN 0xC600u   // "파일>모드>육상전 부대"
                                // (… Book=0xC300, ShipInfo=0xC400, ButtonMaker=0xC500 과 안 겹치게)
+#define ID_SPAR_OPEN 0xC601u   // "파일>모드>육상전 모의전"
 
 #define ID_UNITS   1001
 #define ID_TYPES   1002
@@ -357,6 +360,9 @@ static LRESULT CALLBACK SubProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
     WNDPROC op = g_origProc;
     if (m == WM_COMMAND && HIWORD(w) == 0 && LOWORD(w) == ID_LAND_OPEN) { LandWin_Show(h); return 0; }
+    if (m == WM_COMMAND && HIWORD(w) == 0 && LOWORD(w) == ID_SPAR_OPEN) { SparWin_Show(h); return 0; }
+    // 모의전 한 판은 여기서 벌어진다 — 게임 스레드이면서, 게임 메시지 고리의 맨 위다.
+    if (SparWin_OnGameMsg(h, m, w, l)) return 0;
     if (m == WM_NCDESTROY) {
         if (op) SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)op);
         g_origProc = NULL; g_subHwnd = NULL; g_gameHwnd = NULL;
@@ -424,6 +430,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
     (void)pv;
     OutputDebugStringW(L"[LandWarKR] menu monitor started.");
     LandWar_Load();
+    Spar_Load();
     // 훅은 여기서 걸지 않는다 — 사용자가 병종을 예약할 때(LandWar_SetPreset) 그때 건다.
     for (;;) {
         HMENU bar;
@@ -440,6 +447,7 @@ static DWORD WINAPI MenuThread(LPVOID pv)
                 modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, g_pass > 1);
                 if (!modMenu) { Sleep(1000); continue; }
                 AppendMenuW(modMenu, MF_STRING, ID_LAND_OPEN, L"육상전 부대");
+                AppendMenuW(modMenu, MF_STRING, ID_SPAR_OPEN, L"육상전 모의전");
                 DrawMenuBar(g_gameHwnd);
                 OutputDebugStringW(L"[LandWarKR] menu installed.");
             }
@@ -457,6 +465,7 @@ void LandKR_Init(HINSTANCE hinst)
 {
     HANDLE t;
     g_hinst = hinst;
+    SparWin_Init(hinst);
     t = CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     if (t) CloseHandle(t);
 }
