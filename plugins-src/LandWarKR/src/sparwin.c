@@ -12,9 +12,13 @@
 // 콤보 상자는 쓰지 않는다 — 게임 DirectDraw 화면 위에서 목록을 펼치면 게임이 죽는다
 // (TradeUtilKR/src/trade.c 머리말).
 //
-// 「시작」을 누르면 창을 감추고 **게임 창에 메시지를 부친다**. 판은 그 메시지를 받는
-// 자리에서 벌어진다 — 우리 창 프로시저 안쪽에서 게임의 전투 화면을 열면 우리 창이
-// 그 위에 남고, 되돌아올 자리도 우리 스택 한복판이 된다.
+// 「시작」을 누르면 창을 감추고 **제 창에 메시지를 부친다**(WM_SPAR_RUN). 판은 그 메시지를
+// 받는 자리에서 벌어진다 — 단추를 누른 그 자리에서 바로 전투 화면을 열면 우리 창이 그 위에
+// 남고, 되돌아올 자리도 우리 스택 한복판이 된다.
+//
+// 이 창은 게임 스레드가 지었으므로 창 메시지도 게임의 메시지 고리가 돌린다. 곧 여기가
+// 게임 창의 WM_COMMAND 와 똑같은 깊이, 고리의 맨 위다. **게임 창에는 손대지 않는다** —
+// 게임 창 프로시저는 초당 수백 번 지나는 자리라 거기에 줄을 끼우지 않는 편이 안전하다.
 
 #define ID_SIDE_CITY  1101
 #define ID_SIDE_FIELD 1102
@@ -26,6 +30,9 @@
 #define ID_INFO       1130
 #define ID_INFO2      1131
 #define ID_STATUS     1132
+
+// 우리 창 클래스 안에서만 쓰는 값이라 RegisterWindowMessage 가 필요 없다.
+#define WM_SPAR_RUN   (WM_APP + 1)
 
 #define TITLE_H   28
 #define LIST_X    12
@@ -39,8 +46,6 @@ static HINSTANCE g_hinst = NULL;
 static HWND  g_win = NULL, g_list = NULL, g_filter = NULL;
 static HWND  g_info = NULL, g_info2 = NULL, g_status = NULL;
 static HFONT g_font = NULL;
-static HWND  g_game = NULL;
-static UINT  g_msgRun = 0;
 
 // 목록 줄 -> 도시 번호(또는 필드 벌 번호). 걸러 보면 어긋나므로 짝을 들고 다닌다.
 static int g_map[SP_CITY_N];
@@ -50,6 +55,7 @@ static int g_mapN = 0;
 static int g_reqField = 0, g_reqPick = -1, g_reqTerr = 0, g_reqRestore = 1;
 
 static void SetStatus(const wchar_t* s) { if (g_status) SetWindowTextW(g_status, s); }
+
 
 static int FieldSide(void)
 {
@@ -170,7 +176,6 @@ static void Start(void)
 
     if (pick < 0) { SetStatus(L"상대를 하나 고르세요."); return; }
     if (!Spar_CanRun(why, 192)) { SetStatus(why); return; }
-    if (!g_game || !g_msgRun) { SetStatus(L"게임 창을 못 찾았습니다."); return; }
 
     g_reqField   = FieldSide();
     g_reqPick    = pick;
@@ -179,7 +184,7 @@ static void Start(void)
 
     SetStatus(L"판을 벌입니다…");
     ShowWindow(g_win, SW_HIDE);
-    PostMessageW(g_game, g_msgRun, 0, 0);   // 게임 스레드가 제 차례에 벌인다
+    PostMessageW(g_win, WM_SPAR_RUN, 0, 0);   // 메시지 고리가 제 차례에 벌인다
 }
 
 // ---------------------------------------------------------------- 창
@@ -292,6 +297,26 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
         break;
     }
 
+    // 판은 여기서 벌어진다 — 메시지 고리의 맨 위이고, 단추를 누른 스택은 이미 풀렸다.
+    case WM_SPAR_RUN: {
+        static const wchar_t* kEnd[3] = { L"이겼습니다", L"물러났습니다", L"몰살당했습니다" };
+        wchar_t msg[256];
+        int r;
+        if (g_reqPick < 0) return 0;
+        r = g_reqField ? Spar_RunField(g_reqPick, g_reqTerr, g_reqRestore)
+                       : Spar_RunCity(g_reqPick, g_reqTerr, g_reqRestore);
+        g_reqPick = -1;
+        ShowWindow(h, SW_SHOW);
+        SetForegroundWindow(h);
+        if (r >= 0 && r <= 2)
+            wsprintfW(msg, L"모의전 끝 — %s.%s", kEnd[r],
+                      g_reqRestore ? L" 소지금·명성·능력은 제자리로 돌려놓았습니다." : L"");
+        else
+            lstrcpyW(msg, L"판을 못 벌였습니다(도시 밖인지, 세이브를 불러왔는지 보세요).");
+        SetStatus(msg);
+        return 0;
+    }
+
     case WM_DRAWITEM:
         if (GameSkin_DrawItem((const DRAWITEMSTRUCT*)l)) return TRUE;
         break;
@@ -319,18 +344,18 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
     return DefWindowProcW(h, m, w, l);
 }
 
+// DllMain(로더 락) 안에서 불린다. 여기서는 hinst 만 챙긴다 —
+// RegisterWindowMessageW 같은 user32 호출은 로더 락 안에서 하면 안 된다.
 void SparWin_Init(HINSTANCE hinst)
 {
     g_hinst = hinst;
-    if (!g_msgRun) g_msgRun = RegisterWindowMessageW(L"LandWarKR_SparRun");
 }
+
 
 void SparWin_Show(HWND owner)
 {
     static BOOL registered = FALSE;
 
-    g_game = owner;
-    if (!g_msgRun) g_msgRun = RegisterWindowMessageW(L"LandWarKR_SparRun");
     if (g_win) { ShowWindow(g_win, SW_SHOW); SetForegroundWindow(g_win); return; }
     if (!Spar_Load()) {
         MessageBoxW(owner, L"육상전 표를 못 읽었습니다.\n한국어판 Ver.1.2.0.0 이 아닌 것 같습니다.",
@@ -355,31 +380,3 @@ void SparWin_Show(HWND owner)
     if (g_win) { ShowWindow(g_win, SW_SHOW); UpdateWindow(g_win); }
 }
 
-// 게임 스레드 — 여기가 판을 벌이는 자리다.
-int SparWin_OnGameMsg(HWND game, UINT msg, WPARAM w, LPARAM l)
-{
-    static const wchar_t* kEnd[3] = { L"이겼습니다", L"물러났습니다", L"몰살당했습니다" };
-    wchar_t s[256];
-    int r;
-
-    (void)w; (void)l;
-    if (!g_msgRun || msg != g_msgRun) return 0;
-    g_game = game;
-    if (g_reqPick < 0) return 1;
-
-    r = g_reqField ? Spar_RunField(g_reqPick, g_reqTerr, g_reqRestore)
-                   : Spar_RunCity(g_reqPick, g_reqTerr, g_reqRestore);
-
-    if (g_win) {
-        ShowWindow(g_win, SW_SHOW);
-        SetForegroundWindow(g_win);
-        if (r >= 0 && r <= 2)
-            wsprintfW(s, L"모의전 끝 — %s.%s", kEnd[r],
-                      g_reqRestore ? L" 소지금·명성·능력은 제자리로 돌려놓았습니다." : L"");
-        else
-            lstrcpyW(s, L"판을 못 벌였습니다(도시 밖인지, 세이브를 불러왔는지 보세요).");
-        SetStatus(s);
-    }
-    g_reqPick = -1;
-    return 1;
-}

@@ -2,7 +2,6 @@
 #include <stdarg.h>
 #include "warwin.h"
 #include "landwar.h"
-#include "sparring.h"
 #include "gameskin.h"   // 창을 게임 껍데기로 입힌다
 #include "sparwin.h"   // 모의전 창 — 같은 메뉴 감시 스레드가 함께 단다
 #include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
@@ -21,7 +20,10 @@
 
 #define ID_LAND_OPEN 0xC600u   // "파일>모드>육상전 부대"
                                // (… Book=0xC300, ShipInfo=0xC400, ButtonMaker=0xC500 과 안 겹치게)
-#define ID_SPAR_OPEN 0xC601u   // "파일>모드>육상전 모의전"
+                               // ※ 모의전은 메뉴 항목을 따로 두지 않는다 — 이 창의 단추로 연다.
+                               //   메뉴는 1초짜리 감시 스레드가 게임 창에 손대는 자리라,
+                               //   거기에 붙이는 것이 하나 늘면 게임이 제 메뉴를 다시 그리는
+                               //   순간과 겹칠 틈도 그만큼 늘어난다.
 
 #define ID_UNITS   1001
 #define ID_TYPES   1002
@@ -30,6 +32,7 @@
 #define ID_CLEAR   1012
 #define ID_ALLOWBIG 1013
 #define ID_SAVE    1014
+#define ID_SPAR    1015      // [모의전…] — 아무 때나 한 판 벌이는 창을 연다
 #define ID_TGT0    1030      // 예약 대상: 모든 적장 공통
 #define ID_TGT1    1031      // 예약 대상: 이 적장만
 #define ID_DESC    1020
@@ -240,6 +243,7 @@ static void MakeControls(HWND h)
     Mk(L"BUTTON", L"전투 시작 때", 0, 0, 128, yBtn, 108, 26, ID_PRESET, h);
     Mk(L"BUTTON", L"이 벌 지우기", 0, 0, 244, yBtn, 108, 26, ID_CLEAR, h);
     Mk(L"BUTTON", L"파일로 남기기", 0, 0, 360, yBtn, 116, 26, ID_SAVE, h);
+    Mk(L"BUTTON", L"모의전…", 0, 0, 484, yBtn, 88, 26, ID_SPAR, h);
 
     g_status = Mk(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, 12, yBtn + 32,
                   UNIT_W + TYPE_W + 12, 18, ID_STATUS, h);
@@ -286,6 +290,7 @@ static LRESULT CALLBACK WinProc(HWND h, UINT m, WPARAM w, LPARAM l)
                                    SetStatus(L"이 벌의 예약을 지웠습니다."); return 0; }
             if (id == ID_SAVE)   { SetStatus(LandWar_Save() ? L"CDS95Util\\landwar.txt 에 남겼습니다."
                                                             : L"파일로 남기지 못했습니다."); return 0; }
+            if (id == ID_SPAR)   { SparWin_Show(h); return 0; }
             if (id == ID_TGT0 || id == ID_TGT1) { FillUnits(); InvalidateRect(h, NULL, FALSE); return 0; }
             if (id == ID_ALLOWBIG) {
                 LandWar_AllowBig(SendMessageW(GetDlgItem(h, ID_ALLOWBIG), BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -360,9 +365,6 @@ static LRESULT CALLBACK SubProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
     WNDPROC op = g_origProc;
     if (m == WM_COMMAND && HIWORD(w) == 0 && LOWORD(w) == ID_LAND_OPEN) { LandWin_Show(h); return 0; }
-    if (m == WM_COMMAND && HIWORD(w) == 0 && LOWORD(w) == ID_SPAR_OPEN) { SparWin_Show(h); return 0; }
-    // 모의전 한 판은 여기서 벌어진다 — 게임 스레드이면서, 게임 메시지 고리의 맨 위다.
-    if (SparWin_OnGameMsg(h, m, w, l)) return 0;
     if (m == WM_NCDESTROY) {
         if (op) SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)op);
         g_origProc = NULL; g_subHwnd = NULL; g_gameHwnd = NULL;
@@ -430,7 +432,6 @@ static DWORD WINAPI MenuThread(LPVOID pv)
     (void)pv;
     OutputDebugStringW(L"[LandWarKR] menu monitor started.");
     LandWar_Load();
-    Spar_Load();
     // 훅은 여기서 걸지 않는다 — 사용자가 병종을 예약할 때(LandWar_SetPreset) 그때 건다.
     for (;;) {
         HMENU bar;
@@ -447,7 +448,6 @@ static DWORD WINAPI MenuThread(LPVOID pv)
                 modMenu = FindOrCreateModMenu(fileMenu ? fileMenu : target, g_pass > 1);
                 if (!modMenu) { Sleep(1000); continue; }
                 AppendMenuW(modMenu, MF_STRING, ID_LAND_OPEN, L"육상전 부대");
-                AppendMenuW(modMenu, MF_STRING, ID_SPAR_OPEN, L"육상전 모의전");
                 DrawMenuBar(g_gameHwnd);
                 OutputDebugStringW(L"[LandWarKR] menu installed.");
             }
@@ -465,7 +465,7 @@ void LandKR_Init(HINSTANCE hinst)
 {
     HANDLE t;
     g_hinst = hinst;
-    SparWin_Init(hinst);
+    SparWin_Init(hinst);   // 값만 챙긴다 — user32 는 게임 스레드에서 처음 쓸 때 부른다
     t = CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     if (t) CloseHandle(t);
 }
