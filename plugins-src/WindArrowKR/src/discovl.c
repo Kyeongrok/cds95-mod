@@ -10,21 +10,25 @@
 #define IDX_EDGE  50
 
 #define DISC_RVA  0x001B3954u    // 함대 정보 +0x2C — 규율(FatigueUtilKR/src/fleetmem.h 와 같은 자리)
+#define LUCK_RVA  0x001B60D0u    // 주인공 레코드 +0x28 — 운(ce/CDS_95.CT "운")
+#define FAITH_RVA 0x001B60D4u    // 주인공 레코드 +0x2C — 신앙심(ce/CDS_95.CT "신앙심")
 
 static unsigned char g_pix[DISCOVL_W * DISCOVL_H];
 static int  g_ready = 0;
 static int  g_shownVal = -12345;
+static int  g_shownLuck = -12345;
+static int  g_shownFaith = -12345;
 static int  g_serial = 0;
 
-// 규율. 못 읽거나 말이 안 되면 -1(세이브를 아직 안 불러온 자리다).
-static int DisciplineNow(void)
+// 4바이트 값 하나. 못 읽거나 말이 안 되면 -1(세이브를 아직 안 불러온 자리다).
+static int ReadStat(unsigned rva)
 {
     MEMORY_BASIC_INFORMATION mbi;
     unsigned char* base = (unsigned char*)GetModuleHandleW(NULL);
     const int* p;
     int v;
     if (!base) return -1;
-    p = (const int*)(base + DISC_RVA);
+    p = (const int*)(base + rva);
     if (!VirtualQuery(p, &mbi, sizeof(mbi))) return -1;
     if (mbi.State != MEM_COMMIT) return -1;
     if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return -1;
@@ -104,15 +108,23 @@ static int BuildBitmap(const wchar_t* text)
 
 const unsigned char* DiscOvl_Bitmap(void)
 {
-    int v = DisciplineNow();
-    wchar_t text[32];
+    int v = ReadStat(DISC_RVA);
+    int luck = ReadStat(LUCK_RVA);
+    int faith = ReadStat(FAITH_RVA);
+    wchar_t text[64];
+    int n;
 
     if (v < 0) return NULL;
-    if (g_ready && v == g_shownVal) return g_pix;
+    if (g_ready && v == g_shownVal && luck == g_shownLuck && faith == g_shownFaith) return g_pix;
 
-    wsprintfW(text, L"규율 %d", v);
+    // 운·신앙은 못 읽으면 그 자리만 뺀다 — 규율은 그래도 보인다.
+    n = wsprintfW(text, L"규율 %d", v);
+    if (luck >= 0)  n += wsprintfW(text + n, L"  운 %d", luck);
+    if (faith >= 0) n += wsprintfW(text + n, L"  신앙 %d", faith);
     if (!BuildBitmap(text)) return NULL;
     g_shownVal = v;
+    g_shownLuck = luck;
+    g_shownFaith = faith;
     g_ready = 1;
     g_serial++;
     return g_pix;
