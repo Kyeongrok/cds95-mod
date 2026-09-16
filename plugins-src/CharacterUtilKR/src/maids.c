@@ -380,6 +380,21 @@ static int ZodiacOf(int month, int day)
     return -1;
 }
 
+// 주인공 만나이 — 게임 0x47CB20 과 같다: 지금 연도 - 생년, 생일이 안 지났으면 -1.
+// Player_Age()(+0x04)는 주인공에게는 늘 0 이라 36세 얼굴 판정에 못 쓴다. 못 재면 -9999.
+static int PlayerAgeNow(void)
+{
+    const int* now;
+    int by = Player_BirthYear(), bm = Player_BirthMonth(), bd = Player_BirthDay(), age;
+    if (!by || !bm || !bd) return -9999;
+    if (!g_base && !ModuleRange()) return -9999;
+    now = (const int*)(g_base + 0x1A4D20u);          // 지금 연·월·일 (VA 0x5A4D20~)
+    if (!Readable(now, 12) || now[0] <= 0) return -9999;
+    age = now[0] - by;
+    if (bm > now[1] || (bm == now[1] && bd > now[2])) age--;
+    return age;
+}
+
 static int Clamp02(int v) { return v < 0 ? 0 : (v > 2 ? 2 : v); }
 
 int Maid_PlayerPrefs(int out[MAID_PERSONALITY_N])
@@ -398,7 +413,7 @@ int Maid_PlayerPrefs(int out[MAID_PERSONALITY_N])
     if (z < 0 || b < 0 || f < 0) return 0;
 
     // 화면에 나오는 얼굴로 따진다 — 36세부터 +16 이다(게임 0x47CAF0).
-    age = Player_Age();
+    age = PlayerAgeNow();
     if (age != -9999 && age >= MATCH_ELDER_AGE) f += MATCH_ELDER_STEP;
     if (f < 0 || f >= MATCH_FACE_N) return 0;
 
@@ -434,7 +449,7 @@ int Maid_IsFate(int row)
     if (!Player_Ready() && !Player_Load()) return -1;
     f = Player_Face();
     if (f < 0) return -1;
-    age = Player_Age();
+    age = PlayerAgeNow();
     if (age != -9999 && age >= MATCH_ELDER_AGE) f += MATCH_ELDER_STEP;
     return g_maids[row].fateFace == f;
 }
