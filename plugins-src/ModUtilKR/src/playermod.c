@@ -34,16 +34,66 @@ static const int kFameStep [STEP_N] = {  10000,   500 };
 #define HEAD_Y    (FRAME + TITLE_H + 10)    // 이름 요약 한 줄
 #define ROW1_Y    (HEAD_Y + 28)             // 소지금
 #define ROW2_Y    (ROW1_Y + ROW_H + 10)     // 명성
-#define MSG_Y     (ROW2_Y + ROW_H + 14)     // 알림 한 줄
+
+// 특기 격자 — 기능 13종 / 언어 14종을 묶음 둘로 나눠 3열 5행씩 늘어놓는다.
+// 칸마다 이름 + [0][1][2][3], 지금 레벨이 눌린 모양이다(CharacterUtilKR 항해사 탭과 같은 꼴).
+#define SK_COLS    3
+#define SK_ROWS    5
+#define SK_ITEM_H  20
+#define SK_ITEM_W  ((CLIENT_W - 2 * LBL_X) / SK_COLS)
+#define SK_NAME_W  110
+#define SK_LV_W    24
+#define SK_LBL_H   20                       // 묶음 머리("기능" / "언어")
+#define SK_SEC_H   (SK_LBL_H + SK_ROWS * SK_ITEM_H + 8)
+#define SK_SEC_N   2
+#define SK_GEN_N   13                       // id 1~13 기능, 14~27 언어
+#define SK_Y0      (ROW2_Y + ROW_H + 12)
+typedef char PlayerSkillGridFits[(SK_COLS * SK_ROWS >= LIVECHAR_SKILL_N - SK_GEN_N) ? 1 : -1];
+
+#define MSG_Y     (SK_Y0 + SK_SEC_N * SK_SEC_H + 2)   // 알림 한 줄
 #define CLIENT_H  (MSG_Y + 22 + FRAME + 6)
 
 #define ROW_N     2
 #define ROW_MONEY 0
 #define ROW_FAME  1
 
+// 순서는 특기 id 그대로다(CharacterUtilKR/src/savedata.c 의 kSkillName 과 같은 줄).
+static const wchar_t* kSkillName[LIVECHAR_SKILL_N + 1] = {
+    L"",
+    L"항해술", L"운용술", L"검술", L"포술", L"사격술", L"의학", L"웅변술",
+    L"측량술", L"역사학", L"회계", L"조선술", L"신학", L"과학",
+    L"스페인어", L"포르투갈어", L"로망스어", L"게르만어", L"슬라브어",
+    L"아랍어", L"페르시아어", L"중국어", L"힌두어", L"위그르어",
+    L"아프리카어", L"아메리카어", L"동남아시아어", L"동아시아어",
+};
+
 static HINSTANCE g_hinst = NULL;
 static HWND      g_wnd = NULL, g_gameHwnd = NULL;
 static wchar_t   g_msg[160] = L"";
+
+static int SkillSec(int id) { return id > SK_GEN_N; }
+static int SecTop(int sec)  { return SK_Y0 + sec * SK_SEC_H; }
+
+// 특기 한 칸(이름 + 레벨 넷). 묶음 안에서는 위에서 아래로 채우고 다음 열로 넘어간다.
+static RECT RcSkill(int id)
+{
+    int sec = SkillSec(id), i = id - 1 - sec * SK_GEN_N;
+    RECT r;
+    r.left   = LBL_X + (i / SK_ROWS) * SK_ITEM_W;
+    r.right  = r.left + SK_ITEM_W;
+    r.top    = SecTop(sec) + SK_LBL_H + (i % SK_ROWS) * SK_ITEM_H;
+    r.bottom = r.top + SK_ITEM_H;
+    return r;
+}
+
+static RECT RcSkillLv(int id, int lv)
+{
+    RECT it = RcSkill(id), b;
+    b.left = it.left + SK_NAME_W + 6 + lv * SK_LV_W;
+    b.right = b.left + SK_LV_W - 2;
+    b.top = it.top + 1; b.bottom = it.bottom - 1;
+    return b;
+}
 
 static int RowY(int row) { return row == ROW_MONEY ? ROW1_Y : ROW2_Y; }
 
@@ -185,6 +235,30 @@ static void Paint(HWND h)
                 DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
     }
 
+    // 특기 — 묶음 머리 둘, 그 아래 칸마다 이름과 레벨 넷.
+    for (row = 0; row < SK_SEC_N; row++) {
+        r.left = LBL_X; r.right = rc.right - FRAME - 10;
+        r.top = SecTop(row); r.bottom = r.top + SK_LBL_H;
+        UI_Text(dc, r, row == 0 ? L"기능" : L"언어", g_font, COL_TEXT,
+                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+    }
+    for (row = 1; row <= LIVECHAR_SKILL_N; row++) {
+        int lv = Player_Skill(row);
+        r = RcSkill(row);
+        r.left += 4; r.right = r.left + SK_NAME_W;
+        UI_Text(dc, r, kSkillName[row], g_smallFont,
+                lv > 0 ? (SkillSec(row) ? COL_LANG_TX : COL_TEXT) : COL_DARK,
+                DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+        for (col = 0; col <= LIVECHAR_SKILL_MAX; col++) {
+            RECT lb = RcSkillLv(row, col);
+            br = CreateSolidBrush(col == lv ? COL_SEL_BG : COL_DISP_BG); FillRect(dc, &lb, br); DeleteObject(br);
+            UI_Bevel(dc, lb, col == lv);
+            wsprintfW(buf, L"%d", col);
+            UI_Text(dc, lb, buf, g_smallFont, col == lv ? RGB(250,244,228) : COL_TEXT,
+                    DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+        }
+    }
+
     r.left = LBL_X; r.right = rc.right - FRAME - 10;
     r.top = MSG_Y; r.bottom = MSG_Y + 20;
     UI_Text(dc, r,
@@ -233,6 +307,17 @@ static LRESULT CALLBACK PlayerProc(HWND h, UINT m, WPARAM w, LPARAM l)
                 r = RcCell(row, col);
                 if (!PtInRect(&r, pt)) continue;
                 Bump(row, CellDelta(row, col));
+                InvalidateRect(h, NULL, FALSE);
+                return 0;
+            }
+        }
+        for (row = 1; row <= LIVECHAR_SKILL_N; row++) {
+            int lv;
+            for (lv = 0; lv <= LIVECHAR_SKILL_MAX; lv++) {
+                r = RcSkillLv(row, lv);
+                if (!PtInRect(&r, pt)) continue;
+                if (Player_SetSkill(row, lv)) wsprintfW(g_msg, L"%s 레벨 %d 이 되었습니다", kSkillName[row], lv);
+                else lstrcpyW(g_msg, L"특기를 고치지 못했습니다 — 세이브를 불러온 뒤에 열어 주세요.");
                 InvalidateRect(h, NULL, FALSE);
                 return 0;
             }

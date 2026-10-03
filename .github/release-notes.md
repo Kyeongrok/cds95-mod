@@ -138,6 +138,9 @@
   **등장연도는 select box 로 1480~1540 중 골라 바꿀 수 있습니다** —
   다만 이미 진행 중인 게임에는 반영되지 않으니(세이브를 불러올 때 후원자 배치가 굳습니다)
   **새 게임을 시작하기 전에** 고쳐야 합니다. 메모리에만 쓰므로 게임을 끄면 원래대로.
+- **SphinxQuizKR** — 스핑크스의 물음 넷(수수께끼 하나 + 다리 세기 셋)에서 **맞는 선택지 옆에
+  "(정답)"** 이 붙습니다. 고르는 것은 그대로 사람이고, 문제와 판정은 건드리지 않습니다.
+  창도 메뉴도 없습니다 — 끄려면 "모드 > 플러그인 관리" 에서 이 플러그인을 끕니다.
 - **TavernInfoKR** — "파일 > 모드 > 술집 정보". 스폰서와 계약을 맺으면 술집 메뉴에
   "정보를 듣는다"가 생기는데, 그때 나오는 **대사 191줄이 어느 도시에서 들리는지**를 고칩니다.
   줄을 고르고 도시 칸(최대 4곳)에 도시 번호를 넣으면 그 자리에서 바로 먹습니다. 번호 옆에
@@ -243,6 +246,8 @@
   **명성 ∓10,000 · ∓500** 이고 가운데 칸이 지금 값입니다.
   실행 중인 게임에 바로 들어가고(게임에서 저장하면 남습니다) 소지금 0~9,999만,
   명성 0~상한을 넘지 않습니다. 0.7초마다 다시 읽어 게임 쪽에서 값이 변해도 따라갑니다.
+  그 아래에 **기능 13종 · 언어 14종**이 늘어서 있어, 칸마다 **[0][1][2][3]** 중 하나를 눌러
+  주인공의 특기 레벨을 바로 고칩니다(0 은 못 배운 것).
 
 - **FatigueUtilKR** — "파일" 메뉴에 "피로도"를 추가. 창에 **줄일 값(기본 20)** 을 적고
   **[줄이기]** 를 누르면 지금 쌓인 함대 피로도에서 그만큼 덜어냅니다(0 밑으로는 안 내려갑니다).
@@ -405,5 +410,5 @@
   에서 엽니다. 정보 창은 주인공을 보는 곳이고 그 둘은 도시를 보는 것이라 애초에 거기 있을
   까닭이 없었습니다.
 
-> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin`, `DiscoveryEditKR.plugin`, `TavernInfoKR.plugin` 만 포함됩니다.
+> 이 릴리즈에는 직접 작성한 `HotelUtilKR.plugin`, `TradeUtilKR.plugin`, `CharacterUtilKR.plugin`, `WorldMapKR.plugin`, `ShipSkinKR.plugin`, `PatchUtilKR.plugin`, `ModUtilKR.plugin`, `QuestModKR.plugin`, `UpdateUtilKR.plugin`, `FatigueUtilKR.plugin`, `HotkeyUtilKR.plugin`, `HintUtilKR.plugin`, `MarketUtilKR.plugin`, `SaveUtilKR.plugin`, `CityPicKR.plugin`, `DialogUtilKR.plugin`, `SkillUtilKR.plugin`, `BookUtilKR.plugin`, `ShipInfoKR.plugin`, `ButtonMakerKR.plugin`, `LandWarKR.plugin`, `WindArrowKR.plugin`, `ModWindowKR.plugin`, `DiscoveryEditKR.plugin`, `TavernInfoKR.plugin`, `SphinxQuizKR.plugin` 만 포함됩니다.
 > 원본 CDS95Util 플러그인들(HotelUtil, TradeUtil 등)은 각자의 재배포 조건이 있어 포함하지 않습니다.

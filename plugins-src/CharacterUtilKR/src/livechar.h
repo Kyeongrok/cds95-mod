@@ -113,6 +113,9 @@ int  Player_Infamy(void);      // 못 읽으면 -1
 // 바뀐 값을 돌려준다. 못 쓰면 -1.
 int  Player_AddFame(int delta);
 int  Player_AddInfamy(int delta);
+// 주인공 특기 레벨. 인물 배열과 같은 자리(+0x38 부터 27칸)·같은 id(1~27)·같은 값(0~3)이다.
+int  Player_Skill(int id);            // 못 읽으면 -1
+int  Player_SetSkill(int id, int lv); // 성공 1
 
 // 주인공이 데리고 다니는 네 자리(부관/항해사/측량사/통역).
 // 0x1B61A0 부터 4바이트씩 넷이고, 값은 4096 + 인물 배열 칸 번호, 0xFFFFFFFF 면 비어 있다.

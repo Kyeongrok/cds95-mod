@@ -2,7 +2,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include "mod.h"
-#include "playermod.h"     // 모드 > 플레이어 수정 — 소지금 · 명성
+#include "playermod.h"     // 모드 > 플레이어 수정 — 소지금 · 명성 · 특기
 #include "modmenu.h"   // common/ — 모드 창 등록부(걷어 간 항목을 여기서 본다)
 
 #define MAX_MODS 64
@@ -24,7 +24,7 @@ typedef struct {
 // 플러그인 설명. 목록에 파일명만 있으면 무엇인지 알 수 없어서 아는 것만 붙인다.
 static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     { L"DDrawWrapper",    L"플러그인 로더 + DirectDraw 에뮬레이션. 끄면 나머지가 다 안 뜬다." },
-    { L"ModUtilKR",       L"이 창 + 플레이어 수정(소지금 · 명성). 어떤 플러그인을 쓸지 고른다." },
+    { L"ModUtilKR",       L"이 창 + 플레이어 수정(소지금 · 명성 · 기능 · 언어). 어떤 플러그인을 쓸지 고른다." },
     { L"QuestModKR",      L"퀘스트 모드 — mods 폴더의 퀘스트 파일 묶음을 골라 깐다." },
     { L"UpdateUtilKR",    L"업데이트 — GitHub 릴리즈를 받아 깐다. 옛 판으로 되돌릴 수도 있다." },
     { L"HotelUtilKR",     L"여관 숙박 일수를 직접 입력한다." },
@@ -40,6 +40,7 @@ static const struct { const wchar_t* file; const wchar_t* desc; } kDesc[] = {
     // 원본 SaveUtil 과 헷갈리기 쉽다 — 파일 메뉴의 "저장 · 중단" 은 이쪽이다.
     { L"SaveUtilKR",      L"저장 · 중단 — 자택·여관까지 안 가고 그 자리에서 저장한다." },
     { L"CityPicKR",       L"도시 그림 — CITYCG.CDS 의 도시 그림 226장을 골라 본다." },
+    { L"SphinxQuizKR",    L"스핑크스 퀴즈 — 맞는 선택지 옆에 (정답) 을 붙인다. 끄면 원래대로." },
     { L"CDROMUtil",       L"(원본) CD-ROM 접근을 하드디스크로 돌린다." },
     { L"CPUPatch",        L"(원본) CPU 점유율을 낮춘다." },
     { L"MemoryFix",       L"(원본) 게임의 메모리 버그를 고친다." },

@@ -478,6 +478,25 @@ static int PlAdd(int off, int delta)
 int Player_AddFame(int delta)   { return PlAdd(LC_FAME,   delta); }
 int Player_AddInfamy(int delta) { return PlAdd(LC_INFAMY, delta); }
 
+int Player_Skill(int id)
+{
+    if (id < 1 || id > LIVECHAR_SKILL_N) return -1;
+    return PlField(LC_SKILL0 + (id - 1) * 4, 0, LIVECHAR_SKILL_MAX, -1);
+}
+
+int Player_SetSkill(int id, int lv)
+{
+    unsigned char* p;
+    DWORD old = 0;
+    if (!g_pl || id < 1 || id > LIVECHAR_SKILL_N) return 0;
+    if (lv < 0 || lv > LIVECHAR_SKILL_MAX) return 0;
+    p = g_pl + LC_SKILL0 + (id - 1) * 4;
+    if (!VirtualProtect(p, sizeof(int), PAGE_READWRITE, &old)) return 0;
+    *(int*)p = lv;
+    VirtualProtect(p, sizeof(int), old, &old);
+    return 1;
+}
+
 int Player_SetGender(int g)
 {
     unsigned char* p;
